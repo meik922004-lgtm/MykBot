@@ -1,5 +1,5 @@
 # Sử dụng Python phiên bản chính thức làm nền tảng
-FROM python:3.10-slim
+FROM python:3.13-slim
 
 # Đặt thư mục làm việc trong container
 WORKDIR /app
