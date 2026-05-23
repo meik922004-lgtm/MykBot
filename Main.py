@@ -21,6 +21,37 @@ def keep_alive():
     t = Thread(target=run_server)
     t.start()
 # --------------------------------------------------------
+# ==========================================
+# ĐOẠN CODE BẮT BUỘC ĐỂ CHẠY TRÊN RENDER WEB SERVICE
+# ==========================================
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+import os
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Bot is online and healthy!")
+
+    # Vô hiệu hóa log ra terminal của server web để tránh rác log của bot
+    def log_message(self, format, *args):
+        return
+
+def run_health_check_server():
+    # Render tự động cấp port qua biến môi trường PORT, nếu chạy local sẽ dùng port 10000
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    print(f"[System] Web server listening on port {port} for Render health check.")
+    server.serve_forever()
+
+# Chạy web server trên một luồng (thread) riêng biệt để không chặn bot hoạt động
+threading.Thread(target=run_health_check_server, daemon=True).start()
+# ==========================================
+
+# Phía dưới này giữ nguyên lệnh chạy bot gốc của bạn
+# Ví dụ: bot.run(os.getenv("BOT_TOKEN"))
 
 # Tải token từ .env
 load_dotenv()
@@ -57,27 +88,4 @@ bot = MyKBot()
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
 
-# --- THÊM ĐOẠN NÀY ĐỂ ĐÁNH LỪA RENDER WEB SERVICE ---
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-
-def run_health_check():
-    # Render luôn truyền một cổng mạng qua biến môi trường PORT (mặc định thường là 10000)
-    import os
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
-
-# Chạy server web ngầm để Render không tắt bot
-threading.Thread(target=run_health_check, daemon=True).start()
-# ---------------------------------------------------
-
-# Tiếp tục lệnh chạy bot gốc của bạn ở phía dưới...
 # client.run(BOT_TOKEN) hoặc bot.run()
