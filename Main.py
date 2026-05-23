@@ -1,64 +1,43 @@
 import discord
 from discord.ext import commands
 import os
-from dotenv import load_dotenv
-from flask import Flask
-from threading import Thread
-
-# --- KHỞI TẠO WEB SERVER ĐỂ GIỮ BOT LUÔN CHẠY TRÊN RENDER ---
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot MyKBot đang hoạt động 24/7!"
-
-def run_server():
-    # Render sẽ cấp một cổng PORT ngẫu nhiên qua biến môi trường, mặc định là 8080
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_server)
-    t.start()
-# --------------------------------------------------------
-# ==========================================
-# ĐOẠN CODE BẮT BUỘC ĐỂ CHẠY TRÊN RENDER WEB SERVICE
-# ==========================================
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
-import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from dotenv import load_dotenv
 
+# ==========================================
+# 1. KHỞI TẠO WEB SERVER CHO RENDER HEALTH CHECK
+# ==========================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Bot is online and healthy!")
+        self.wfile.write(b"Bot MyKBot is online 24/7!")
 
-    # Vô hiệu hóa log ra terminal của server web để tránh rác log của bot
+    # Vô hiệu hóa log của server web để terminal gọn gàng
     def log_message(self, format, *args):
         return
 
 def run_health_check_server():
-    # Render tự động cấp port qua biến môi trường PORT, nếu chạy local sẽ dùng port 10000
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"[System] Web server listening on port {port} for Render health check.")
+    print(f"[System] Web server listening on port {port}...")
     server.serve_forever()
 
-# Chạy web server trên một luồng (thread) riêng biệt để không chặn bot hoạt động
+# Chạy server web ngầm trên một luồng riêng
 threading.Thread(target=run_health_check_server, daemon=True).start()
+
 # ==========================================
-
-# Phía dưới này giữ nguyên lệnh chạy bot gốc của bạn
-# Ví dụ: bot.run(os.getenv("BOT_TOKEN"))
-
-# Tải token từ .env
+# 2. CẤU HÌNH VÀ KHỞI CHẠY BOT DISCORD
+# ==========================================
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Đã đồng bộ tên biến với cấu hình trên Render
+TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
-    raise ValueError("❌ Không tìm thấy DISCORD_TOKEN trong file .env!")
+    raise ValueError("❌ Không tìm thấy BOT_TOKEN! Hãy kiểm tra lại file .env hoặc cấu hình Render.")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -88,4 +67,5 @@ bot = MyKBot()
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
 
-# client.run(BOT_TOKEN) hoặc bot.run()
+# LỆNH KÍCH HOẠT BOT (Bắt buộc phải nằm ở cuối cùng)
+bot.run(TOKEN)
