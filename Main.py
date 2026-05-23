@@ -57,7 +57,27 @@ bot = MyKBot()
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
 
-# Chạy Web Server song song với Bot
-if __name__ == "__main__":
-    keep_alive()  # Kích hoạt máy chủ web giữ mạng
-    bot.run(TOKEN)
+# --- THÊM ĐOẠN NÀY ĐỂ ĐÁNH LỪA RENDER WEB SERVICE ---
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_health_check():
+    # Render luôn truyền một cổng mạng qua biến môi trường PORT (mặc định thường là 10000)
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
+# Chạy server web ngầm để Render không tắt bot
+threading.Thread(target=run_health_check, daemon=True).start()
+# ---------------------------------------------------
+
+# Tiếp tục lệnh chạy bot gốc của bạn ở phía dưới...
+# client.run(BOT_TOKEN) hoặc bot.run()
