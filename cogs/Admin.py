@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 import time
-from Database import db # Đảm bảo file Database.py của bạn đang hoạt động đúng
+from Database import db 
 
 # View cho các nút dịch thuật (Giữ nguyên của bạn)
 class EventTranslationView(discord.ui.View):
@@ -42,71 +42,82 @@ class EventTranslationView(discord.ui.View):
 class DigitalTour(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Dùng set để lưu các event_id đã thông báo (tránh spam)
         self.notified_bosses = set()
         self.notified_bless = set()
-        self.boss_schedule_loop.start() # Bắt đầu vòng lặp khi bot chạy
+        self.boss_schedule_loop.start() 
+
+    # SỬA TẠI ĐÂY: Hàm tự động tắt vòng lặp cũ khi bạn sử dụng lệnh !reloadall
+    def cog_unload(self):
+        self.boss_schedule_loop.cancel()
 
     @tasks.loop(minutes=1)
     async def boss_schedule_loop(self):
         await self.bot.wait_until_ready()
-        # Luôn sử dụng giờ UTC chuẩn
-        utc_now = datetime.now(timezone.utc)
         
-        # 1. Xử lý Bless Tour (Lặp mỗi giờ)
-        cursor_bless = db.bless_tours.find({})
-        async for bless_cfg in cursor_bless:
-            bless_minute = bless_cfg.get("minute")
-            if bless_minute is None: continue
+        # Bọc try...except tổng để nếu lỗi mạng hoặc lỗi data thì 1 phút sau vòng lặp vẫn tiếp tục chạy
+        try:
+            utc_now = datetime.now(timezone.utc)
             
-            guild = self.bot.get_guild(bless_cfg["guild_id"])
-            if not guild: continue
-
-            # Tính mốc giờ Bless tiếp theo
-            target_bless = utc_now.replace(minute=bless_minute, second=0, microsecond=0)
-            if target_bless <= utc_now:
-                target_bless += timedelta(hours=1)
-            
-            diff_bless = (target_bless - utc_now).total_seconds()
-            event_id_bless = f"{guild.id}_bless_{target_bless.timestamp()}"
-
-            # Thông báo trước 4-5 phút
-            if 240 <= diff_bless < 300:
-                if event_id_bless not in self.notified_bless:
-                    await self.send_bless_alert(guild, bless_cfg, target_bless)
-                    self.notified_bless.add(event_id_bless)
-            else:
-                if event_id_bless in self.notified_bless:
-                    self.notified_bless.remove(event_id_bless)
-
-        # 2. Xử lý Digital Raid (Chu kỳ 90 phút)
-        cursor_boss = db.bosses.find({})
-        async for guild_data in cursor_boss:
-            guild = self.bot.get_guild(guild_data['guild_id'])
-            if not guild: continue
-            
-            for boss_key, boss in guild_data.get("bosses", {}).items():
-                try:
-                    base_h, base_m = map(int, boss["base_server_time"].split(":"))
-                    target_boss = utc_now.replace(hour=base_h, minute=base_m, second=0, microsecond=0)
+            # 1. Xử lý Bless Tour (Lặp mỗi giờ)
+            try:
+                cursor_bless = db.bless_tours.find({})
+                async for bless_cfg in cursor_bless:
+                    bless_minute = bless_cfg.get("minute")
+                    if bless_minute is None: continue
                     
-                    while target_boss <= utc_now:
-                        target_boss += timedelta(minutes=90)
-                    
-                    diff_boss = (target_boss - utc_now).total_seconds()
-                    event_id_boss = f"{guild.id}_{boss_key}_{target_boss.timestamp()}"
+                    guild = self.bot.get_guild(bless_cfg["guild_id"])
+                    if not guild: continue
 
-                    # Thông báo trước 4-5 phút
-                    if 240 <= diff_boss < 300:
-                        if event_id_boss not in self.notified_bosses:
-                            await self.send_boss_alert(guild, boss, target_boss)
-                            self.notified_bosses.add(event_id_boss)
+                    target_bless = utc_now.replace(minute=bless_minute, second=0, microsecond=0)
+                    if target_bless <= utc_now:
+                        target_bless += timedelta(hours=1)
+                    
+                    diff_bless = (target_bless - utc_now).total_seconds()
+                    event_id_bless = f"{guild.id}_bless_{target_bless.timestamp()}"
+
+                    if 240 <= diff_bless < 300:
+                        if event_id_bless not in self.notified_bless:
+                            await self.send_bless_alert(guild, bless_cfg, target_bless)
+                            self.notified_bless.add(event_id_bless)
                     else:
-                        if event_id_boss in self.notified_bosses:
-                            self.notified_bosses.remove(event_id_boss)
-                except Exception as e:
-                    print(f"Lỗi loop boss: {e}")
-                    continue
+                        if event_id_bless in self.notified_bless:
+                            self.notified_bless.remove(event_id_bless)
+            except Exception as e:
+                print(f"[ERROR] Lỗi tiến trình Bless Tour: {e}")
+
+            # 2. Xử lý Digital Raid (Chu kỳ 90 phút)
+            try:
+                cursor_boss = db.bosses.find({})
+                async for guild_data in cursor_boss:
+                    guild = self.bot.get_guild(guild_data['guild_id'])
+                    if not guild: continue
+                    
+                    for boss_key, boss in guild_data.get("bosses", {}).items():
+                        try:
+                            base_h, base_m = map(int, boss["base_server_time"].split(":"))
+                            target_boss = utc_now.replace(hour=base_h, minute=base_m, second=0, microsecond=0)
+                            
+                            while target_boss <= utc_now:
+                                target_boss += timedelta(minutes=90)
+                            
+                            diff_boss = (target_boss - utc_now).total_seconds()
+                            event_id_boss = f"{guild.id}_{boss_key}_{target_boss.timestamp()}"
+
+                            if 240 <= diff_boss < 300:
+                                if event_id_boss not in self.notified_bosses:
+                                    await self.send_boss_alert(guild, boss, target_boss)
+                                    self.notified_bosses.add(event_id_boss)
+                            else:
+                                if event_id_boss in self.notified_bosses:
+                                    self.notified_bosses.remove(event_id_boss)
+                        except Exception as e:
+                            print(f"Lỗi cấu trúc dữ liệu boss {boss_key}: {e}")
+                            continue
+            except Exception as e:
+                print(f"[ERROR] Lỗi tiến trình Digital Raid: {e}")
+
+        except Exception as e:
+            print(f"[CRITICAL] Lỗi hệ thống loop: {e}")
 
     async def send_boss_alert(self, guild, boss, target_dt):
         channel = discord.utils.get(guild.text_channels, name="raid-timer")
@@ -130,7 +141,6 @@ class DigitalTour(commands.Cog):
             embed.add_field(name="Time", value=f"<t:{unix_ts}:t> (<t:{unix_ts}:R>)", inline=False)
             await channel.send(content=f"{role.mention} Bless Tour starts in 5 mins!", embed=embed, view=EventTranslationView(embed, "bless"))
 
-    # LỆNH THÊM BLESS
     @commands.command(name="setbless")
     async def setbless(self, ctx, minute: int, *, maps: str):
         guild_id = int(ctx.guild.id)
@@ -142,7 +152,6 @@ class DigitalTour(commands.Cog):
         )
         await ctx.send(f"✅ Đã thiết lập Bless Tour vào phút thứ **:{minute:02d}** mỗi giờ. Bản đồ: {', '.join(map_list)}")
 
-    # LỆNH THÊM BOSS
     @commands.command(name="setboss")
     async def setboss(self, ctx, b_name, m_name, s_time):
         guild_id = int(ctx.guild.id)
@@ -154,31 +163,25 @@ class DigitalTour(commands.Cog):
         await ctx.send(f"✅ Đã lưu Boss **{b_name}** tại map **{m_name}** vào database!")
 
 
-        import discord
-from discord.ext import commands
-
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.command(name="reloadall")
-    @commands.is_owner() # Chỉ chủ sở hữu bot mới dùng được lệnh này
+    @commands.is_owner() 
     async def reload_all(self, ctx):
         await ctx.typing()
         reloaded = []
         errors = []
-
-        # Phải dùng list() để tạo bản sao, tránh lỗi thay đổi size khi đang duyệt
         extensions = list(self.bot.extensions.keys())
 
         for ext in extensions:
             try:
                 await self.bot.reload_extension(ext)
-                reloaded.append(ext.split('.')[-1]) # Lấy tên cog ngắn gọn
+                reloaded.append(ext.split('.')[-1]) 
             except Exception as e:
                 errors.append(f"**{ext.split('.')[-1]}**: {str(e)}")
 
-        # Phản hồi kết quả
         embed = discord.Embed(title="🔄 System Reload", color=discord.Color.green())
         if reloaded:
             embed.add_field(name="Thành công", value=", ".join(reloaded), inline=False)
@@ -188,7 +191,6 @@ class Admin(commands.Cog):
         
         await ctx.send(embed=embed)
 
-# Hàm setup CHỈ ĐƯỢC ĐỂ 1 LẦN DƯỚI CÙNG
 async def setup(bot):
     await bot.add_cog(Admin(bot))
     await bot.add_cog(DigitalTour(bot))
