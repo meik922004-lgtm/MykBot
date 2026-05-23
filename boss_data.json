@@ -1,0 +1,25 @@
+{
+    "1266433856328831008": {
+        "orochi": {
+            "name": "OROCHI",
+            "map": "forest area(tour)",
+            "base_server_time": "12:05"
+        },
+        "bless_minutes": [
+            0,
+            6,
+            12,
+            16
+        ],
+        "bless_maps": [
+            "Forest of Beginning, Forest of Marionette, Metal Empire, Top of Nightmare"
+        ],
+        "bosses": {
+            "orochi": {
+                "name": "OROCHI",
+                "map": "Forest area(tour)",
+                "base_server_time": "15:05"
+            }
+        }
+    }
+}

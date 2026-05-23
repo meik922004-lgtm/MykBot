@@ -1,0 +1,63 @@
+import discord
+from discord.ext import commands
+import os
+from dotenv import load_dotenv
+from flask import Flask
+from threading import Thread
+
+# --- KHỞI TẠO WEB SERVER ĐỂ GIỮ BOT LUÔN CHẠY TRÊN RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot MyKBot đang hoạt động 24/7!"
+
+def run_server():
+    # Render sẽ cấp một cổng PORT ngẫu nhiên qua biến môi trường, mặc định là 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_server)
+    t.start()
+# --------------------------------------------------------
+
+# Tải token từ .env
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    raise ValueError("❌ Không tìm thấy DISCORD_TOKEN trong file .env!")
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
+class MyKBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
+
+    async def setup_hook(self):
+        # Tải toàn bộ Cogs trong thư mục ./cogs
+        if not os.path.exists("./cogs"):
+            os.makedirs("./cogs")
+            
+        for filename in os.listdir("./cogs"):
+            if filename.endswith(".py") and not filename.startswith("__"):
+                try:
+                    await self.load_extension(f"cogs.{filename[:-3]}")
+                    print(f"✅ Loaded: {filename}")
+                except Exception as e:
+                    print(f"❌ Failed to load {filename}: {e}")
+
+bot = MyKBot()
+
+@bot.event
+async def on_ready():
+    print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
+
+# Chạy Web Server song song với Bot
+if __name__ == "__main__":
+    keep_alive()  # Kích hoạt máy chủ web giữ mạng
+    bot.run(TOKEN)
