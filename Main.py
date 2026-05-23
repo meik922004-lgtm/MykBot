@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 
 # ==========================================
-# 1. KHỞI TẠO WEB SERVER CHO RENDER HEALTH CHECK
+# 1. KHỞI TẠO WEB SERVER ĐỂ RENDER HEALTH CHECK (BẮT BUỘC)
 # ==========================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -15,17 +15,18 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot MyKBot is online 24/7!")
 
+    # Vô hiệu hóa log ra terminal để tránh rác log của bot
     def log_message(self, format, *args):
         return
 
 def run_health_check_server():
-    # Render tự cấp port qua biến môi trường PORT
+    # Render tự động cấp port qua biến môi trường PORT
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"[System] Web server listening on port {port}...")
+    print(f"[System] Web server listening on port {port} for Render health check.")
     server.serve_forever()
 
-# Chạy server web ngầm trên một luồng riêng
+# Chạy web server trên một luồng riêng biệt để không chặn bot hoạt động
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
 # ==========================================
@@ -33,11 +34,11 @@ threading.Thread(target=run_health_check_server, daemon=True).start()
 # ==========================================
 load_dotenv()
 
-# Đã đồng bộ tên biến với cấu hình trên Render
+# Sử dụng BOT_TOKEN cho đồng bộ với cấu hình Environment Variables trên Render
 TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
-    raise ValueError("❌ Không tìm thấy BOT_TOKEN! Hãy kiểm tra lại cấu hình Environment Variables trên Render.")
+    raise ValueError("❌ Không tìm thấy BOT_TOKEN! Hãy kiểm tra lại cấu hình trên Render.")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -49,6 +50,7 @@ class MyKBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self):
+        # Tải toàn bộ Cogs trong thư mục ./cogs
         if not os.path.exists("./cogs"):
             os.makedirs("./cogs")
             
@@ -66,5 +68,5 @@ bot = MyKBot()
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
 
-# KÍCH HOẠT CHẠY BOT (Dòng này sẽ giữ cho tiến trình luôn sống)
+# LỆNH KÍCH HOẠT CHẠY BOT (Giữ tiến trình chính luôn sống, tránh lỗi Port scan timeout)
 bot.run(TOKEN)
