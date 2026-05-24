@@ -14,25 +14,39 @@ players_col = db["players"]
 
 active_parties = {}
 
-def get_gear_from_db(user_id: int):
+def get_gear_from_db(user_id: int, role_key: str):
     player = players_col.find_one({"user_id": user_id})
-    if not player or "my_stats" not in player: return "Please update your profile first(/mygear)"
-    return f"Role: {player['my_stats'].get('role', 'N/A')} | Gear: {player['my_stats'].get('gear', 'N/A')}"
-
+    if not player or "my_stats" not in player:
+        return "Gear info didnt update"
+    
+    # Truy cập vào object role tương ứng (ví dụ: my_stats['AA'])
+    # .upper() để đảm bảo khớp với key trong DB (VD: nhập 'aa' -> 'AA')
+    stats = player["my_stats"].get(role_key.upper())
+    
+    if not stats:
+        return "This role didnt set up in gear profile."
+    
+    # Trả về chuỗi thông tin gear
+    return f"Gear: {stats.get('gear', 'N/A')} | Deck: {stats.get('deck', 'N/A')} | Vice: {stats.get('vice', 'N/A')}"
 # --- MODAL TẠO PARTY ---
-class CreatePartyModal(ui.Modal, title="Tạo Party Mới"):
-    dg_name = ui.TextInput(label="Dungeon name", required=True)
-
+class CreatePartyModal(ui.Modal, title="Creat new party"):
+    dg_name = ui.TextInput(label="Dungeon name", required=True, placeholder="e.g: PDG, MDG")
+    leader_ign = ui.TextInput(label="Your IGN", required=True, placeholder="Your charactor name")
+    recruitment = ui.TextInput(label="Role needed", required=True, placeholder="e.g: Tank, DPS, Healer")
+    start_in = ui.TextInput(label="Start in:", required=True, placeholder="e.g: 5 min later...")
     async def on_submit(self, interaction: discord.Interaction):
         pid = str(uuid.uuid4())[:6].upper()
+        # Lưu thêm thông tin mới vào dictionary
         active_parties[pid] = {
-            "dg_name": self.dg_name.value, 
-            "host_id": interaction.user.id, 
-            "members": [{"id": interaction.user.id, "ign": "Host", "role": "Leader"}], 
+            "dg_name": self.dg_name.value,
+            "leader_ign": self.leader_ign.value,
+            "recruitment": self.recruitment.value,
+            "start_in": self.start_in.value,
+            "host_id": interaction.user.id,
+            "members": [{"id": interaction.user.id, "ign": self.leader_ign.value, "role": "Leader"}],
             "created_at": datetime.now(timezone.utc)
         }
-        await interaction.response.send_message(f"✅ Party created! **{self.dg_name.value}** (ID: {pid})", ephemeral=True)
-
+        await interaction.response.send_message(f"✅ Đã tạo party **{self.dg_name.value}** thành công! (ID: {pid})", ephemeral=True)
 # --- MODAL GỬI REQUEST ---
 class RequestJoinModal(ui.Modal, title="Join party"):
     ign = ui.TextInput(label="Your Ingame-name", required=True)
@@ -47,7 +61,7 @@ class RequestJoinModal(ui.Modal, title="Join party"):
         if not party or len(party["members"]) >= 4:
             return await interaction.response.send_message("The party does not exist or already full.!", ephemeral=True)
         
-        gear_info = get_gear_from_db(interaction.user.id)
+        gear_info = get_gear_from_db(interaction.user.id, self.role.value)
         host = interaction.client.get_user(self.host_id)
         if host:
             embed = discord.Embed(title=f"Request to join {party['dg_name']}", color=discord.Color.gold())
@@ -106,10 +120,14 @@ class ManagePartyView(ui.View):
         await interaction.response.send_message(view=view, ephemeral=True)
 
 # --- COG CHÍNH & LOBBY ---
+# --- COG CHÍNH & LOBBY ---
 class PartyFinder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.cleanup_task.start()
+
+    def cog_unload(self):
+        self.cleanup_task.cancel()
 
     @tasks.loop(hours=1)
     async def cleanup_task(self):
@@ -119,27 +137,56 @@ class PartyFinder(commands.Cog):
 
     @app_commands.command(name="party_lobby", description="Party Dashboard")
     async def party_lobby(self, interaction: discord.Interaction):
-        # UI Chính
         embed = discord.Embed(title="⚔️ ACTIVE PARTIES", color=discord.Color.blurple())
+        
         if not active_parties:
-            embed.description = "There are no parties yet. Please create a new party.!"
+            embed.description = "There are no parties yet. Please create a new party!"
         else:
             for pid, p in active_parties.items():
                 count = len(p["members"])
-                embed.add_field(name=f"{p['dg_name']} (ID: {pid})", value=f"Status: [{count}/4] | Host: <@{p['host_id']}>", inline=False)
+                status = f"[{count}/4]" if count < 4 else "Full"
+                info = (
+                    f"👤 **Leader**: {p.get('leader_ign', 'N/A')}\n"
+                    f"🎯 **Need recruit**: {p.get('recruitment', 'N/A')}\n"
+                    f"⏰ **Start in**: {p.get('start_in', 'none')}\n"
+                    f"📊 **Status**: {status}"
+                )
+                embed.add_field(name=f"⚔️ {p.get('dg_name', 'Unknown')} (ID: {pid})", value=info, inline=False)
         
-        # Nút tương tác
-        view = ui.View()
-        
-        async def create_cb(i): await i.response.send_modal(CreatePartyModal())
+        # --- SỬA LẠI LOGIC CHỌN PARTY ---
+        async def create_cb(i): 
+            await i.response.send_modal(CreatePartyModal())
+
         async def req_cb(i):
-            if not active_parties: return await i.response.send_message("No party to join..", ephemeral=True)
-            await i.response.send_modal(RequestJoinModal(list(active_parties.keys())[0], list(active_parties.values())[0]["host_id"]))
+            if not active_parties: 
+                return await i.response.send_message("No party to join!", ephemeral=True)
+            
+            # Nếu có nhiều party, tạo menu chọn (Select Menu)
+            if len(active_parties) > 1:
+                view = ui.View()
+                select = ui.Select(placeholder="Choose a party to join", 
+                    options=[discord.SelectOption(label=f"{p['dg_name']} (ID: {pid})", value=pid) 
+                             for pid, p in active_parties.items()])
+                
+                async def select_callback(si):
+                    await si.response.send_modal(RequestJoinModal(si.data['values'][0], active_parties[si.data['values'][0]]["host_id"]))
+                
+                select.callback = select_callback
+                view.add_item(select)
+                await i.response.send_message("Select the party:", view=view, ephemeral=True)
+            else:
+                # Nếu chỉ có 1 party, join luôn
+                pid = list(active_parties.keys())[0]
+                await i.response.send_modal(RequestJoinModal(pid, active_parties[pid]["host_id"]))
+
         async def manage_cb(i):
             target_pid = next((pid for pid, p in active_parties.items() if any(m["id"] == i.user.id for m in p["members"])), None)
-            if not target_pid: return await i.response.send_message("You're not in any party.", ephemeral=True)
+            if not target_pid: 
+                return await i.response.send_message("You're not in any party.", ephemeral=True)
             await i.response.send_message(view=ManagePartyView(target_pid, i.user.id == active_parties[target_pid]["host_id"]), ephemeral=True)
         
+        # UI Button Setup
+        view = ui.View()
         btn_create = ui.Button(label="Create Party", style=discord.ButtonStyle.primary)
         btn_create.callback = create_cb
         btn_req = ui.Button(label="Send Request", style=discord.ButtonStyle.success)
@@ -152,6 +199,5 @@ class PartyFinder(commands.Cog):
         view.add_item(btn_manage)
         
         await interaction.response.send_message(embed=embed, view=view)
-
 async def setup(bot):
     await bot.add_cog(PartyFinder(bot))
