@@ -104,7 +104,6 @@ class DungeonStats(commands.Cog):
         self.bot = bot
 
     @staticmethod
-    @staticmethod
     async def _perform_check(interaction: discord.Interaction, dg_name: str):
         await interaction.response.defer(ephemeral=True)
         player = await db.players.find_one({"user_id": interaction.user.id})
@@ -112,7 +111,7 @@ class DungeonStats(commands.Cog):
         # Lấy thông tin Dungeon từ DB
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
         if not cfg:
-            return await interaction.followup.send(f"❌ Error: Cant check infomation of`{dg_name}` in DB.", ephemeral=True)
+            return await interaction.followup.send(f"❌ Lỗi: Không tìm thấy dữ liệu Dungeon `{dg_name}` trong DB.", ephemeral=True)
 
         # Kiểm tra xem người dùng đã setup gear chưa
         if not player or "my_stats" not in player or not player["my_stats"]:
@@ -154,9 +153,10 @@ class DungeonStats(commands.Cog):
         embed.color = discord.Color.green() if has_any_passed else discord.Color.red()
         
         if not embed.fields:
-            return await interaction.followup.send("❌ Error: cant check your gear's infomation", ephemeral=True)
+            return await interaction.followup.send("❌ Dữ liệu Gear của bạn bị lỗi, hãy setup lại!", ephemeral=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
+
     @app_commands.command(name="mygear", description="Update your profile")
     async def mygear(self, interaction: discord.Interaction):
         await interaction.response.send_message(embed=discord.Embed(title="⚙️ Setup MyGear", description="Chọn role để bắt đầu:", color=discord.Color.blue()), view=MyGearWizard(interaction.user.id), ephemeral=True)
