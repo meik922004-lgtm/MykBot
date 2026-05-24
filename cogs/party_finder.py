@@ -11,7 +11,11 @@ from pymongo import MongoClient
 # ==========================================
 # Đảm bảo biến môi trường MONGO_URI đã được thiết lập trên hosting của bạn
 MONGO_URI = os.getenv("MONGO_URI") 
-mongo_client = MongoClient(MONGO_URI)
+if not MONGO_URI:
+    MONGO_URI = "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0"
+
+# SỬA Ở ĐÂY: Thêm cờ bỏ qua SSL giống hệt bên Database.py
+mongo_client = MongoClient(MONGO_URI, tlsAllowInvalidCertificates=True)
 players_col = mongo_client["database0"]["players"]
 
 def get_gear_from_db(user_id: int) -> str:
@@ -124,10 +128,12 @@ class MemberManageSelect(discord.ui.Select):
     def __init__(self, party):
         self.party = party
         opts = [discord.SelectOption(label=f"{m['ign']} ({m['role']})", value=str(m["id"])) for m in party["members"] if m["id"] != party["host_id"]]
-        if not opts: opts.append(discord.SelectOption(label="Trống", value="none"))
+        if not opts: opts.append(discord.SelectOption(label="Empty", value="none"))
         super().__init__(placeholder="Member manager", options=opts)
 
     async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            return await interaction.response.send_message("There is no member to show infomation.", ephemeral=True)
         gear = get_gear_from_db(int(self.values[0]))
         await interaction.response.send_message(embed=discord.Embed(title="Profile", description=gear or "No Data"), ephemeral=True)
 
@@ -146,7 +152,7 @@ class PartyControlPanel(discord.ui.View):
 class PartyDropdown(discord.ui.Select):
     def __init__(self, parties_on_page):
         opts = [discord.SelectOption(label=f"[{p_id}] {data['dg_name']}", value=p_id) for p_id, data in parties_on_page.items()]
-        if not opts: opts.append(discord.SelectOption(label="Trống", value="none"))
+        if not opts: opts.append(discord.SelectOption(label="Empty", value="none"))
         super().__init__(placeholder="Select party to send request", options=opts)
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(RequestJoinModal(self.values[0], active_parties[self.values[0]]['host_id']))
@@ -161,9 +167,19 @@ class MainLobbyView(discord.ui.View):
         self.clear_items()
         page_items = dict(list(self.source_data.items())[self.page*6:self.page*6+6])
         self.add_item(PartyDropdown(page_items))
-        self.add_item(discord.ui.Button(label="Creat party", style=discord.ButtonStyle.success, row=2, callback=lambda i: i.response.send_modal(CreatePartyModal())))
-        self.add_item(discord.ui.Button(label="Manage", style=discord.ButtonStyle.primary, row=2, callback=self.manage_my_party))
 
+        # --- SỬA Ở ĐÂY ---
+        # 1. Tạo nút "Create party"
+        btn_create = discord.ui.Button(label="Create party", style=discord.ButtonStyle.success, row=2)
+        async def create_callback(interaction: discord.Interaction):
+            await interaction.response.send_modal(CreatePartyModal())
+        btn_create.callback = create_callback
+        self.add_item(btn_create)
+
+        # 2. Tạo nút "Manage"
+        btn_manage = discord.ui.Button(label="Manage", style=discord.ButtonStyle.primary, row=2)
+        btn_manage.callback = self.manage_my_party
+        self.add_item(btn_manage)
     def get_embed(self):
         embed = discord.Embed(title="🎮 PARTY LOBBY", color=discord.Color.blurple())
         for p_id, data in list(self.source_data.items())[self.page*6:self.page*6+6]:
@@ -174,7 +190,7 @@ class MainLobbyView(discord.ui.View):
         for pid, data in active_parties.items():
             if data["host_id"] == interaction.user.id or any(m["id"] == interaction.user.id for m in data["members"]):
                 return await interaction.response.send_message(embed=discord.Embed(title=f"Party: {data['dg_name']}"), view=PartyControlPanel(data, data["host_id"] == interaction.user.id), ephemeral=True)
-        await interaction.response.send_message("Không có party nào.", ephemeral=True)
+        await interaction.response.send_message("There is no party avaiable.", ephemeral=True)
 
 # ==========================================
 # 4. COG

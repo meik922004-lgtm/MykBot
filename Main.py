@@ -79,7 +79,7 @@ async def sync(ctx):
         except Exception as e:
             await ctx.send(f"❌ Lỗi: {e}")
     else:
-        await ctx.send("❌ Bạn không có quyền sử dụng lệnh này.")
+        await ctx.send("❌ You dont have permission to use this command.")
 
 @bot.command()
 async def reload(ctx, extension: str):
@@ -90,7 +90,7 @@ async def reload(ctx, extension: str):
         except Exception as e:
             await ctx.send(f"❌ Lỗi reload: {e}")
     else:
-        await ctx.send("❌ Bạn không có quyền.")
+        await ctx.send("❌  You dont have permission to use this command.")
 @bot.event
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
