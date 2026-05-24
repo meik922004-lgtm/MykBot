@@ -47,6 +47,7 @@ intents.guilds = True
 
 class MyKBot(commands.Bot):
     def __init__(self):
+        # Bạn vẫn có thể giữ command_prefix="!" để dùng song song cả 2 loại lệnh nếu muốn
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self):
@@ -61,6 +62,13 @@ class MyKBot(commands.Bot):
                     print(f"✅ Loaded: {filename}")
                 except Exception as e:
                     print(f"❌ Failed to load {filename}: {e}")
+                    
+        # ĐỒNG BỘ SLASH COMMANDS VỚI DISCORD
+        try:
+            synced = await self.tree.sync()
+            print(f"✅ Đã đồng bộ thành công {len(synced)} lệnh Slash (App Commands).")
+        except Exception as e:
+            print(f"❌ Lỗi khi đồng bộ lệnh Slash: {e}")
 
 bot = MyKBot()
 
@@ -68,5 +76,5 @@ bot = MyKBot()
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
 
-# LỆNH KÍCH HOẠT CHẠY BOT (Giữ tiến trình chính luôn sống, tránh lỗi Port scan timeout)
+# LỆNH KÍCH HOẠT CHẠY BOT
 bot.run(TOKEN)

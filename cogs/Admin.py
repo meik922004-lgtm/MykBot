@@ -1,10 +1,12 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
-import time
 from Database import db 
 
-# View cho các nút dịch thuật (Giữ nguyên của bạn)
+# ==========================================
+# 1. VIEW DỊCH THUẬT GIAO DIỆN SỰ KIỆN
+# ==========================================
 class EventTranslationView(discord.ui.View):
     def __init__(self, original_embed: discord.Embed, event_type: str):
         super().__init__(timeout=None)
@@ -39,6 +41,10 @@ class EventTranslationView(discord.ui.View):
     @discord.ui.button(label="🇩🇪 DE", style=discord.ButtonStyle.secondary, custom_id="evt_de")
     async def trans_de(self, inter: discord.Interaction, btn: discord.ui.Button): await inter.response.send_message(embed=self.build_embed("de", inter.user.display_name), ephemeral=True)
 
+
+# ==========================================
+# 2. COG QUẢN LÝ LỊCH TRÌNH BOSS & BLESS
+# ==========================================
 class DigitalTour(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -46,19 +52,16 @@ class DigitalTour(commands.Cog):
         self.notified_bless = set()
         self.boss_schedule_loop.start() 
 
-    # SỬA TẠI ĐÂY: Hàm tự động tắt vòng lặp cũ khi bạn sử dụng lệnh !reloadall
     def cog_unload(self):
         self.boss_schedule_loop.cancel()
 
     @tasks.loop(minutes=1)
     async def boss_schedule_loop(self):
         await self.bot.wait_until_ready()
-        
-        # Bọc try...except tổng để nếu lỗi mạng hoặc lỗi data thì 1 phút sau vòng lặp vẫn tiếp tục chạy
         try:
             utc_now = datetime.now(timezone.utc)
             
-            # 1. Xử lý Bless Tour (Lặp mỗi giờ)
+            # Xử lý Bless Tour (Lặp mỗi giờ)
             try:
                 cursor_bless = db.bless_tours.find({})
                 async for bless_cfg in cursor_bless:
@@ -85,7 +88,7 @@ class DigitalTour(commands.Cog):
             except Exception as e:
                 print(f"[ERROR] Lỗi tiến trình Bless Tour: {e}")
 
-            # 2. Xử lý Digital Raid (Chu kỳ 90 phút)
+            # Xử lý Digital Raid Boss (Chu kỳ 90 phút)
             try:
                 cursor_boss = db.bosses.find({})
                 async for guild_data in cursor_boss:
@@ -141,32 +144,40 @@ class DigitalTour(commands.Cog):
             embed.add_field(name="Time", value=f"<t:{unix_ts}:t> (<t:{unix_ts}:R>)", inline=False)
             await channel.send(content=f"{role.mention} Bless Tour starts in 5 mins!", embed=embed, view=EventTranslationView(embed, "bless"))
 
-    @commands.command(name="setbless")
-    async def setbless(self, ctx, minute: int, *, maps: str):
-        guild_id = int(ctx.guild.id)
+    # Lệnh Slash: Cài đặt Bless
+    @app_commands.command(name="setbless", description="Thiết lập thời gian cho Bless Tour")
+    @app_commands.default_permissions(administrator=True)
+    async def setbless(self, interaction: discord.Interaction, minute: int, maps: str):
+        guild_id = int(interaction.guild_id)
         map_list = [m.strip() for m in maps.split("|")]
         await db.bless_tours.update_one(
             {"guild_id": guild_id}, 
             {"$set": {"minute": minute, "maps": map_list}}, 
             upsert=True
         )
-        await ctx.send(f"✅ Đã thiết lập Bless Tour vào phút thứ **:{minute:02d}** mỗi giờ. Bản đồ: {', '.join(map_list)}")
+        await interaction.response.send_message(f"✅ Đã thiết lập Bless Tour vào phút thứ **:{minute:02d}** mỗi giờ. Bản đồ: {', '.join(map_list)}")
 
-    @commands.command(name="setboss")
-    async def setboss(self, ctx, b_name, m_name, s_time):
-        guild_id = int(ctx.guild.id)
+    # Lệnh Slash: Cài đặt Boss
+    @app_commands.command(name="setboss", description="Thiết lập thời gian xuất hiện của Digital Tour Boss")
+    @app_commands.default_permissions(administrator=True)
+    async def setboss(self, interaction: discord.Interaction, b_name: str, m_name: str, s_time: str):
+        guild_id = int(interaction.guild_id)
         await db.bosses.update_one(
             {"guild_id": guild_id},
             {"$set": {f"bosses.{b_name.lower()}": {"name": b_name, "map": m_name, "base_server_time": s_time}}},
             upsert=True
         )
-        await ctx.send(f"✅ Đã lưu Boss **{b_name}** tại map **{m_name}** vào database!")
+        await interaction.response.send_message(f"✅ Đã lưu Boss **{b_name}** tại map **{m_name}** vào database!")
 
 
+# ==========================================
+# 3. COG ADMIN (QUẢN TRỊ HỆ THỐNG)
+# ==========================================
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # Lệnh quản trị hệ thống - VẪN DÙNG PREFIX (!) ĐỂ AN TOÀN
     @commands.command(name="reloadall")
     @commands.is_owner() 
     async def reload_all(self, ctx):
@@ -181,10 +192,17 @@ class Admin(commands.Cog):
                 reloaded.append(ext.split('.')[-1]) 
             except Exception as e:
                 errors.append(f"**{ext.split('.')[-1]}**: {str(e)}")
+        
+        # Gọi sync tree thủ công để cập nhật lại Slash Commands nếu có thay đổi code
+        try:
+            await self.bot.tree.sync()
+            reloaded.append("🔄 Đồng bộ Slash Commands thành công!")
+        except Exception as e:
+            errors.append(f"Sync Tree: {str(e)}")
 
         embed = discord.Embed(title="🔄 System Reload", color=discord.Color.green())
         if reloaded:
-            embed.add_field(name="Thành công", value=", ".join(reloaded), inline=False)
+            embed.add_field(name="Thành công", value="\n".join(reloaded), inline=False)
         if errors:
             embed.color = discord.Color.red()
             embed.add_field(name="Lỗi", value="\n".join(errors), inline=False)

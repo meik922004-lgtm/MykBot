@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import uuid
 
@@ -262,7 +263,8 @@ class PartySetupView(discord.ui.View):
         placeholder="2. Your Current Role...",
         options=[
             discord.SelectOption(label="DPS", emoji="🗡️"),
-            discord.SelectOption(label="TANK", emoji="🛡️")
+            discord.SelectOption(label="TANK", emoji="🛡️"),
+            discord.SelectOption(label="UFM", emoji="🧩")
         ], row=1
     )
     async def select_host_role(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -296,14 +298,16 @@ class RealTimePartyFinder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="make_pt")
-    async def make_pt_command(self, ctx):
+    # Đã nâng cấp thành Slash Command
+    @app_commands.command(name="make_pt", description="Tạo bảng tìm kiếm thành viên tổ đội liên server")
+    async def make_pt(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🛠️ CROSS-SERVER LFG BUILDER", 
             description="Configure your dungeon specifications and desired squad compositions using the menus below.", 
             color=discord.Color.gold()
         )
-        await ctx.send(embed=embed, view=PartySetupView(self.bot), ephemeral=True)
+        # Sử dụng interaction.response.send_message thay vì ctx.send
+        await interaction.response.send_message(embed=embed, view=PartySetupView(self.bot), ephemeral=True)
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
