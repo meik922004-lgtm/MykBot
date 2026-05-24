@@ -69,8 +69,31 @@ class MyKBot(commands.Bot):
 
 bot = MyKBot()
 
+@bot.command()
+async def sync(ctx):
+    # Thay '123456789012345678' bằng ID Discord của bạn để bảo mật
+    if ctx.author.id == 1283689737567211581: 
+        try:
+            synced = await bot.tree.sync()
+            await ctx.send(f"✅ Đã đồng bộ thành công {len(synced)} lệnh Slash!")
+        except Exception as e:
+            await ctx.send(f"❌ Lỗi: {e}")
+    else:
+        await ctx.send("❌ Bạn không có quyền sử dụng lệnh này.")
+
+@bot.command()
+async def reload(ctx, extension: str):
+    if ctx.author.id == 1283689737567211581: 
+        try:
+            await bot.reload_extension(f"cogs.{extension}")
+            await ctx.send(f"✅ Đã tải lại (reload): `cogs.{extension}`")
+        except Exception as e:
+            await ctx.send(f"❌ Lỗi reload: {e}")
+    else:
+        await ctx.send("❌ Bạn không có quyền.")
 @bot.event
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
+    
 
 bot.run(TOKEN)
