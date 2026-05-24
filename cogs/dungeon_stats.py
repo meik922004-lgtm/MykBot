@@ -4,11 +4,19 @@ from discord import app_commands
 from Database import db
 
 # ==========================================
-# CẤU HÌNH DỮ LIỆU (Giữ nguyên)
+# CẤU HÌNH DỮ LIỆU
 # ==========================================
 GEAR_OPTIONS = ["Full fang gear", "1 piece of Spiral", "2 piece of Spiral", "Full Spiral set", "1 piece of corrupted", "2 piece of corrupted", "full set of corrupted"]
-VICE_OPTIONS = {"AA": ["D.ark 4", "D,ark 5", "D.ark 6", "D.ark Uncontroll", "Void vice"], "SK": ["Royal Vice","Truevice", "Truevice(Advance)", "Void vice"], "TANK": ["D.ark 6", "D.ark Chrome", "Void vice"]}
-DECK_OPTIONS = {"AA": ["Divinus", "CrimsonPath/Corrupted Power", "Power of Darkness / Crimson Nexus", "Eclipsed Genesis"], "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core"], "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion"]}
+VICE_OPTIONS = {
+    "AA": ["D.ark 4", "D,ark 5", "D.ark 6", "D.ark Uncontroll", "Void vice"], 
+    "SK": ["Royal Vice","Truevice", "Truevice(Advance)", "Void vice"], 
+    "TANK": ["D.ark 6", "D.ark Chrome", "Void vice"]
+}
+DECK_OPTIONS = {
+    "AA": ["Divinus", "CrimsonPath/Corrupted Power", "Power of Darkness / Crimson Nexus", "Eclipsed Genesis"], 
+    "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core"], 
+    "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion"]
+}
 
 # ==========================================
 # WIZARD: CẬP NHẬT GEAR
@@ -19,36 +27,57 @@ class MyGearWizard(discord.ui.View):
         self.user_id = user_id
         self.data = {"role": None, "gear": None, "vice": None, "deck": None}
         self.step = 0
+        self.update_components() # Thêm menu đầu tiên vào View ngay lập tức
 
-    async def update_ui(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="⚙️ Setup MyGear", color=discord.Color.blue())
-        embed.add_field(name="Current", value=f"Role: {self.data['role'] or '...'}\nGear: {self.data['gear'] or '...'}\nVice: {self.data['vice'] or '...'}\nDeck: {self.data['deck'] or '...'}")
-        
+    def update_components(self):
         self.clear_items()
+        
         if self.step == 0:
             select = discord.ui.Select(placeholder="Chọn Role", options=[discord.SelectOption(label=r) for r in ["AA", "SK", "TANK"]])
-            select.callback = lambda i: self.next_step(i, "role", 1)
+            # Sửa lỗi: Khai báo async def thay vì dùng lambda
+            async def role_callback(interaction: discord.Interaction):
+                self.data["role"] = interaction.data["values"][0]
+                self.step = 1
+                await self.update_ui(interaction)
+            select.callback = role_callback
+            self.add_item(select)
+            
         elif self.step == 1:
             select = discord.ui.Select(placeholder="Chọn Gear", options=[discord.SelectOption(label=g) for g in GEAR_OPTIONS])
-            select.callback = lambda i: self.next_step(i, "gear", 2)
+            async def gear_callback(interaction: discord.Interaction):
+                self.data["gear"] = interaction.data["values"][0]
+                self.step = 2
+                await self.update_ui(interaction)
+            select.callback = gear_callback
+            self.add_item(select)
+            
         elif self.step == 2:
             select = discord.ui.Select(placeholder="Chọn Vice", options=[discord.SelectOption(label=v) for v in VICE_OPTIONS[self.data["role"]]])
-            select.callback = lambda i: self.next_step(i, "vice", 3)
+            async def vice_callback(interaction: discord.Interaction):
+                self.data["vice"] = interaction.data["values"][0]
+                self.step = 3
+                await self.update_ui(interaction)
+            select.callback = vice_callback
+            self.add_item(select)
+            
         elif self.step == 3:
             select = discord.ui.Select(placeholder="Chọn Deck", options=[discord.SelectOption(label=d) for d in DECK_OPTIONS[self.data["role"]]])
-            select.callback = lambda i: self.next_step(i, "deck", 4)
-        
-        if self.step < 4:
+            async def deck_callback(interaction: discord.Interaction):
+                self.data["deck"] = interaction.data["values"][0]
+                self.step = 4
+                await self.update_ui(interaction)
+            select.callback = deck_callback
             self.add_item(select)
+
+    async def update_ui(self, interaction: discord.Interaction):
+        if self.step < 4:
+            self.update_components()
+            embed = discord.Embed(title="⚙️ Setup MyGear", color=discord.Color.blue())
+            embed.add_field(name="Current", value=f"Role: {self.data['role'] or '...'}\nGear: {self.data['gear'] or '...'}\nVice: {self.data['vice'] or '...'}\nDeck: {self.data['deck'] or '...'}")
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await db.players.update_one({"user_id": self.user_id}, {"$set": {"my_stats": self.data}}, upsert=True)
             await interaction.response.edit_message(content="✅ Saved config!", embed=None, view=None)
-
-    async def next_step(self, inter, key, next_step):
-        self.data[key] = inter.data["values"][0]
-        self.step = next_step
-        await self.update_ui(inter)
 
 # ==========================================
 # VIEW: DANH SÁCH DUNGEON VỚI NÚT BẤM
@@ -71,7 +100,8 @@ class DungeonListView(discord.ui.View):
 # COG CHÍNH
 # ==========================================
 class DungeonStats(commands.Cog):
-    def __init__(self, bot): self.bot = bot
+    def __init__(self, bot): 
+        self.bot = bot
 
     @staticmethod
     async def _perform_check(interaction: discord.Interaction, dg_name: str):
@@ -80,9 +110,9 @@ class DungeonStats(commands.Cog):
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name.lower()})
         
         if not player or "my_stats" not in player:
-            return await interaction.followup.send("❌ Please use /mygear to setup profile first!", ephemeral=True)
+            return await interaction.followup.send("❌ Please use `/mygear` to setup profile first!", ephemeral=True)
         if not cfg or "reqs" not in cfg:
-            return await interaction.followup.send("❌ Dungeon standart is empty.", ephemeral=True)
+            return await interaction.followup.send("❌ Dungeon standard is empty.", ephemeral=True)
 
         s = player["my_stats"]
         req = cfg["reqs"]
@@ -95,40 +125,44 @@ class DungeonStats(commands.Cog):
             if u_val in allowed:
                 results.append(f"✅ {cat.upper()}: {u_val}")
             else:
-                results.append(f"❌ {cat.upper()}: {u_val} (Requirement: {', '.join(allowed)})")
+                # Xử lý trường hợp allowed rỗng để bot không ném lỗi
+                results.append(f"❌ {cat.upper()}: {u_val} (Requirement: {', '.join(allowed) if allowed else 'None'})")
                 is_ok = False
 
         embed = discord.Embed(title=f"Check: {dg_name.upper()}", color=discord.Color.green() if is_ok else discord.Color.red())
         embed.description = "\n".join(results)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # 1. Lệnh /mygear (đã sửa lỗi)
     @app_commands.command(name="mygear", description="Update your profile")
     async def mygear(self, interaction: discord.Interaction):
-        # Tạo một embed làm nội dung thông báo
         embed = discord.Embed(
             title="⚙️ Setup MyGear", 
             description="Please choose your role before setup MyGear:", 
             color=discord.Color.blue()
         )
-        
-        # Gửi kèm embed cùng với view
         await interaction.response.send_message(embed=embed, view=MyGearWizard(interaction.user.id), ephemeral=True)
 
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
         p = await db.players.find_one({"user_id": interaction.user.id})
-        if not p: return await interaction.response.send_message("❌ Chưa setup!", ephemeral=True)
+        if not p or "my_stats" not in p: 
+            return await interaction.response.send_message("❌ Chưa setup!", ephemeral=True)
+        
         s = p["my_stats"]
         embed = discord.Embed(title=f"🛡️ {interaction.user.name}", color=discord.Color.gold())
-        for k, v in s.items(): embed.add_field(name=k.upper(), value=v)
+        for k, v in s.items(): 
+            embed.add_field(name=k.upper(), value=v)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="dglist", description="List of Dungeons")
     async def dglist(self, interaction: discord.Interaction):
         cursor = db.dungeon_configs.find({})
         dungeons = await cursor.to_list(length=25)
-        if not dungeons: return await interaction.response.send_message("❌ Dungeons List is empty.", ephemeral=True)
+        
+        if not dungeons: 
+            return await interaction.response.send_message("❌ Dungeons List is empty.", ephemeral=True)
+        
         await interaction.response.send_message("📍 Select dungeon to check:", view=DungeonListView(dungeons), ephemeral=True)
 
-async def setup(bot): await bot.add_cog(DungeonStats(bot))
+async def setup(bot): 
+    await bot.add_cog(DungeonStats(bot))
