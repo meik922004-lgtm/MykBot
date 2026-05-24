@@ -104,20 +104,56 @@ class DungeonStats(commands.Cog):
         self.bot = bot
 
     @staticmethod
+    @staticmethod
     async def _perform_check(interaction: discord.Interaction, dg_name: str):
         await interaction.response.defer(ephemeral=True)
         player = await db.players.find_one({"user_id": interaction.user.id})
         
-        # Sửa lỗi lấy dữ liệu DB: Bỏ .lower() để khớp với dạng IN HOA trong Database
+        # Lấy thông tin Dungeon từ DB
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
-        
         if not cfg:
-            return await interaction.followup.send(f"❌ Cant check data of `{dg_name}` in DB.", ephemeral=True)
+            return await interaction.followup.send(f"❌ Error: cant find data of `{dg_name}` in DB.", ephemeral=True)
 
-        if not player or "my_stats" not in player:
+        # Kiểm tra xem người dùng đã setup gear chưa
+        if not player or "my_stats" not in player or not player["my_stats"]:
             return await interaction.followup.send("❌ Please use `/mygear` first!", ephemeral=True)
+
+        req = cfg.get("reqs", {})
+        has_any_passed = False # Biến cờ để theo dõi xem có role nào pass không
         
-        # Lấy required_role an toàn để tránh crash
-        req_role = cfg.get("required_role") 
-        if not req_role:
-            return await interaction.followup.send(f"❌ Database error: `{dg_name}` didnt setup!", ephemeral=True)
+        embed = discord.Embed(title=f"Check: {dg_name.upper()}")
+        
+        # Duyệt qua toàn bộ các role mà user đã lưu
+        for role_name, stats in player["my_stats"].items():
+            if not isinstance(stats, dict): 
+                continue
+                
+            results = []
+            is_role_ok = True
+            
+            # Kiểm tra từng hạng mục của role này với yêu cầu của Dungeon
+            for cat in ["gear", "vice", "deck"]:
+                u_val = stats.get(cat)
+                allowed = req.get(cat, [])
+                
+                if u_val in allowed:
+                    results.append(f"✅ {cat.upper()}: {u_val}")
+                else:
+                    allowed_str = ', '.join(allowed) if allowed else 'None'
+                    results.append(f"❌ {cat.upper()}: {u_val} (Req: {allowed_str})")
+                    is_role_ok = False
+            
+            # Nếu role này đạt đủ mọi chỉ tiêu, đánh dấu là user đã pass
+            if is_role_ok:
+                has_any_passed = True
+                
+            status_text = "✅ PASS" if is_role_ok else "❌ FAIL"
+            embed.add_field(name=f"Role: {role_name} [{status_text}]", value="\n".join(results), inline=False)
+
+        # Đổi màu embed dựa trên việc có ít nhất 1 role pass hay không
+        embed.color = discord.Color.green() if has_any_passed else discord.Color.red()
+        
+        if not embed.fields:
+            return await interaction.followup.send("❌ Your gear's infomation error, please setup again!", ephemeral=True)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
