@@ -100,65 +100,24 @@ class DungeonListView(discord.ui.View):
 # COG CHÍNH
 # ==========================================
 class DungeonStats(commands.Cog):
-    def __init__(self, bot): self.bot = bot
+    def __init__(self, bot): 
+        self.bot = bot
 
     @staticmethod
     async def _perform_check(interaction: discord.Interaction, dg_name: str):
         await interaction.response.defer(ephemeral=True)
         player = await db.players.find_one({"user_id": interaction.user.id})
-        cfg = await db.dungeon_configs.find_one({"dg_name": dg_name.lower()})
         
+        # Sửa lỗi lấy dữ liệu DB: Bỏ .lower() để khớp với dạng IN HOA trong Database
+        cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
+        
+        if not cfg:
+            return await interaction.followup.send(f"❌ Cant check data of `{dg_name}` in DB.", ephemeral=True)
+
         if not player or "my_stats" not in player:
-            return await interaction.followup.send("❌ Please use /mygear first!", ephemeral=True)
+            return await interaction.followup.send("❌ Please use `/mygear` first!", ephemeral=True)
         
-        req_role = cfg.get("required_role") # Đảm bảo trong database dungeon có trường này
-        if not req_role or req_role not in player["my_stats"]:
-            return await interaction.followup.send(f"❌ Bạn chưa setup role {req_role}!", ephemeral=True)
-
-        s = player["my_stats"][req_role]
-        req = cfg["reqs"]
-        results = []
-        is_ok = True
-
-        for cat in ["gear", "vice", "deck"]:
-            u_val = s.get(cat)
-            allowed = req.get(cat, [])
-            if u_val in allowed:
-                results.append(f"✅ {cat.upper()}: {u_val}")
-            else:
-                results.append(f"❌ {cat.upper()}: {u_val} (Req: {', '.join(allowed)})")
-                is_ok = False
-
-        embed = discord.Embed(title=f"Check: {dg_name.upper()} ({req_role})", color=discord.Color.green() if is_ok else discord.Color.red())
-        embed.description = "\n".join(results)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="mygear", description="Update your profile")
-    async def mygear(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=discord.Embed(title="⚙️ Setup MyGear", description="Chọn role để bắt đầu:", color=discord.Color.blue()), view=MyGearWizard(interaction.user.id), ephemeral=True)
-
-    @app_commands.command(name="showmygear", description="Flex Gear")
-    async def showmygear(self, interaction: discord.Interaction):
-        p = await db.players.find_one({"user_id": interaction.user.id})
-        
-        # Kiểm tra xem người dùng đã có dữ liệu chưa
-        if not p or "my_stats" not in p or not p["my_stats"]: 
-            return await interaction.response.send_message("❌ Your gear infomation is empty!", ephemeral=True)
-        
-        embed = discord.Embed(title=f"🛡️ {interaction.user.name}'s Profile", color=discord.Color.gold())
-        
-        # Duyệt qua từng role đã lưu trong my_stats
-        for role_name, stats in p["my_stats"].items():
-            # Kiểm tra nếu stats là dictionary thì mới lấy dữ liệu
-            if isinstance(stats, dict):
-                value_str = f"Gear: {stats.get('gear', 'N/A')}\nVice: {stats.get('vice', 'N/A')}\nDeck: {stats.get('deck', 'N/A')}"
-                embed.add_field(name=f"Role: {role_name}", value=value_str, inline=False)
-        
-        await interaction.response.send_message(embed=embed)
-    @app_commands.command(name="dglist", description="List of Dungeons")
-    async def dglist(self, interaction: discord.Interaction):
-        dungeons = await db.dungeon_configs.find({}).to_list(length=25)
-        if not dungeons: return await interaction.response.send_message("❌ Empty.", ephemeral=True)
-        await interaction.response.send_message("📍 Please select dungeon", view=DungeonListView(dungeons), ephemeral=True)
-
-async def setup(bot): await bot.add_cog(DungeonStats(bot))
+        # Lấy required_role an toàn để tránh crash
+        req_role = cfg.get("required_role") 
+        if not req_role:
+            return await interaction.followup.send(f"❌ Database error: `{dg_name}` didnt setup!", ephemeral=True)
