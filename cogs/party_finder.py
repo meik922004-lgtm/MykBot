@@ -4,8 +4,7 @@ from discord.ext import commands
 import uuid
 import math
 
-# CẦN THIẾT: Import biến 'db' kết nối MongoDB từ file chính của bạn
-# Ví dụ: from database_connector import db
+# LƯU Ý: Thay 'main' bằng tên file chứa biến kết nối 'db' của bạn
 from Database import db 
 
 # ==========================
@@ -14,20 +13,20 @@ from Database import db
 async def check_user_profile(user_id: int) -> bool:
     """Kiểm tra user_id trong collection 'players' của MongoDB"""
     try:
-        # Truy vấn trực tiếp collection 'players'
         player = await db.players.find_one({"user_id": user_id})
         return player is not None
     except Exception as e:
-        print(f"Lỗi truy vấn DB: {e}")
+        print(f"Error: cant check DB: {e}")
         return False
 
 active_parties = {}
 
 # ==========================
-# MODALS & VIEWS
+# MODALS: CREATE & SEARCH
 # ==========================
 class CreatePartyModal(discord.ui.Modal, title="Create New Party"):
     dg_name = discord.ui.TextInput(label="Dungeon Name", placeholder="e.g. PDG, MDG, Mugen...", required=True)
+    start_time = discord.ui.TextInput(label="Start Time", placeholder="e.g 5 mins later...", required=True)
     ign = discord.ui.TextInput(label="Your Ingame Name", required=True)
     my_role = discord.ui.TextInput(label="Your Role", placeholder="e.g. DPS, Tank...", required=True)
     roles_needed = discord.ui.TextInput(label="Roles Needed", placeholder="e.g. 2 DPS, 1 Healer...", required=True)
@@ -38,6 +37,7 @@ class CreatePartyModal(discord.ui.Modal, title="Create New Party"):
             "host_id": interaction.user.id,
             "host_name": interaction.user.name,
             "dg_name": self.dg_name.value,
+            "start_time": self.start_time.value,
             "roles_needed": self.roles_needed.value,
             "members": [{"id": interaction.user.id, "ign": self.ign.value, "role": self.my_role.value}],
             "max_slots": 4
@@ -55,6 +55,9 @@ class SearchModal(discord.ui.Modal, title="Search Party"):
         self.dashboard_view.filter_query = self.keyword.value
         await self.dashboard_view.refresh_ui(interaction)
 
+# ==========================
+# DASHBOARD VIEW
+# ==========================
 class PartyDashboardView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -82,14 +85,15 @@ class PartyDashboardView(discord.ui.View):
             for p_id, data in batch:
                 embed.add_field(
                     name=f"{data['dg_name']} ({len(data['members'])}/4)",
-                    value=f"Host: {data['host_name']} | Needs: {data['roles_needed']}\nID: `{p_id}`",
+                    value=(f"🕒 **Start:** {data.get('start_time', 'N/A')}\n"
+                           f"👑 Host: {data['host_name']} | 🔍 Needs: {data['roles_needed']}\n"
+                           f"🆔 ID: `{p_id}`"),
                     inline=False
                 )
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="Create Party", style=discord.ButtonStyle.primary)
     async def btn_create(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Kiểm tra database thật
         if not await check_user_profile(interaction.user.id):
             return await interaction.response.send_message("❌ You didn't setup profile (/mygear), can't create party!", ephemeral=True)
         await interaction.response.send_modal(CreatePartyModal())
@@ -118,7 +122,7 @@ class RealTimePartyFinder(commands.Cog):
     @app_commands.command(name="make_party", description="Open party dashboard")
     async def make_party(self, interaction: discord.Interaction):
         view = PartyDashboardView(self.bot)
-        embed = discord.Embed(title="🎮 Party Hall", description="Use buttons below to browse or create.")
+        embed = discord.Embed(title="🎮 Party Hall", description=None)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
