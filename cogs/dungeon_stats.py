@@ -3,7 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 from Database import db
 
-# --- CẤU HÌNH OPTION (Giữ nguyên như đã thống nhất) ---
+# ==========================================
+# CẤU HÌNH DỮ LIỆU (Giữ nguyên)
+# ==========================================
 GEAR_OPTIONS = ["Full fang gear", "1 piece of Spiral", "2 piece of Spiral", "Full Spiral set"]
 VICE_OPTIONS = {"AA": ["Under D.ark 6", "D.ark Uncontroll", "Void vice"], "SK": ["Royal Vice", "Truevice(Advance)", "Void vice"], "TANK": ["Under D.ark 6", "D.ark Chrome", "Void vice"]}
 DECK_OPTIONS = {"AA": ["Divinus", "CrimsonPath/Corrupted Power", "Power of Darkness / Crimson Nexus", "Eclipsed Genesis"], "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core"], "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion"]}
@@ -49,10 +51,56 @@ class MyGearWizard(discord.ui.View):
         await self.update_ui(inter)
 
 # ==========================================
+# VIEW: DANH SÁCH DUNGEON VỚI NÚT BẤM
+# ==========================================
+class DungeonListView(discord.ui.View):
+    def __init__(self, dungeons):
+        super().__init__(timeout=60)
+        for dg in dungeons:
+            dg_name = dg.get("dg_name")
+            button = discord.ui.Button(label=dg_name.upper(), style=discord.ButtonStyle.primary, custom_id=f"btn_check_{dg_name}")
+            button.callback = self.create_callback(dg_name)
+            self.add_item(button)
+
+    def create_callback(self, dg_name):
+        async def callback(interaction: discord.Interaction):
+            await DungeonStats._perform_check(interaction, dg_name)
+        return callback
+
+# ==========================================
 # COG CHÍNH
 # ==========================================
 class DungeonStats(commands.Cog):
     def __init__(self, bot): self.bot = bot
+
+    @staticmethod
+    async def _perform_check(interaction: discord.Interaction, dg_name: str):
+        await interaction.response.defer(ephemeral=True)
+        player = await db.players.find_one({"user_id": interaction.user.id})
+        cfg = await db.dungeon_configs.find_one({"dg_name": dg_name.lower()})
+        
+        if not player or "my_stats" not in player:
+            return await interaction.followup.send("❌ Hãy dùng `/mygear` để setup trước!", ephemeral=True)
+        if not cfg or "reqs" not in cfg:
+            return await interaction.followup.send("❌ Dungeon chưa được cấu hình yêu cầu.", ephemeral=True)
+
+        s = player["my_stats"]
+        req = cfg["reqs"]
+        results = []
+        is_ok = True
+
+        for cat in ["gear", "vice", "deck"]:
+            u_val = s.get(cat)
+            allowed = req.get(cat, [])
+            if u_val in allowed:
+                results.append(f"✅ {cat.upper()}: {u_val}")
+            else:
+                results.append(f"❌ {cat.upper()}: {u_val} (Yêu cầu: {', '.join(allowed)})")
+                is_ok = False
+
+        embed = discord.Embed(title=f"Check: {dg_name.upper()}", color=discord.Color.green() if is_ok else discord.Color.red())
+        embed.description = "\n".join(results)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="mygear", description="Cập nhật Gear của bạn")
     async def mygear(self, interaction: discord.Interaction):
@@ -67,45 +115,11 @@ class DungeonStats(commands.Cog):
         for k, v in s.items(): embed.add_field(name=k.upper(), value=v)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="dgcheck", description="Kiểm tra điều kiện dungeon")
-    async def dgcheck(self, interaction: discord.Interaction, dg_name: str):
-        # 1. Lấy dữ liệu
-        player = await db.players.find_one({"user_id": interaction.user.id})
-        cfg = await db.dungeon_configs.find_one({"dg_name": dg_name.lower()})
-        
-        if not player or "my_stats" not in player: return await interaction.response.send_message("❌ Dùng /mygear trước!", ephemeral=True)
-        if not cfg or "reqs" not in cfg: return await interaction.response.send_message("❌ Dungeon chưa cấu hình yêu cầu (Admin cần set reqs trong DB).", ephemeral=True)
-
-        # 2. Logic so sánh mới (Categorical Check)
-        s = player["my_stats"]
-        req = cfg["reqs"]
-        results = []
-        is_ok = True
-
-        for category in ["gear", "vice", "deck"]:
-            user_val = s.get(category)
-            allowed = req.get(category, [])
-            if user_val in allowed:
-                results.append(f"✅ {category.upper()}: {user_val}")
-            else:
-                results.append(f"❌ {category.upper()}: {user_val} (Yêu cầu: {', '.join(allowed)})")
-                is_ok = False
-
-        embed = discord.Embed(title=f"Check: {dg_name.upper()}", color=discord.Color.green() if is_ok else discord.Color.red())
-        embed.description = "\n".join(results)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="dglist", description="Danh sách dungeon và yêu cầu")
+    @app_commands.command(name="dglist", description="Danh sách dungeon")
     async def dglist(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         cursor = db.dungeon_configs.find({})
-        dungeons = await cursor.to_list(length=100)
-        
-        embed = discord.Embed(title="📜 Danh sách Dungeon", color=discord.Color.blue())
-        for d in dungeons:
-            reqs = d.get("reqs", {})
-            req_str = f"Gear: {len(reqs.get('gear', []))} options"
-            embed.add_field(name=d["dg_name"].upper(), value=req_str, inline=True)
-        await interaction.followup.send(embed=embed)
+        dungeons = await cursor.to_list(length=25)
+        if not dungeons: return await interaction.response.send_message("❌ Chưa có dungeon nào.", ephemeral=True)
+        await interaction.response.send_message("📍 Chọn dungeon để check:", view=DungeonListView(dungeons), ephemeral=True)
 
 async def setup(bot): await bot.add_cog(DungeonStats(bot))
