@@ -10,7 +10,7 @@ request_counts = {}
 active_parties = {}
 
 # ==========================
-# 1. MODALS (Phải nằm trên cùng)
+# 1. MODALS
 # ==========================
 class CreatePartyModal(discord.ui.Modal, title="Create New Party"):
     dg_name = discord.ui.TextInput(label="Dungeon Name", placeholder="e.g. PDG, MDG", required=True)
@@ -29,9 +29,23 @@ class CreatePartyModal(discord.ui.Modal, title="Create New Party"):
             "created_at": datetime.now(),
             "roles_needed": self.roles_needed.value,
             "members": [{"id": interaction.user.id, "ign": self.ign.value, "role": self.my_role.value}],
-            "max_slots": 4
         }
-        await interaction.response.send_message(f"✅ Party **{self.dg_name.value}** created! (ID: {party_id})", ephemeral=True)
+        
+        # --- Logic Ping Role ---
+        target_roles = [role.mention for role in interaction.guild.roles if self.dg_name.value.lower() in role.name.lower()]
+        mention_text = " ".join(target_roles) if target_roles else ""
+
+        # --- Gửi thông báo kênh party-board ---
+        channel = discord.utils.get(interaction.guild.text_channels, name="party-board")
+        if channel:
+            embed = discord.Embed(title="📢 New Party Created!", color=discord.Color.green())
+            embed.add_field(name="Dungeon", value=self.dg_name.value, inline=True)
+            embed.add_field(name="Roles Needed", value=self.roles_needed.value, inline=True)
+            embed.add_field(name="Start Time", value=self.start_time.value, inline=False)
+            embed.set_footer(text=f"Host: {interaction.user.name} | ID: {party_id}")
+            await channel.send(content=mention_text, embed=embed)
+
+        await interaction.response.send_message(f"✅ Party **{self.dg_name.value}** created!", ephemeral=True)
 
 class JoinPartyModal(discord.ui.Modal, title="Send Join Request"):
     ign = discord.ui.TextInput(label="Ingame Name", required=True)
@@ -43,11 +57,6 @@ class JoinPartyModal(discord.ui.Modal, title="Send Join Request"):
         self.party_id = party_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_id = interaction.user.id
-        request_counts[user_id] = request_counts.get(user_id, 0) + 1
-        if request_counts[user_id] > 2:
-            return await interaction.response.send_message("❌ Limit reached (2 requests)!", ephemeral=True)
-        # (Phần logic gửi request giữ nguyên như cũ)
         await interaction.response.send_message("✅ Request sent!", ephemeral=True)
 
 # ==========================
@@ -64,12 +73,6 @@ class DecisionView(discord.ui.View):
         for item in self.children: item.disabled = True
         await interaction.response.edit_message(content="✅ Accepted", view=self)
 
-class ManagePartyView(discord.ui.View):
-    def __init__(self, party_id, bot):
-        super().__init__(timeout=None)
-        self.party_id = party_id
-        self.bot = bot
-
 class PartyDashboardView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -79,9 +82,19 @@ class PartyDashboardView(discord.ui.View):
     async def create_party(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CreatePartyModal())
 
-    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, custom_id="btn_refresh")
+    @discord.ui.button(label="Refresh Board", style=discord.ButtonStyle.secondary, custom_id="btn_refresh")
     async def refresh_board(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(view=self)
+        embed = discord.Embed(title="🎮 Party Hall - Active", color=discord.Color.blue())
+        if not active_parties:
+            embed.description = "No parties open."
+        else:
+            for p_id, data in active_parties.items():
+                embed.add_field(
+                    name=f"⚔️ {data['dg_name']}", 
+                    value=f"**Host:** {data['host_name']}\n**Time:** {data['start_time']}\n**Roles:** {data['roles_needed']}\n**ID:** `{p_id}`", 
+                    inline=False
+                )
+        await interaction.response.edit_message(embed=embed, view=self)
 
 # ==========================
 # 3. COG
@@ -89,7 +102,6 @@ class PartyDashboardView(discord.ui.View):
 class RealTimePartyFinder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Đăng ký View vào bot để giữ nút bấm hoạt động vĩnh viễn
         self.bot.add_view(PartyDashboardView(self.bot))
         self.cleanup_task.start()
 
