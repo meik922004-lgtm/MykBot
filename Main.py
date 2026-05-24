@@ -46,29 +46,23 @@ intents.members = True
 intents.guilds = True
 
 class MyKBot(commands.Bot):
-    def __init__(self):
-        # Bạn vẫn có thể giữ command_prefix="!" để dùng song song cả 2 loại lệnh nếu muốn
-        super().__init__(command_prefix="!", intents=intents, help_command=None)
-
     async def setup_hook(self):
-        # Tải toàn bộ Cogs trong thư mục ./cogs
-        if not os.path.exists("./cogs"):
-            os.makedirs("./cogs")
-            
-        for filename in os.listdir("./cogs"):
+        # 1. Load các Cogs
+        cog_path = "./cogs"
+        for filename in os.listdir(cog_path):
             if filename.endswith(".py") and not filename.startswith("__"):
                 try:
                     await self.load_extension(f"cogs.{filename[:-3]}")
-                    print(f"✅ Loaded: {filename}")
+                    print(f"✅ Loaded extension: {filename}")
                 except Exception as e:
                     print(f"❌ Failed to load {filename}: {e}")
-                    
-        # ĐỒNG BỘ SLASH COMMANDS VỚI DISCORD
+        
+        # 2. BẮT BUỘC SYNC LỆNH ĐỂ HIỆN TRÊN DISCORD
         try:
             synced = await self.tree.sync()
-            print(f"✅ Đã đồng bộ thành công {len(synced)} lệnh Slash (App Commands).")
+            print(f"✅ Đã đồng bộ {len(synced)} lệnh Slash lên Discord.")
         except Exception as e:
-            print(f"❌ Lỗi khi đồng bộ lệnh Slash: {e}")
+            print(f"❌ Lỗi đồng bộ lệnh: {e}")
 
 bot = MyKBot()
 
