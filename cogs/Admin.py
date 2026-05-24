@@ -86,7 +86,7 @@ class DigitalTour(commands.Cog):
                         if event_id_bless in self.notified_bless:
                             self.notified_bless.remove(event_id_bless)
             except Exception as e:
-                print(f"[ERROR] Lỗi tiến trình Bless Tour: {e}")
+                print(f"[ERROR] Bless Tour: {e}")
 
             # Xử lý Digital Raid Boss (Chu kỳ 90 phút)
             try:
@@ -114,20 +114,20 @@ class DigitalTour(commands.Cog):
                                 if event_id_boss in self.notified_bosses:
                                     self.notified_bosses.remove(event_id_boss)
                         except Exception as e:
-                            print(f"Lỗi cấu trúc dữ liệu boss {boss_key}: {e}")
+                            print(f"Error stucture of boss {boss_key}: {e}")
                             continue
             except Exception as e:
-                print(f"[ERROR] Lỗi tiến trình Digital Raid: {e}")
+                print(f"[ERROR] Digital Raid: {e}")
 
         except Exception as e:
-            print(f"[CRITICAL] Lỗi hệ thống loop: {e}")
+            print(f"[CRITICAL] error loop system: {e}")
 
     async def send_boss_alert(self, guild, boss, target_dt):
         channel = discord.utils.get(guild.text_channels, name="raid-timer")
         role = discord.utils.get(guild.roles, name="Tourist")
         if channel and role:
             unix_ts = int(target_dt.timestamp())
-            embed = discord.Embed(title=f"🚨 DIGITAL BOSS ALERT", color=discord.Color.red())
+            embed = discord.Embed(title=f" DIGITAL BOSS ALERT", color=discord.Color.red())
             embed.add_field(name="Boss", value=boss['name'], inline=True)
             embed.add_field(name="Map", value=boss['map'], inline=True)
             embed.add_field(name="Time", value=f"<t:{unix_ts}:t> (<t:{unix_ts}:R>)", inline=False)
@@ -145,7 +145,7 @@ class DigitalTour(commands.Cog):
             await channel.send(content=f"{role.mention} Bless Tour starts in 5 mins!", embed=embed, view=EventTranslationView(embed, "bless"))
 
     # Lệnh Slash: Cài đặt Bless
-    @app_commands.command(name="setbless", description="Thiết lập thời gian cho Bless Tour")
+    @app_commands.command(name="setbless", description="Setup bless time")
     @app_commands.default_permissions(administrator=True)
     async def setbless(self, interaction: discord.Interaction, minute: int, maps: str):
         guild_id = int(interaction.guild_id)
@@ -155,10 +155,10 @@ class DigitalTour(commands.Cog):
             {"$set": {"minute": minute, "maps": map_list}}, 
             upsert=True
         )
-        await interaction.response.send_message(f"✅ Đã thiết lập Bless Tour vào phút thứ **:{minute:02d}** mỗi giờ. Bản đồ: {', '.join(map_list)}")
+        await interaction.response.send_message(f"✅ Tinme saved at  **:{minute:02d}** every hour. Map: {', '.join(map_list)}")
 
     # Lệnh Slash: Cài đặt Boss
-    @app_commands.command(name="setboss", description="Thiết lập thời gian xuất hiện của Digital Tour Boss")
+    @app_commands.command(name="setboss", description="Setup Digital tour time")
     @app_commands.default_permissions(administrator=True)
     async def setboss(self, interaction: discord.Interaction, b_name: str, m_name: str, s_time: str):
         guild_id = int(interaction.guild_id)
@@ -167,7 +167,7 @@ class DigitalTour(commands.Cog):
             {"$set": {f"bosses.{b_name.lower()}": {"name": b_name, "map": m_name, "base_server_time": s_time}}},
             upsert=True
         )
-        await interaction.response.send_message(f"✅ Đã lưu Boss **{b_name}** tại map **{m_name}** vào database!")
+        await interaction.response.send_message(f"✅ Saved boss **{b_name}** at Map **{m_name}** to database!")
 
 
 # ==========================================
