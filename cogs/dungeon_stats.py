@@ -6,16 +6,16 @@ from Database import db
 # ==========================================
 # CẤU HÌNH DỮ LIỆU
 # ==========================================
-GEAR_OPTIONS = ["Full fang gear", "1 piece of Spiral", "2 piece of Spiral", "Full Spiral set", "1 piece of corrupted", "2 piece of corrupted", "full set of corrupted"]
+GEAR_OPTIONS = ["Full fang gear", "1 piece of Spiral", "2 piece of Spiral", "Full Spiral set", "1 piece of corrupted", "2 piece of corrupted", "full set of corrupted", "Other"]
 VICE_OPTIONS = {
-    "AA": ["D.ark 4", "D,ark 5", "D.ark 6", "D.ark Uncontroll", "Void vice"], 
-    "SK": ["Royal Vice","Truevice", "Truevice(Advance)", "Void vice"], 
-    "TANK": ["D.ark 6", "D.ark Chrome", "Void vice"]
+    "AA": ["D.ark 4", "D,ark 5", "D.ark 6", "D.ark Uncontroll", "Void vice", "Other"], 
+    "SK": ["Royal Vice","Truevice", "Truevice(Advance)", "Void vice", "Other"], 
+    "TANK": ["D.ark 6", "D.ark Chrome", "Void vice", "Other"]
 }
 DECK_OPTIONS = {
-    "AA": ["Divinus", "CrimsonPath/Corrupted Power", "Power of Darkness / Crimson Nexus", "Eclipsed Genesis"], 
-    "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core"], 
-    "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion"]
+    "AA": ["Divinus", "CrimsonPath/Corrupted Power", "Power of Darkness / Crimson Nexus", "Eclipsed Genesis", "Other"], 
+    "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core", "Other"], 
+    "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion", "Other"]
 }
 
 # ==========================================
@@ -32,7 +32,7 @@ class MyGearWizard(discord.ui.View):
     def refresh_menu(self):
         self.clear_items()
         if self.step == 0:
-            select = discord.ui.Select(placeholder="Chọn Role", options=[discord.SelectOption(label=r) for r in ["AA", "SK", "TANK"]])
+            select = discord.ui.Select(placeholder="Select role", options=[discord.SelectOption(label=r) for r in ["AA", "SK", "TANK"]])
             async def role_callback(interaction: discord.Interaction):
                 self.data["role"] = interaction.data["values"][0]
                 self.step = 1
@@ -40,7 +40,7 @@ class MyGearWizard(discord.ui.View):
             select.callback = role_callback
             self.add_item(select)
         elif self.step == 1:
-            select = discord.ui.Select(placeholder="Chọn Gear", options=[discord.SelectOption(label=g) for g in GEAR_OPTIONS])
+            select = discord.ui.Select(placeholder="Select gear", options=[discord.SelectOption(label=g) for g in GEAR_OPTIONS])
             async def gear_callback(interaction: discord.Interaction):
                 self.data["gear"] = interaction.data["values"][0]
                 self.step = 2
@@ -48,7 +48,7 @@ class MyGearWizard(discord.ui.View):
             select.callback = gear_callback
             self.add_item(select)
         elif self.step == 2:
-            select = discord.ui.Select(placeholder="Chọn Vice", options=[discord.SelectOption(label=v) for v in VICE_OPTIONS[self.data["role"]]])
+            select = discord.ui.Select(placeholder="Select vice", options=[discord.SelectOption(label=v) for v in VICE_OPTIONS[self.data["role"]]])
             async def vice_callback(interaction: discord.Interaction):
                 self.data["vice"] = interaction.data["values"][0]
                 self.step = 3
@@ -56,7 +56,7 @@ class MyGearWizard(discord.ui.View):
             select.callback = vice_callback
             self.add_item(select)
         elif self.step == 3:
-            select = discord.ui.Select(placeholder="Chọn Deck", options=[discord.SelectOption(label=d) for d in DECK_OPTIONS[self.data["role"]]])
+            select = discord.ui.Select(placeholder="Select deck", options=[discord.SelectOption(label=d) for d in DECK_OPTIONS[self.data["role"]]])
             async def deck_callback(interaction: discord.Interaction):
                 self.data["deck"] = interaction.data["values"][0]
                 self.step = 4
@@ -111,7 +111,7 @@ class DungeonStats(commands.Cog):
         # Lấy thông tin Dungeon từ DB
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
         if not cfg:
-            return await interaction.followup.send(f"❌ Lỗi: Không tìm thấy dữ liệu Dungeon `{dg_name}` trong DB.", ephemeral=True)
+            return await interaction.followup.send(f"❌ Error: Cant find data of `{dg_name}` in DB.", ephemeral=True)
 
         # Kiểm tra xem người dùng đã setup gear chưa
         if not player or "my_stats" not in player or not player["my_stats"]:
@@ -159,7 +159,7 @@ class DungeonStats(commands.Cog):
 
     @app_commands.command(name="mygear", description="Update your profile")
     async def mygear(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=discord.Embed(title="⚙️ Setup MyGear", description="Chọn role để bắt đầu:", color=discord.Color.blue()), view=MyGearWizard(interaction.user.id), ephemeral=True)
+        await interaction.response.send_message(embed=discord.Embed(title="⚙️ Setup MyGear", description="Select your role to start setup:", color=discord.Color.blue()), view=MyGearWizard(interaction.user.id), ephemeral=True)
 
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
