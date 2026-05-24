@@ -1,8 +1,9 @@
 import discord
+import re
+import uuid
 from discord import app_commands, ui
 from discord.ext import commands, tasks
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient
 import os
 
@@ -11,193 +12,117 @@ MONGO_URI = os.getenv("MONGO_URI", "YOUR_MONGO_URI_HERE")
 client = MongoClient(MONGO_URI)
 db = client["database0"]
 players_col = db["players"]
+dungeon_configs = db["dungeon_configs"] 
 
 active_parties = {}
 
+# --- HELPER FUNCTIONS ---
+def get_ping_role(dungeon_name):
+    # Regex tìm kiếm không phân biệt hoa thường (Case-insensitive)
+    config = dungeon_configs.find_one({"dg_name": {"$regex": re.escape(dungeon_name), "$options": "i"}})
+    return f"<@&{config['ping_role']}>" if config and "ping_role" in config else None
+
 def get_gear_from_db(user_id: int, role_key: str):
     player = players_col.find_one({"user_id": user_id})
-    if not player or "my_stats" not in player:
-        return "Gear info didnt update"
-    
-    # Truy cập vào object role tương ứng (ví dụ: my_stats['AA'])
-    # .upper() để đảm bảo khớp với key trong DB (VD: nhập 'aa' -> 'AA')
+    if not player or "my_stats" not in player: return "Gear info didnt update"
     stats = player["my_stats"].get(role_key.upper())
-    
-    if not stats:
-        return "This role didnt set up in gear profile."
-    
-    # Trả về chuỗi thông tin gear
+    if not stats: return "This role didnt set up."
     return f"Gear: {stats.get('gear', 'N/A')} | Deck: {stats.get('deck', 'N/A')} | Vice: {stats.get('vice', 'N/A')}"
-# --- MODAL TẠO PARTY ---
-class CreatePartyModal(ui.Modal, title="Creat new party"):
-    dg_name = ui.TextInput(label="Dungeon name", required=True, placeholder="e.g: PDG, MDG")
-    leader_ign = ui.TextInput(label="Your IGN", required=True, placeholder="Your charactor name")
-    recruitment = ui.TextInput(label="Role needed", required=True, placeholder="e.g: Tank, DPS, Healer")
-    start_in = ui.TextInput(label="Start in:", required=True, placeholder="e.g: 5 min later...")
+
+def is_player_qualified(user_id, role_key, dungeon_name):
+    config = dungeon_configs.find_one({"dg_name": {"$regex": re.escape(dungeon_name), "$options": "i"}})
+    if not config: return True
+    player = players_col.find_one({"user_id": user_id})
+    stats = player["my_stats"].get(role_key.upper()) if player else None
+    if not stats: return False
+    reqs = config.get("req", {})
+    if stats.get("gear") not in reqs.get("gear", []): return False
+    if stats.get("vice") not in reqs.get("vice", []): return False
+    if stats.get("deck") not in reqs.get("deck", []): return False
+    return True
+
+# --- MODALS ---
+class CreatePartyModal(ui.Modal, title="Create new party"):
+    dg_name = ui.TextInput(label="Dungeon name", placeholder="e.g: PDG, MDG")
+    leader_ign = ui.TextInput(label="Your IGN")
+    recruitment = ui.TextInput(label="Role needed")
+    start_in = ui.TextInput(label="Start in:")
+
     async def on_submit(self, interaction: discord.Interaction):
+        if not players_col.find_one({"user_id": interaction.user.id}):
+            return await interaction.response.send_message("❌ You haven't registered a profile(/mygear) yet.!", ephemeral=True)
         pid = str(uuid.uuid4())[:6].upper()
-        # Lưu thêm thông tin mới vào dictionary
         active_parties[pid] = {
-            "dg_name": self.dg_name.value,
-            "leader_ign": self.leader_ign.value,
-            "recruitment": self.recruitment.value,
-            "start_in": self.start_in.value,
-            "host_id": interaction.user.id,
+            "dg_name": self.dg_name.value, "leader_ign": self.leader_ign.value,
+            "recruitment": self.recruitment.value, "start_in": self.start_in.value,
+            "host_id": interaction.user.id, "created_at": datetime.now(timezone.utc),
             "members": [{"id": interaction.user.id, "ign": self.leader_ign.value, "role": "Leader"}],
-            "created_at": datetime.now(timezone.utc)
+            "filter_enabled": False
         }
-        await interaction.response.send_message(f"✅ Đã tạo party **{self.dg_name.value}** thành công! (ID: {pid})", ephemeral=True)
-# --- MODAL GỬI REQUEST ---
+        await interaction.response.send_message(f"✅ Party create **{self.dg_name.value}**!", ephemeral=True)
+
 class RequestJoinModal(ui.Modal, title="Join party"):
-    ign = ui.TextInput(label="Your Ingame-name", required=True)
-    role = ui.TextInput(label="Your role", required=True)
-
-    def __init__(self, party_id, host_id):
-        super().__init__()
-        self.party_id, self.host_id = party_id, host_id
-
+    ign = ui.TextInput(label="Your IGN")
+    role = ui.TextInput(label="Your role")
+    def __init__(self, pid, host_id):
+        super().__init__(); self.pid = pid; self.host_id = host_id
     async def on_submit(self, interaction: discord.Interaction):
-        party = active_parties.get(self.party_id)
-        if not party or len(party["members"]) >= 4:
-            return await interaction.response.send_message("The party does not exist or already full.!", ephemeral=True)
-        
-        gear_info = get_gear_from_db(interaction.user.id, self.role.value)
+        party = active_parties.get(self.pid)
+        if not party: return await interaction.response.send_message("Party not exist!", ephemeral=True)
+        if party.get("filter_enabled") and not is_player_qualified(interaction.user.id, self.role.value, party["dg_name"]):
+            return await interaction.response.send_message("❌ Gear not get the requirement!", ephemeral=True)
         host = interaction.client.get_user(self.host_id)
         if host:
             embed = discord.Embed(title=f"Request to join {party['dg_name']}", color=discord.Color.gold())
-            embed.add_field(name="User", value=interaction.user.mention, inline=False)
-            embed.add_field(name="Ingame-name", value=self.ign.value, inline=True)
-            embed.add_field(name="Role", value=self.role.value, inline=True)
-            embed.add_field(name="Gear profile", value=gear_info, inline=False)
-            await host.send(embed=embed, view=DecisionView(self.party_id, interaction.user.id, self.ign.value, self.role.value))
+            embed.add_field(name="User", value=interaction.user.mention); embed.add_field(name="Role", value=self.role.value)
+            await host.send(embed=embed, view=DecisionView(self.pid, interaction.user.id, self.ign.value, self.role.value))
         await interaction.response.send_message("✅ Request has been submitted.!", ephemeral=True)
-
-# --- DUYỆT (DM LEADER) ---
 class DecisionView(ui.View):
-    def __init__(self, party_id, applicant_id, ign, role):
-        super().__init__(timeout=None)
-        self.party_id, self.applicant_id = party_id, applicant_id
-        self.ign, self.role = ign, role
-
+    def __init__(self, pid, aid, ign, role):
+        super().__init__(timeout=None); self.pid = pid; self.aid = aid; self.ign = ign; self.role = role
     @ui.button(label="Accept", style=discord.ButtonStyle.success)
-    async def accept(self, interaction: discord.Interaction, button: ui.Button):
-        party = active_parties.get(self.party_id)
+    async def accept(self, i: discord.Interaction, b: ui.Button):
+        party = active_parties.get(self.pid)
         if party and len(party["members"]) < 4:
-            party["members"].append({"id": self.applicant_id, "ign": self.ign, "role": self.role})
-            await interaction.response.edit_message(content="✅ Accepted!", view=None)
-        else:
-            await interaction.response.edit_message(content="❌ Cannot add (full).", view=None)
-# --- BẢNG ĐIỀU KHIỂN (KICK/LEAVE) ---
+            party["members"].append({"id": self.aid, "ign": self.ign, "role": self.role})
+            await i.response.edit_message(content="✅ Accepted!", view=None)
+
 class ManagePartyView(ui.View):
-    def __init__(self, party_id, is_leader):
-        super().__init__(timeout=None)
-        self.party_id = party_id
-        self.is_leader = is_leader
+    def __init__(self, pid, is_leader):
+        super().__init__(timeout=None); self.pid = pid; self.is_leader = is_leader
 
-    @ui.button(label="Leave Party", style=discord.ButtonStyle.danger)
-    async def leave(self, interaction: discord.Interaction, button: ui.Button):
-        party = active_parties.get(self.party_id)
-        if party:
-            party["members"] = [m for m in party["members"] if m["id"] != interaction.user.id]
-            await interaction.response.send_message("Bạn đã rời party.", ephemeral=True)
+    @ui.button(label="Toggle Filter", style=discord.ButtonStyle.secondary)
+    async def toggle_filter(self, i: discord.Interaction, b: ui.Button):
+        p = active_parties.get(self.pid)
+        if not p: return await i.response.send_message("Party ended!", ephemeral=True)
+        p["filter_enabled"] = not p.get("filter_enabled", False)
+        await i.response.edit_message(content=f"Filter Gear: **{'ON' if p['filter_enabled'] else 'OFF'}**")
 
-    @ui.button(label="Kick Member", style=discord.ButtonStyle.secondary)
-    async def kick(self, interaction: discord.Interaction, button: ui.Button):
-        if not self.is_leader: return await interaction.response.send_message("Bạn không phải Leader!", ephemeral=True)
-        party = active_parties.get(self.party_id)
-        
-        # Chọn người kick
-        select = ui.Select(placeholder="Choose the person you want to kick.", 
-            options=[discord.SelectOption(label=m['ign'], value=str(m['id'])) for m in party['members'] if m['id'] != party['host_id']])
-        
-        async def callback(i):
-            party["members"] = [m for m in party["members"] if str(m["id"]) != select.values[0]]
-            await i.response.edit_message(content="Kick successful..", view=None)
-        
-        select.callback = callback
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message(view=view, ephemeral=True)
+    @ui.button(label="Broadcast", style=discord.ButtonStyle.primary)
+    async def broadcast(self, i: discord.Interaction, b: ui.Button):
+        p = active_parties.get(self.pid)
+        if not p: return await i.response.send_message("Party ended!", ephemeral=True)
+        role_mention = get_ping_role(p["dg_name"])
+        embed = discord.Embed(title=f"⚔️ {p['dg_name']} Recruitment", description=f"Leader: {p['leader_ign']}\nNeed: {p['recruitment']}", color=discord.Color.green())
+        await i.channel.send(content=f"{role_mention if role_mention else ''}", embed=embed)
+        await i.response.send_message("✅ Broadcast successful!", ephemeral=True)
 
-# --- COG CHÍNH & LOBBY ---
-# --- COG CHÍNH & LOBBY ---
 class PartyFinder(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.cleanup_task.start()
-
-    def cog_unload(self):
-        self.cleanup_task.cancel()
-
-    @tasks.loop(hours=1)
-    async def cleanup_task(self):
-        now = datetime.now(timezone.utc)
-        to_delete = [pid for pid, p in active_parties.items() if now - p["created_at"] > timedelta(days=1)]
-        for pid in to_delete: del active_parties[pid]
-
-    @app_commands.command(name="party_lobby", description="Party Dashboard")
+    def __init__(self, bot): self.bot = bot
+    
+    @app_commands.command(name="party_lobby")
     async def party_lobby(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="⚔️ ACTIVE PARTIES", color=discord.Color.blurple())
+        embed = discord.Embed(title="⚔️ ACTIVE PARTIES")
+        for pid, p in active_parties.items():
+            embed.add_field(name=f"{p['dg_name']} ({pid})", value=f"Leader: {p['leader_ign']}\nFilter: {'ON' if p.get('filter_enabled') else 'OFF'}")
         
-        if not active_parties:
-            embed.description = "There are no parties yet. Please create a new party!"
-        else:
-            for pid, p in active_parties.items():
-                count = len(p["members"])
-                status = f"[{count}/4]" if count < 4 else "Full"
-                info = (
-                    f"👤 **Leader**: {p.get('leader_ign', 'N/A')}\n"
-                    f"🎯 **Need recruit**: {p.get('recruitment', 'N/A')}\n"
-                    f"⏰ **Start in**: {p.get('start_in', 'none')}\n"
-                    f"📊 **Status**: {status}"
-                )
-                embed.add_field(name=f"⚔️ {p.get('dg_name', 'Unknown')} (ID: {pid})", value=info, inline=False)
-        
-        # --- SỬA LẠI LOGIC CHỌN PARTY ---
-        async def create_cb(i): 
-            await i.response.send_modal(CreatePartyModal())
-
-        async def req_cb(i):
-            if not active_parties: 
-                return await i.response.send_message("No party to join!", ephemeral=True)
-            
-            # Nếu có nhiều party, tạo menu chọn (Select Menu)
-            if len(active_parties) > 1:
-                view = ui.View()
-                select = ui.Select(placeholder="Choose a party to join", 
-                    options=[discord.SelectOption(label=f"{p['dg_name']} (ID: {pid})", value=pid) 
-                             for pid, p in active_parties.items()])
-                
-                async def select_callback(si):
-                    await si.response.send_modal(RequestJoinModal(si.data['values'][0], active_parties[si.data['values'][0]]["host_id"]))
-                
-                select.callback = select_callback
-                view.add_item(select)
-                await i.response.send_message("Select the party:", view=view, ephemeral=True)
-            else:
-                # Nếu chỉ có 1 party, join luôn
-                pid = list(active_parties.keys())[0]
-                await i.response.send_modal(RequestJoinModal(pid, active_parties[pid]["host_id"]))
-
-        async def manage_cb(i):
-            target_pid = next((pid for pid, p in active_parties.items() if any(m["id"] == i.user.id for m in p["members"])), None)
-            if not target_pid: 
-                return await i.response.send_message("You're not in any party.", ephemeral=True)
-            await i.response.send_message(view=ManagePartyView(target_pid, i.user.id == active_parties[target_pid]["host_id"]), ephemeral=True)
-        
-        # UI Button Setup
+        # Nút bấm tương tác
         view = ui.View()
-        btn_create = ui.Button(label="Create Party", style=discord.ButtonStyle.primary)
+        async def create_cb(i): await i.response.send_modal(CreatePartyModal())
+        btn_create = ui.Button(label="Create", style=discord.ButtonStyle.primary)
         btn_create.callback = create_cb
-        btn_req = ui.Button(label="Send Request", style=discord.ButtonStyle.success)
-        btn_req.callback = req_cb
-        btn_manage = ui.Button(label="Manage My Party", style=discord.ButtonStyle.blurple)
-        btn_manage.callback = manage_cb
-        
         view.add_item(btn_create)
-        view.add_item(btn_req)
-        view.add_item(btn_manage)
         
         await interaction.response.send_message(embed=embed, view=view)
-async def setup(bot):
-    await bot.add_cog(PartyFinder(bot))
+
+async def setup(bot): await bot.add_cog(PartyFinder(bot))
