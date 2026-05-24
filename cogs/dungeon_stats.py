@@ -1,166 +1,111 @@
 import discord
-from discord import app_commands
 from discord.ext import commands
+from discord import app_commands
 from Database import db
 
+# --- CẤU HÌNH OPTION (Giữ nguyên như đã thống nhất) ---
+GEAR_OPTIONS = ["Full fang gear", "1 piece of Spiral", "2 piece of Spiral", "Full Spiral set"]
+VICE_OPTIONS = {"AA": ["Under D.ark 6", "D.ark Uncontroll", "Void vice"], "SK": ["Royal Vice", "Truevice(Advance)", "Void vice"], "TANK": ["Under D.ark 6", "D.ark Chrome", "Void vice"]}
+DECK_OPTIONS = {"AA": ["Divinus", "CrimsonPath/Corrupted Power", "Power of Darkness / Crimson Nexus", "Eclipsed Genesis"], "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core"], "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion"]}
+
 # ==========================================
-# 1. MODAL: BẢNG NHẬP CHỈ SỐ
+# WIZARD: CẬP NHẬT GEAR
 # ==========================================
-class RoleStatsModal(discord.ui.Modal):
-    def __init__(self, role, dg_name):
-        super().__init__(title=f"Please type your stats: {role}")
-        self.role = role
-        self.dg_name = dg_name
+class MyGearWizard(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.data = {"role": None, "gear": None, "vice": None, "deck": None}
+        self.step = 0
+
+    async def update_ui(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="⚙️ Setup MyGear", color=discord.Color.blue())
+        embed.add_field(name="Current", value=f"Role: {self.data['role'] or '...'}\nGear: {self.data['gear'] or '...'}\nVice: {self.data['vice'] or '...'}\nDeck: {self.data['deck'] or '...'}")
         
-        # Nhập liệu theo chuẩn chỉ số in-game
-        if role == "DPS":
-            self.at = discord.ui.TextInput(label="AT", placeholder="Attack")
-            self.ht = discord.ui.TextInput(label="HT", placeholder="Hit")
-            self.hp = discord.ui.TextInput(label="HP", placeholder="HP")
-            for item in [self.at, self.ht, self.hp]: self.add_item(item)
-        else: # TANK
-            self.hp = discord.ui.TextInput(label="HP", placeholder="HP")
-            self.de = discord.ui.TextInput(label="DE", placeholder="Defense")
-            self.bl = discord.ui.TextInput(label="BL (%)", placeholder="Block")
-            for item in [self.hp, self.de, self.bl]: self.add_item(item)
+        self.clear_items()
+        if self.step == 0:
+            select = discord.ui.Select(placeholder="Chọn Role", options=[discord.SelectOption(label=r) for r in ["AA", "SK", "TANK"]])
+            select.callback = lambda i: self.next_step(i, "role", 1)
+        elif self.step == 1:
+            select = discord.ui.Select(placeholder="Chọn Gear", options=[discord.SelectOption(label=g) for g in GEAR_OPTIONS])
+            select.callback = lambda i: self.next_step(i, "gear", 2)
+        elif self.step == 2:
+            select = discord.ui.Select(placeholder="Chọn Vice", options=[discord.SelectOption(label=v) for v in VICE_OPTIONS[self.data["role"]]])
+            select.callback = lambda i: self.next_step(i, "vice", 3)
+        elif self.step == 3:
+            select = discord.ui.Select(placeholder="Chọn Deck", options=[discord.SelectOption(label=d) for d in DECK_OPTIONS[self.data["role"]]])
+            select.callback = lambda i: self.next_step(i, "deck", 4)
+        
+        if self.step < 4:
+            self.add_item(select)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await db.players.update_one({"user_id": self.user_id}, {"$set": {"my_stats": self.data}}, upsert=True)
+            await interaction.response.edit_message(content="✅ Đã lưu cấu hình!", embed=None, view=None)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            data = {child.label.split(' ')[0].lower(): int(child.value) for child in self.children}
-            data["role"] = self.role
-            # Cập nhật thông số vào database
-            await db.players.update_one({"user_id": interaction.user.id}, {"$set": {"my_stats": data}}, upsert=True)
-            await interaction.response.send_message(f"✅ Stats saved for {self.role}!", ephemeral=True)
-        except ValueError:
-            await interaction.response.send_message("❌ Please type a valid number!", ephemeral=True)
-
+    async def next_step(self, inter, key, next_step):
+        self.data[key] = inter.data["values"][0]
+        self.step = next_step
+        await self.update_ui(inter)
 
 # ==========================================
-# 2. VIEW: CHỌN ROLE VÀ MENU CHECK
-# ==========================================
-class RoleSelectView(discord.ui.View):
-    def __init__(self, dg_name):
-        super().__init__()
-        self.dg_name = dg_name
-
-    @discord.ui.button(label="DPS", style=discord.ButtonStyle.danger)
-    async def dps(self, inter: discord.Interaction, btn: discord.ui.Button): 
-        await inter.response.send_modal(RoleStatsModal("DPS", self.dg_name))
-
-    @discord.ui.button(label="TANK", style=discord.ButtonStyle.primary)
-    async def tank(self, inter: discord.Interaction, btn: discord.ui.Button): 
-        await inter.response.send_modal(RoleStatsModal("TANK", self.dg_name))
-
-
-class RaidMenuView(discord.ui.View):
-    def __init__(self, dg_name):
-        super().__init__(timeout=None)
-        self.dg_name = dg_name
-
-    @discord.ui.button(label="Update stats", style=discord.ButtonStyle.primary, custom_id="btn_update")
-    async def update_stats(self, inter: discord.Interaction, btn: discord.ui.Button):
-        await inter.response.send_message("Pick your role:", view=RoleSelectView(self.dg_name), ephemeral=True)
-
-    @discord.ui.button(label="Check", style=discord.ButtonStyle.success, custom_id="btn_check")
-    async def check_stats(self, inter: discord.Interaction, btn: discord.ui.Button):
-        await inter.response.defer(ephemeral=True)
-        player = await db.players.find_one({"user_id": inter.user.id})
-        cfg = await db.dungeon_configs.find_one({"dg_name": self.dg_name.lower()})
-        
-        if not cfg or "min_stats" not in cfg:
-            await inter.followup.send(f"❌ Server didn't set up the standard requirement for `{self.dg_name.upper()}`!", ephemeral=True)
-            return
-
-        if not player or "my_stats" not in player:
-            await inter.followup.send("❌ You didn't update your stats! Please click **Update stats** first.", ephemeral=True)
-            return
-
-        u = player["my_stats"]
-        role_key = u.get("role", "").lower()
-        
-        if role_key not in cfg["min_stats"]:
-            await inter.followup.send(f"❌ Your stat role (`{role_key.upper()}`) does not match the dungeon requirements!", ephemeral=True)
-            return
-
-        req = cfg["min_stats"][role_key]
-        results = []
-        is_ready = True
-        
-        for k, v in req.items():
-            player_stat = u.get(k, 0)
-            if player_stat < v:
-                results.append(f"❌ {k.upper()}: {player_stat} < {v}")
-                is_ready = False
-            else:
-                # Đã sửa lại hiển thị dấu >= cho logic hơn
-                results.append(f"✅ {k.upper()}: {player_stat} >= {v}")
-                
-        embed = discord.Embed(
-            title=f"Result {u['role']} - {self.dg_name.upper()}", 
-            color=discord.Color.green() if is_ready else discord.Color.red()
-        )
-        embed.description = "\n".join(results)
-        await inter.followup.send(embed=embed, ephemeral=True)
-
-
-# ==========================================
-# 3. COG DUNGEON STATS
+# COG CHÍNH
 # ==========================================
 class DungeonStats(commands.Cog):
-    def __init__(self, bot): 
-        self.bot = bot
-    
-    # 3.1 Lệnh xem danh sách hầm ngục có thể check
-    @app_commands.command(name="dglist", description="Xem danh sách các hầm ngục đang được hỗ trợ kiểm tra stats")
-    async def dglist(self, interaction: discord.Interaction):
-        # Tránh lỗi timeout nếu database phản hồi chậm
-        await interaction.response.defer() 
-        
-        cursor = db.dungeon_configs.find({})
-        dungeons_list = await cursor.to_list(length=100)
-        
-        count = len(dungeons_list)
-        
-        if count == 0:
-            await interaction.followup.send("❌ There are no dungeons configured in the database.")
-            return
+    def __init__(self, bot): self.bot = bot
 
-        names = [d.get("dg_name", "Unknown").title() for d in dungeons_list]
-        
-        embed = discord.Embed(
-            title="📜 List of dungeons you can check currently:", 
-            color=discord.Color.green()
-        )
-        embed.add_field(name="📊 Total:", value=f"Supporting **{count}** dungeons.", inline=False)
-        embed.add_field(name="📍 List of dungeons", value="\n".join([f"• {name}" for name in names]), inline=False)
-        embed.set_footer(text="Use /dgcheck <name> to check your stats")
-        
-        await interaction.followup.send(embed=embed)
-    
-    # 3.2 Lệnh mở Menu check (ĐÃ ĐỔI TÊN ĐỂ TRÁNH XUNG ĐỘT VỚI LỆNH TẠO PT)
-    @app_commands.command(name="dgcheck", description="Mở menu cập nhật và kiểm tra thông số cá nhân cho hầm ngục")
-    @app_commands.describe(dg_name="Tên dungeon (VD: kaiser, royal_base, holy_beast)")
+    @app_commands.command(name="mygear", description="Cập nhật Gear của bạn")
+    async def mygear(self, interaction: discord.Interaction):
+        await interaction.response.send_message(view=MyGearWizard(interaction.user.id), ephemeral=True)
+
+    @app_commands.command(name="showmygear", description="Khoe Gear")
+    async def showmygear(self, interaction: discord.Interaction):
+        p = await db.players.find_one({"user_id": interaction.user.id})
+        if not p: return await interaction.response.send_message("❌ Chưa setup!", ephemeral=True)
+        s = p["my_stats"]
+        embed = discord.Embed(title=f"🛡️ {interaction.user.name}", color=discord.Color.gold())
+        for k, v in s.items(): embed.add_field(name=k.upper(), value=v)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="dgcheck", description="Kiểm tra điều kiện dungeon")
     async def dgcheck(self, interaction: discord.Interaction, dg_name: str):
-        # UI chỉ hiện một lần, không cần ephemeral ở gốc để mọi người cùng thấy menu
-        await interaction.response.send_message(f"🎮 **Menu Stats Check: {dg_name.upper()}**", view=RaidMenuView(dg_name))
-
-    # 3.3 Lệnh cài đặt khung chuẩn (Chỉ dành cho Admin)
-    @app_commands.command(name="setstd", description="Thiết lập chỉ số yêu cầu tối thiểu cho một hầm ngục")
-    @app_commands.describe(dg_name="Tên dungeon cần tạo khung thông số")
-    @app_commands.default_permissions(administrator=True)
-    async def setstd(self, interaction: discord.Interaction, dg_name: str):
-        default_cfg = {
-            "dg_name": dg_name.lower(),
-            "min_stats": {
-                "dps": {"at": 50000, "ht": 20000, "hp": 50000},
-                "tank": {"hp": 150000, "de": 40000, "bl": 150}
-            }
-        }
-        await db.dungeon_configs.update_one({"dg_name": dg_name.lower()}, {"$set": default_cfg}, upsert=True)
+        # 1. Lấy dữ liệu
+        player = await db.players.find_one({"user_id": interaction.user.id})
+        cfg = await db.dungeon_configs.find_one({"dg_name": dg_name.lower()})
         
-        # Ẩn tin nhắn này đi để tránh rác kênh chat
-        await interaction.response.send_message(f"✅ Đã tạo khung chuẩn cho `{dg_name.upper()}`. Hãy truy cập MongoDB Atlas để chỉnh sửa thông số chi tiết!", ephemeral=True)
+        if not player or "my_stats" not in player: return await interaction.response.send_message("❌ Dùng /mygear trước!", ephemeral=True)
+        if not cfg or "reqs" not in cfg: return await interaction.response.send_message("❌ Dungeon chưa cấu hình yêu cầu (Admin cần set reqs trong DB).", ephemeral=True)
 
+        # 2. Logic so sánh mới (Categorical Check)
+        s = player["my_stats"]
+        req = cfg["reqs"]
+        results = []
+        is_ok = True
 
-async def setup(bot): 
-    await bot.add_cog(DungeonStats(bot))
+        for category in ["gear", "vice", "deck"]:
+            user_val = s.get(category)
+            allowed = req.get(category, [])
+            if user_val in allowed:
+                results.append(f"✅ {category.upper()}: {user_val}")
+            else:
+                results.append(f"❌ {category.upper()}: {user_val} (Yêu cầu: {', '.join(allowed)})")
+                is_ok = False
+
+        embed = discord.Embed(title=f"Check: {dg_name.upper()}", color=discord.Color.green() if is_ok else discord.Color.red())
+        embed.description = "\n".join(results)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="dglist", description="Danh sách dungeon và yêu cầu")
+    async def dglist(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        cursor = db.dungeon_configs.find({})
+        dungeons = await cursor.to_list(length=100)
+        
+        embed = discord.Embed(title="📜 Danh sách Dungeon", color=discord.Color.blue())
+        for d in dungeons:
+            reqs = d.get("reqs", {})
+            req_str = f"Gear: {len(reqs.get('gear', []))} options"
+            embed.add_field(name=d["dg_name"].upper(), value=req_str, inline=True)
+        await interaction.followup.send(embed=embed)
+
+async def setup(bot): await bot.add_cog(DungeonStats(bot))
