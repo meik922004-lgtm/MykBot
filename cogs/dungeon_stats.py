@@ -140,13 +140,21 @@ class DungeonStats(commands.Cog):
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
         p = await db.players.find_one({"user_id": interaction.user.id})
-        if not p or "my_stats" not in p: return await interaction.response.send_message("❌ Chưa setup!", ephemeral=True)
+        
+        # Kiểm tra xem người dùng đã có dữ liệu chưa
+        if not p or "my_stats" not in p or not p["my_stats"]: 
+            return await interaction.response.send_message("❌ Your gear infomation is empty!", ephemeral=True)
         
         embed = discord.Embed(title=f"🛡️ {interaction.user.name}'s Profile", color=discord.Color.gold())
-        for role, stats in p["my_stats"].items():
-            embed.add_field(name=f"Role: {role}", value=f"Gear: {stats['gear']}\nVice: {stats['vice']}\nDeck: {stats['deck']}", inline=False)
+        
+        # Duyệt qua từng role đã lưu trong my_stats
+        for role_name, stats in p["my_stats"].items():
+            # Kiểm tra nếu stats là dictionary thì mới lấy dữ liệu
+            if isinstance(stats, dict):
+                value_str = f"Gear: {stats.get('gear', 'N/A')}\nVice: {stats.get('vice', 'N/A')}\nDeck: {stats.get('deck', 'N/A')}"
+                embed.add_field(name=f"Role: {role_name}", value=value_str, inline=False)
+        
         await interaction.response.send_message(embed=embed)
-
     @app_commands.command(name="dglist", description="List of Dungeons")
     async def dglist(self, interaction: discord.Interaction):
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
