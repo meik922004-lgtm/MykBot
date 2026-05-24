@@ -140,4 +140,11 @@ class RealTimePartyFinder(commands.Cog):
         view = PartyDashboardView(self.bot)
         await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
-async def setup(bot): await bot.add_cog(RealTimePartyFinder(bot))
+
+async def setup(bot): 
+    print("--- Đang khởi tạo Cog RealTimePartyFinder ---")
+    try:
+        await bot.add_cog(RealTimePartyFinder(bot))
+        print("--- Đã add_cog thành công! ---")
+    except Exception as e:
+        print(f"--- LỖI KHI ADD_COG: {e} ---")
