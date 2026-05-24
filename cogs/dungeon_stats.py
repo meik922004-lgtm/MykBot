@@ -184,5 +184,8 @@ class DungeonStats(commands.Cog):
             return await interaction.response.send_message("❌ Empty.", ephemeral=True)
         await interaction.response.send_message("📍 Please select dungeon", view=DungeonListView(dungeons), ephemeral=True)
 
-async def setup(bot): 
+        
+async def setup(bot):
+    print("DEBUG: Đang load Cog DungeonStats...") # Dòng này sẽ hiện trong Logs của Render
     await bot.add_cog(DungeonStats(bot))
+    print("DEBUG: Đã load thành công!")
