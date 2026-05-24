@@ -151,6 +151,6 @@ class DungeonStats(commands.Cog):
     async def dglist(self, interaction: discord.Interaction):
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
         if not dungeons: return await interaction.response.send_message("❌ Empty.", ephemeral=True)
-        await interaction.response.send_message("📍 Chọn dungeon:", view=DungeonListView(dungeons), ephemeral=True)
+        await interaction.response.send_message("📍 Please select dungeon", view=DungeonListView(dungeons), ephemeral=True)
 
 async def setup(bot): await bot.add_cog(DungeonStats(bot))
