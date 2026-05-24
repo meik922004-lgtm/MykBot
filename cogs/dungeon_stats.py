@@ -153,7 +153,7 @@ class DungeonStats(commands.Cog):
         embed.color = discord.Color.green() if has_any_passed else discord.Color.red()
         
         if not embed.fields:
-            return await interaction.followup.send("❌ Dữ liệu Gear của bạn bị lỗi, hãy setup lại!", ephemeral=True)
+            return await interaction.followup.send("❌ Cant check your gear info, please re update!", ephemeral=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
