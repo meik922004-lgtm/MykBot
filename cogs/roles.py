@@ -59,7 +59,7 @@ class ServerRolesView(discord.ui.View):
 # ==========================
 # COG: ROLES
 # ==========================
-class Roles(commands.Cog):
+class roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.add_view(ServerRolesView())
@@ -85,4 +85,4 @@ class Roles(commands.Cog):
             await interaction.response.send_message("❌ Role already exists!", ephemeral=True)
 
 async def setup(bot):
-    await bot.add_cog(Roles(bot))
+    await bot.add_cog(roles(bot))
