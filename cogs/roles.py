@@ -4,14 +4,14 @@ import json
 import os
 
 # ==========================
-# CẤU HÌNH ROLE CỐ ĐỊNH & JSON
+# CONSTANTS & CONFIGURATION
 # ==========================
 TOURIST_ROLE_NAME = "Tourist"
 STAGE_ROLES = ["Newbie stage", "Mid game stage", "Endgame stage"]
 MEMBER_ROLE_NAME = "Member"
 CONFIG_FILE = "roles_config.json"
 
-# Hàm tải danh sách role từ JSON
+# Load dynamic combat roles from JSON
 def load_combat_roles():
     if not os.path.exists(CONFIG_FILE):
         default_data = {"combat_roles": ["DPS", "TANK"]}
@@ -23,92 +23,25 @@ def load_combat_roles():
         data = json.load(f)
         return data.get("combat_roles", [])
 
-# Hàm lưu danh sách role mới vào JSON
+# Save updated combat roles to JSON
 def save_combat_roles(roles_list):
     with open(CONFIG_FILE, "w") as f:
         json.dump({"combat_roles": roles_list}, f)
 
 # ==========================
-# TỪ ĐIỂN NGÔN NGỮ (DICTIONARY)
-# ==========================
-MESSAGES = {
-    "role_not_found": {
-        "en": "❌ **Cannot find the requested role(s) in this server.**",
-        "de": "🇩🇪 Die angeforderte(n) Rolle(n) wurde(n) auf diesem Server nicht gefunden.",
-        "vn": "🇻🇳 Không tìm thấy (các) role yêu cầu trong server.",
-        "id": "🇮🇩 Tidak dapat menemukan role yang diminta di server ini.",
-        "br": "🇧🇷 Não foi possível encontrar o(s) cargo(s) solicitado(s) neste servidor."
-    },
-    "tourist_updated": {
-        "en": "✅ **Your Tourist role preference has been updated!**",
-        "de": "🇩🇪 Deine Tourist-Rollenpräferenz wurde aktualisiert!",
-        "vn": "🇻🇳 Đã cập nhật trạng thái role Tourist của bạn!",
-        "id": "🇮🇩 Preferensi role Tourist Anda telah diperbarui!",
-        "br": "🇧🇷 Sua preferência do cargo Tourist foi atualizada!"
-    },
-    "stage_updated": {
-        "en": "✅ **Updated your Progression Stage role!**",
-        "de": "🇩🇪 Deine Fortschritts-Rolle wurde aktualisiert!",
-        "vn": "🇻🇳 Đã cập nhật role Giai đoạn của bạn!",
-        "id": "🇮🇩 Role Tahap Perkembangan Anda berhasil diperbarui!",
-        "br": "🇧🇷 Seu cargo de Estágio de Progresso foi atualizado!"
-    },
-    "combat_updated": {
-        "en": "✅ **Updated your Combat roles!**",
-        "de": "🇩🇪 Deine Kampf-Rollen wurden aktualisiert!",
-        "vn": "🇻🇳 Đã cập nhật role Hệ chiến đấu của bạn!",
-        "id": "🇮🇩 Role Tempur Anda berhasil diperbarui!",
-        "br": "🇧🇷 Seus cargos de Combate foram atualizados!"
-    }
-}
-
-# ==========================
-# VIEW: NÚT BẤM DỊCH THUẬT
-# ==========================
-class TranslationView(discord.ui.View):
-    def __init__(self, msg_key: str):
-        super().__init__(timeout=None)
-        self.msg_key = msg_key
-
-    async def update_message(self, interaction: discord.Interaction, lang: str):
-        content = MESSAGES[self.msg_key][lang]
-        await interaction.response.edit_message(content=content, view=self)
-
-    @discord.ui.button(emoji="🇬🇧", style=discord.ButtonStyle.secondary)
-    async def btn_en(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_message(interaction, "en")
-
-    @discord.ui.button(emoji="🇩🇪", style=discord.ButtonStyle.secondary)
-    async def btn_de(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_message(interaction, "de")
-
-    @discord.ui.button(emoji="🇻🇳", style=discord.ButtonStyle.secondary)
-    async def btn_vn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_message(interaction, "vn")
-
-    @discord.ui.button(emoji="🇮🇩", style=discord.ButtonStyle.secondary)
-    async def btn_id(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_message(interaction, "id")
-
-    @discord.ui.button(emoji="🇧🇷", style=discord.ButtonStyle.secondary)
-    async def btn_br(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_message(interaction, "br")
-
-
-# ==========================
-# SELECT: COMBAT ROLES ĐỘNG (DYNAMIC)
+# SELECT: DYNAMIC COMBAT ROLES
 # ==========================
 class DynamicCombatSelect(discord.ui.Select):
     def __init__(self):
         combat_roles = load_combat_roles()
         options = [
-            discord.SelectOption(label=role, description=f"Chọn để lấy role {role}", emoji="⚔️") 
+            discord.SelectOption(label=role, description=f"Select to get the {role} role", emoji="⚔️") 
             for role in combat_roles
         ]
         
-        # Đảm bảo bot không lỗi nếu admin xóa hết role
+        # Fallback if admin removes all roles
         if not options:
-            options = [discord.SelectOption(label="None", description="Chưa có role nào được set up")]
+            options = [discord.SelectOption(label="None", description="No roles have been set up yet")]
 
         super().__init__(
             placeholder="🗡️ Combat Styles / Roles...",
@@ -139,19 +72,19 @@ class DynamicCombatSelect(discord.ui.Select):
         if roles_to_add:
             await interaction.user.add_roles(*roles_to_add)
 
-        await interaction.followup.send(MESSAGES["combat_updated"]["en"], view=TranslationView("combat_updated"), ephemeral=True)
+        await interaction.followup.send("✅ **Updated your Combat roles!**", ephemeral=True)
 
 
 # ==========================
-# VIEW: BẢNG CHỌN ROLE CHÍNH
+# VIEW: MAIN ROLE SELECTION PANEL
 # ==========================
 class ServerRolesView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        # Thêm Dropdown Động vào View
+        # Add Dynamic Dropdown to View
         self.add_item(DynamicCombatSelect())
 
-    # 1. DROPDOWN CHO TOURIST ROLE
+    # 1. DROPDOWN FOR TOURIST ROLE
     @discord.ui.select(
         placeholder="🔔 Notifications / Alerts (Tourist)...",
         min_values=0, max_values=1,
@@ -164,8 +97,9 @@ class ServerRolesView(discord.ui.View):
     async def tourist_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         await interaction.response.defer(ephemeral=True)
         role = discord.utils.get(interaction.guild.roles, name=TOURIST_ROLE_NAME)
+        
         if not role:
-            await interaction.followup.send(MESSAGES["role_not_found"]["en"], view=TranslationView("role_not_found"), ephemeral=True)
+            await interaction.followup.send("❌ **Cannot find the requested role(s) in this server.**", ephemeral=True)
             return
 
         if "get" in select.values:
@@ -175,9 +109,9 @@ class ServerRolesView(discord.ui.View):
             if role in interaction.user.roles:
                 await interaction.user.remove_roles(role)
 
-        await interaction.followup.send(MESSAGES["tourist_updated"]["en"], view=TranslationView("tourist_updated"), ephemeral=True)
+        await interaction.followup.send("✅ **Your Tourist role preference has been updated!**", ephemeral=True)
 
-    # 2. DROPDOWN CHO STAGE ROLE
+    # 2. DROPDOWN FOR STAGE ROLE
     @discord.ui.select(
         placeholder="🌱 Game Progression Stages...",
         min_values=0, max_values=1,
@@ -206,11 +140,11 @@ class ServerRolesView(discord.ui.View):
         if roles_to_add:
             await interaction.user.add_roles(*roles_to_add)
 
-        await interaction.followup.send(MESSAGES["stage_updated"]["en"], view=TranslationView("stage_updated"), ephemeral=True)
+        await interaction.followup.send("✅ **Updated your Progression Stage role!**", ephemeral=True)
 
 
 # ==========================
-# COG: QUẢN LÝ
+# COG: ROLE MANAGEMENT
 # ==========================
 class Roles(commands.Cog, name="Management and Roles"):
     def __init__(self, bot):
@@ -220,19 +154,18 @@ class Roles(commands.Cog, name="Management and Roles"):
     @commands.command(name="setup_role_panel")
     @commands.has_permissions(administrator=True)
     async def setup_role_panel(self, ctx):
-        """Triển khai bảng chọn Role dạng Dropdown"""
+        """Deploy the Role selection panel"""
         embed = discord.Embed(
             title="🔔 SERVER ROLES MENU 🔔",
             description=(
-                f"Please select your server roles using the dropdown menus below! "
-                f"You can translate notifications by clicking the flags afterwards.\n\n"
+                f"Please select your server roles using the dropdown menus below!\n\n"
                 f"--- \n\n"
                 f"**📢 Tours & Raids Alerts**\n"
-                f"Turn on/off notification of Raid tour .\n\n"
+                f"Turn on/off notification of Raid tours.\n\n"
                 f"**🌱 Game Progression Stage**\n"
                 f"Choose your progression (Only 1).\n\n"
                 f"**🗡️ Combat Roles**\n"
-                f"Pick your playstyle (Can choose all)."
+                f"Pick your playstyle (Can choose multiple)."
             ),
             color=discord.Color.purple()
         )
@@ -240,7 +173,7 @@ class Roles(commands.Cog, name="Management and Roles"):
         await ctx.send(embed=embed, view=ServerRolesView())
 
     # ==========================
-    # LỆNH ADMIN: THÊM / XÓA ROLE ĐỘNG
+    # ADMIN COMMANDS: ADD/REMOVE DYNAMIC ROLES
     # ==========================
     @commands.command(name="add_role")
     @commands.has_permissions(administrator=True)
@@ -248,36 +181,36 @@ class Roles(commands.Cog, name="Management and Roles"):
         """Add new combat role to menu (Example: !add_role UFM)"""
         combat_roles = load_combat_roles()
         if role_name in combat_roles:
-            await ctx.send(f"⚠️ Role **{role_name}** Already in list.")
+            await ctx.send(f"⚠️ Role **{role_name}** is already in the list.")
             return
             
         combat_roles.append(role_name)
         save_combat_roles(combat_roles)
-        await ctx.send(f"✅ Sucessful added role **{role_name}** to system.\n👉 **Notice:** Please use command `!setup_role_panel` To creat new menu!")
+        await ctx.send(f"✅ Successfully added role **{role_name}** to the system.\n👉 **Notice:** Please use command `!setup_role_panel` to create a new updated menu!")
 
     @commands.command(name="remove_role")
     @commands.has_permissions(administrator=True)
     async def remove_role(self, ctx, *, role_name: str):
-        """Remove role from meru (Example: !remove_role TANK)"""
+        """Remove role from menu (Example: !remove_role TANK)"""
         combat_roles = load_combat_roles()
         if role_name not in combat_roles:
-            await ctx.send(f"⚠️ Role **{role_name}** is not exist in system.")
+            await ctx.send(f"⚠️ Role **{role_name}** does not exist in the system.")
             return
             
         combat_roles.remove(role_name)
         save_combat_roles(combat_roles)
-        await ctx.send(f"🗑️ Removed **{role_name}** from system.\n👉 **Notice:** Please use command `!setup_role_panel` To creat new menu!")
+        await ctx.send(f"🗑️ Removed **{role_name}** from the system.\n👉 **Notice:** Please use command `!setup_role_panel` to create a new updated menu!")
 
     @commands.command(name="give_member_all")
     @commands.has_permissions(administrator=True)
     async def give_member_all(self, ctx):
-        """Give Role Member to all people"""
+        """Give Member role to all people"""
         role = discord.utils.get(ctx.guild.roles, name=MEMBER_ROLE_NAME)
         if not role:
-            await ctx.send(f"❌Role **{MEMBER_ROLE_NAME}** is not existed.")
+            await ctx.send(f"❌ Role **{MEMBER_ROLE_NAME}** does not exist in this server.")
             return
 
-        await ctx.send("⏳ Giving role for all members...")
+        await ctx.send("⏳ Giving role to all members...")
         count = 0
         for member in ctx.guild.members:
             if not member.bot and role not in member.roles:
@@ -287,7 +220,7 @@ class Roles(commands.Cog, name="Management and Roles"):
                 except (discord.Forbidden, discord.HTTPException):
                     pass 
         
-        await ctx.send(f"✅ Done! Already give **{MEMBER_ROLE_NAME}** for **{count}** members.")
+        await ctx.send(f"✅ Done! Assigned **{MEMBER_ROLE_NAME}** to **{count}** members.")
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))
