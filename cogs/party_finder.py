@@ -157,6 +157,7 @@ class SearchModal(ui.Modal, title="Search Party"):
         self.parent_view.page = 0
         await self.parent_view.update_lobby(interaction)
 
+
 # --- VIEWS ---
 class DecisionView(ui.View):
     def __init__(self, pid, user, ign, role):
@@ -180,6 +181,32 @@ class DecisionView(ui.View):
         try: await self.user.send("💔 Your join request has been rejected.")
         except: pass
 
+# 1. Thêm Class này vào phía trên class ManagePartyView
+class KickMemberSelect(ui.Select):
+    def __init__(self, party, is_leader):
+        options = [
+            discord.SelectOption(label=mem['ign'], value=str(mem['id']))
+            for mem in party["members"] if mem['id'] != party["host_id"]
+        ]
+        super().__init__(placeholder="Select a member to kick...", options=options)
+        self.party = party
+
+    async def callback(self, interaction: discord.Interaction):
+        global parties_col
+        member_id = int(self.values[0])
+        
+        # Xóa khỏi DB
+        parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": member_id}}})
+        
+        # Gửi thông báo DM cho người bị kick
+        try:
+            user = await interaction.client.fetch_user(member_id)
+            await user.send(f"⚠️ You have been kicked from the party: **{self.party['dg_name']}**")
+        except: pass
+        
+        await interaction.response.send_message(f"✅ Member kicked successfully.", ephemeral=True)
+
+# 2. Thay thế Class ManagePartyView cũ bằng Class này
 class ManagePartyView(ui.View):
     def __init__(self, party, is_leader):
         super().__init__(timeout=None)
@@ -197,20 +224,31 @@ class ManagePartyView(ui.View):
 
     @ui.button(label="Toggle AutoFill Filter", style=discord.ButtonStyle.secondary)
     async def toggle_filter(self, i: discord.Interaction, b: ui.Button):
+        global parties_col
         if not self.is_leader: return await i.response.send_message("❌ Only the Leader can manage this.", ephemeral=True)
-        self.party["filter_enabled"] = not self.party.get("filter_enabled", True)
-        status = 'ON 🟢' if self.party['filter_enabled'] else 'OFF 🔴'
+        new_val = not self.party.get("filter_enabled", True)
+        parties_col.update_one({"id": self.party["id"]}, {"$set": {"filter_enabled": new_val}})
+        status = 'ON 🟢' if new_val else 'OFF 🔴'
         await i.response.send_message(f"✅ Filter status: **{status}**", ephemeral=True)
+
+    @ui.button(label="Kick Member", style=discord.ButtonStyle.danger)
+    async def kick_member_btn(self, i: discord.Interaction, b: ui.Button):
+        if not self.is_leader: return await i.response.send_message("❌ Only the Leader can kick.", ephemeral=True)
+        if len(self.party["members"]) <= 1: return await i.response.send_message("❌ No members to kick.", ephemeral=True)
+        
+        view = ui.View()
+        view.add_item(KickMemberSelect(self.party, self.is_leader))
+        await i.response.send_message("Select a member to kick:", view=view, ephemeral=True)
 
     @ui.button(label="Leave Party", style=discord.ButtonStyle.danger)
     async def leave_party(self, i: discord.Interaction, b: ui.Button):
+        global parties_col
         if self.is_leader:
-            active_parties.pop(self.party["id"], None)
+            parties_col.delete_one({"id": self.party["id"]})
             await i.response.send_message("💥 Party disbanded.", ephemeral=True)
         else:
-            self.party["members"] = [m for m in self.party["members"] if m["id"] != i.user.id]
+            parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": i.user.id}}})
             await i.response.send_message("👋 You left the party.", ephemeral=True)
-
 class LobbySelectParty(ui.Select):
     def __init__(self, parties_on_page):
         options = [discord.SelectOption(label=f"Join: {p['dg_name']}", description=f"Leader: {p['leader_ign']} | Role: {p['recruitment']}", value=p["id"]) for p in parties_on_page]
