@@ -257,7 +257,8 @@ class ManagePartyView(ui.View):
         # Tổng hợp kết quả
         results = "\n".join([f"{uid}: {status}" for uid, status in view.ready_members.items()])
         result_embed = discord.Embed(title="📊 Ready Check Results", description=results or "No one responded.", color=discord.Color.blue())
-        await msg.edit(embed=result_embed, view=None)
+        # Thay vì dùng msg.edit, hãy dùng i.message.edit
+        await i.message.edit(embed=result_embed, view=None)
 
     @ui.button(label="View Members", style=discord.ButtonStyle.primary)
     async def view_members(self, i: discord.Interaction, b: ui.Button):
