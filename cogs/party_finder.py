@@ -392,8 +392,8 @@ def build_lobby_embed(page=0, search_query=""):
             header = f"🎮 **{p['dg_name']}** (ID: `{p['id']}`)"
             body = (
                 f"> **Leader:** {p['leader_ign']} | **need:** {p['recruitment']}\n"
-                f"> **start:** {p['start_in']} | **member:** `{len(p['members'])}/4`\n"
-                f"> 🕒 Tạo lúc: <t:{int(created_time)}:R>\n"
+                f"> **start in:** {p['start_in']} | **member:** `{len(p['members'])}/4`\n"
+                f"> 🕒 Created at: <t:{int(created_time)}:R>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━" # Đường kẻ phân cách
             )
             # inline=False giúp mỗi party nằm trên 1 hàng riêng biệt
