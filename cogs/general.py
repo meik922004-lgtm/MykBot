@@ -41,7 +41,9 @@ class HelpTranslationView(discord.ui.View):
             value=(
                 "🔹 `/setbless [min] [maps]`: Set bless raid timer.\n"
                 "🔹 `/setboss [boss] [map] [HH:MM]`: Set digital tour timer.\n"
-                "🔹 `/setup_role_panel`: Deploy the server role assignment menu."
+                "🔹 `/setup_role_panel`: Deploy the server role assignment menu.\n"
+                "🔹 `/add_role`: Add role to menu panel.\n",
+                "🔹 `/remove_role`: Remove role to menu panel."
             ),
             inline=False
         )
