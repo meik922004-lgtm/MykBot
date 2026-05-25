@@ -248,7 +248,8 @@ class ManagePartyView(ui.View):
         
         # Gửi thông báo cho tất cả thành viên trong nhóm
         await i.response.send_message("✅ Ready Check initiated!", ephemeral=True)
-        msg = await i.channel.send(embed=embed, view=view)
+        for member in self.party["members"]:
+            await i.client.get_user(member["id"]).send(...)
         
         # Đợi 60 giây để thu thập kết quả
         await asyncio.sleep(60)
