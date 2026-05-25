@@ -41,7 +41,6 @@ class HelpTranslationView(discord.ui.View):
             value=(
                 "🔹 `/setbless [min] [maps]`: Set bless raid timer.\n"
                 "🔹 `/setboss [boss] [map] [HH:MM]`: Set digital tour timer.\n"
-                "🔹 `/setstd [dungeon]`: Configure standard requirements for a dungeon.\n"
                 "🔹 `/setup_role_panel`: Deploy the server role assignment menu."
             ),
             inline=False
@@ -73,7 +72,7 @@ class General(commands.Cog, name="Basic command"):
 
     @app_commands.command(name="hello", description="Bot say hello to you")
     async def hello(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"👋 Hello {interaction.user.mention}! Wish you have an awesome day gaming! 🦖")
+        await interaction.response.send_message(f"👋 Hello {interaction.user.mention}! Im MyK bot- customed bot for DMW/DMO Wish you have an awesome day gaming! 🦖")
 
     @app_commands.command(name="help", description="open helper for commands")
     async def help(self, interaction: discord.Interaction):
