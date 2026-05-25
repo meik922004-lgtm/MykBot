@@ -29,6 +29,7 @@ class HelpTranslationView(discord.ui.View):
                 "🔹 `/help`: Open this command menu.\n"
                 "🔹 `/schedule`: View spawn times for Raids/Bosses.\n"
                 "🔹 `/mygear`: Setup/Update your character gear profile (REQUIRED).\n"
+                "🔹 `/showmygear`:Show your gear profile(everyone can see).\n"
                 "🔹 `/dglist`: View list of supported dungeons.\n"
                 "🔹 `/party_lobby`: Create or manage your party lobby."
             ),
@@ -42,7 +43,7 @@ class HelpTranslationView(discord.ui.View):
                 "🔹 `/setbless [min] [maps]`: Set bless raid timer.\n"
                 "🔹 `/setboss [boss] [map] [HH:MM]`: Set digital tour timer.\n"
                 "🔹 `/setup_role_panel`: Deploy the server role assignment menu.\n"
-                "🔹 `/add_role`: Add role to menu panel.\n",
+                "🔹 `/add_role`: Add role to menu panel.\n"
                 "🔹 `/remove_role`: Remove role to menu panel."
             ),
             inline=False
