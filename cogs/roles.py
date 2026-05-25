@@ -74,7 +74,6 @@ class ServerRolesView(discord.ui.View):
 class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(ServerRolesView())
 
     @app_commands.command(name="setup_role_panel", description="Tạo bảng chọn role")
     @app_commands.checks.has_permissions(administrator=True)
@@ -97,4 +96,5 @@ class Roles(commands.Cog):
             await interaction.response.send_message("❌ Role đã tồn tại trong danh sách!", ephemeral=True)
 
 async def setup(bot):
+    bot.add_view(ServerRolesView()) 
     await bot.add_cog(Roles(bot))
