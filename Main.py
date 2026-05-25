@@ -60,13 +60,6 @@ class MyKBot(commands.Bot):
                     except Exception as e:
                         print(f"❌ Failed to load {filename}: {e}")
         
-        # 2. Sync lệnh Slash
-        try:
-            synced = await self.tree.sync()
-            print(f"✅ Đã đồng bộ {len(synced)} lệnh Slash lên Discord.")
-        except Exception as e:
-            print(f"❌ Lỗi đồng bộ lệnh: {e}")
-
 bot = MyKBot()
 
 @bot.command()
@@ -81,16 +74,6 @@ async def sync(ctx):
     else:
         await ctx.send("❌ You dont have permission to use this command.")
 
-@bot.command()
-async def reload(ctx, extension: str):
-    if ctx.author.id == 1283689737567211581: 
-        try:
-            await bot.reload_extension(f"cogs.{extension}")
-            await ctx.send(f"✅ Đã tải lại (reload): `cogs.{extension}`")
-        except Exception as e:
-            await ctx.send(f"❌ Lỗi reload: {e}")
-    else:
-        await ctx.send("❌  You dont have permission to use this command.")
 @bot.event
 async def on_ready():
     print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")

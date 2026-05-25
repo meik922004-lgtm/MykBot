@@ -1,76 +1,55 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json
 import os
+from motor.motor_asyncio import AsyncIOMotorClient
 
-CONFIG_FILE = "roles_config.json"
+# --- KẾT NỐI MONGODB ---
+MONGO_URL = os.getenv("MONGO_URL")
+db_client = AsyncIOMotorClient(MONGO_URL)
+db = db_client["mykbot_db"]
+roles_collection = db["roles_config"]
 
-def load_roles_data():
-    if not os.path.exists(CONFIG_FILE):
-        default_data = {"general_roles": ["Member", "RBH", "MDG", "PDG", "MUGEN", "PIED", "APO", "PILLAR AB"], "combat_roles": ["DPS", "UFM", "TANK"]}
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(default_data, f)
-        return default_data
-    with open(CONFIG_FILE, "r") as f:
-        return json.load(f)
+DEFAULT_DATA = {
+    "_id": "server_roles_config",
+    "general_roles": ["Member", "RBH", "MDG", "PDG", "MUGEN", "PIED", "APO", "PILLAR AB"],
+    "combat_roles": ["DPS", "UFM", "TANK"]
+}
 
-def save_roles_data(data):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f)
+async def get_db_data():
+    data = await roles_collection.find_one({"_id": "server_roles_config"})
+    if not data:
+        await roles_collection.insert_one(DEFAULT_DATA)
+        return DEFAULT_DATA
+    return data
 
-# Logic xử lý gán/xóa role chung cho Select Menu
-async def handle_role_assignment(interaction: discord.Interaction, selected_values: list, category_roles: list):
-    await interaction.response.defer(ephemeral=True)
-    
-    # Lấy các role object từ server
-    roles_to_add = []
-    roles_to_remove = []
-    
-    for r_name in category_roles:
-        role_obj = discord.utils.get(interaction.guild.roles, name=r_name)
-        if not role_obj: continue
-        
-        if r_name in selected_values:
-            roles_to_add.append(role_obj)
-        elif role_obj in interaction.user.roles:
-            roles_to_remove.append(role_obj)
-            
-    if roles_to_remove:
-        await interaction.user.remove_roles(*roles_to_remove)
-    if roles_to_add:
-        await interaction.user.add_roles(*roles_to_add)
-        
-    await interaction.followup.send(f"✅ Đã cập nhật xong role nhóm {category_roles[0]}!", ephemeral=True)
-
-class GeneralRolesSelect(discord.ui.Select):
-    def __init__(self):
-        data = load_roles_data()
-        roles = data.get("general_roles", ["Member"])
-        options = [discord.SelectOption(label=r, emoji="🛡️") for r in roles]
-        super().__init__(placeholder="💠 General & Dungeon Roles...", min_values=0, max_values=len(options), options=options, row=0)
+# --- VIEW CẤU HÌNH (Dùng cho cả Menu Role và Update Menu) ---
+class RoleSelect(discord.ui.Select):
+    def __init__(self, roles, category, custom_id, emoji):
+        options = [discord.SelectOption(label=r, emoji=emoji) for r in roles]
+        super().__init__(placeholder=f"Chọn {category}...", min_values=0, max_values=len(options) or 1, 
+                         options=options, custom_id=custom_id)
+        self.category = category
 
     async def callback(self, interaction: discord.Interaction):
-        data = load_roles_data()
-        await handle_role_assignment(interaction, self.values, data.get("general_roles", []))
-
-class DynamicCombatSelect(discord.ui.Select):
-    def __init__(self):
-        data = load_roles_data()
-        roles = data.get("combat_roles", ["DPS", "UFM", "TANK"]) # Đã sửa lỗi thiếu dấu phẩy
-        options = [discord.SelectOption(label=r, emoji="⚔️") for r in roles]
-        super().__init__(placeholder="🗡️ Combat Styles...", min_values=0, max_values=len(options), options=options, row=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        data = load_roles_data()
-        await handle_role_assignment(interaction, self.values, data.get("combat_roles", []))
+        data = await get_db_data()
+        category_roles = data.get(self.category, [])
+        
+        # Xử lý gán role
+        to_add = [discord.utils.get(interaction.guild.roles, name=r) for r in self.values if discord.utils.get(interaction.guild.roles, name=r)]
+        to_remove = [discord.utils.get(interaction.guild.roles, name=r) for r in category_roles if r not in self.values]
+        
+        await interaction.user.add_roles(*[r for r in to_add if r])
+        await interaction.user.remove_roles(*[r for r in to_remove if r])
+        await interaction.response.send_message("✅ Đã cập nhật!", ephemeral=True)
 
 class ServerRolesView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, data):
         super().__init__(timeout=None)
-        self.add_item(GeneralRolesSelect())
-        self.add_item(DynamicCombatSelect())
+        self.add_item(RoleSelect(data.get("general_roles", []), "general_roles", "p_general", "🛡️"))
+        self.add_item(RoleSelect(data.get("combat_roles", []), "combat_roles", "p_combat", "⚔️"))
 
+# --- COG CHÍNH ---
 class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -78,23 +57,26 @@ class Roles(commands.Cog):
     @app_commands.command(name="setup_role_panel", description="Tạo bảng chọn role")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_role_panel(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Panel created!", view=ServerRolesView())
+        data = await get_db_data()
+        await interaction.response.send_message("💠 **BẢNG CHỌN ROLE**", view=ServerRolesView(data))
 
-    @app_commands.command(name="add_role", description="Thêm role vào danh sách menu")
-    @app_commands.choices(category=[
-        app_commands.Choice(name="General/Dungeon", value="general_roles"),
-        app_commands.Choice(name="Combat", value="combat_roles")
-    ])
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.command(name="add_role", description="Thêm role")
     async def add_role(self, interaction: discord.Interaction, role_name: str, category: str):
-        data = load_roles_data()
-        if role_name not in data[category]:
-            data[category].append(role_name)
-            save_roles_data(data)
-            await interaction.response.send_message(f"✅ Đã thêm **{role_name}** vào **{category}**", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Role đã tồn tại trong danh sách!", ephemeral=True)
+        data = await get_db_data()
+        data[category].append(role_name)
+        await roles_collection.replace_one({"_id": "server_roles_config"}, data)
+        await interaction.response.send_message(f"✅ Đã thêm {role_name} vào {category}", ephemeral=True)
+
+    @app_commands.command(name="remove_role", description="Xóa role")
+    async def remove_role(self, interaction: discord.Interaction, role_name: str, category: str):
+        data = await get_db_data()
+        if role_name in data[category]:
+            data[category].remove(role_name)
+            await roles_collection.replace_one({"_id": "server_roles_config"}, data)
+            await interaction.response.send_message(f"✅ Đã xóa {role_name}", ephemeral=True)
 
 async def setup(bot):
-    bot.add_view(ServerRolesView()) 
+    # Load data và đăng ký View ngay khi bot khởi động
+    data = await get_db_data()
+    bot.add_view(ServerRolesView(data))
     await bot.add_cog(Roles(bot))
