@@ -189,7 +189,7 @@ class KickMemberSelect(ui.Select):
             discord.SelectOption(label=mem['ign'], value=str(mem['id']))
             for mem in party["members"] if mem['id'] != party["host_id"]
         ]
-        super().__init__(placeholder="Chọn thành viên để kick...", options=options)
+        super().__init__(placeholder="Select member to kick...", options=options)
         self.party = party
 
     async def callback(self, interaction: discord.Interaction):
@@ -199,12 +199,12 @@ class KickMemberSelect(ui.Select):
             parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": member_id}}})
             
             # Ẩn UI chọn người và báo thành công
-            await interaction.response.edit_message(content="✅ Đã kick thành viên thành công.", view=None)
+            await interaction.response.edit_message(content="✅ Kick successful.", view=None)
             
             # Nhắn tin DM
             try:
                 user = await interaction.client.fetch_user(member_id)
-                await user.send(f"⚠️ Bạn đã bị kick khỏi party: **{self.party['dg_name']}**")
+                await user.send(f"⚠️ you got kicked: **{self.party['dg_name']}**")
             except: pass
         except Exception as e:
             print(f"Lỗi Kick Callback: {e}")
@@ -231,7 +231,7 @@ class ManagePartyView(ui.View):
         try:
             current_party = parties_col.find_one({"id": self.party["id"]})
             if not current_party:
-                return await i.response.send_message("❌ Party không còn tồn tại.", ephemeral=True)
+                return await i.response.send_message("❌ Party no longer exist.", ephemeral=True)
 
             embed = discord.Embed(title=f"👥 Party Members: {current_party['dg_name']}", color=discord.Color.blue())
             for idx, mem in enumerate(current_party["members"]):
@@ -260,11 +260,11 @@ class ManagePartyView(ui.View):
         try:
             current_party = parties_col.find_one({"id": self.party["id"]})
             if not current_party or len(current_party["members"]) <= 1: 
-                return await i.response.send_message("❌ Không có thành viên nào để kick.", ephemeral=True)
+                return await i.response.send_message("❌ There is no member to kick.", ephemeral=True)
             
             view = ui.View()
             view.add_item(KickMemberSelect(current_party))
-            await i.response.send_message("Chọn thành viên để kick:", view=view, ephemeral=True)
+            await i.response.send_message("Select member to kick:", view=view, ephemeral=True)
         except Exception as e:
             print(f"Lỗi Kick: {e}")
             await i.response.send_message("❌ Lỗi dữ liệu Database.", ephemeral=True)
@@ -273,7 +273,7 @@ class ManagePartyView(ui.View):
     async def disband_party(self, i: discord.Interaction, b: ui.Button):
         try:
             parties_col.delete_one({"id": self.party["id"]})
-            await i.response.edit_message(content="💥 Party đã bị giải tán.", view=None, embed=None)
+            await i.response.edit_message(content="💥 Party disbanded.", view=None, embed=None)
         except Exception as e:
             print(f"Lỗi Disband: {e}")
             await i.response.send_message("❌ Lỗi Database.", ephemeral=True)
@@ -282,7 +282,7 @@ class ManagePartyView(ui.View):
     async def leave_party(self, i: discord.Interaction, b: ui.Button):
         try:
             parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": i.user.id}}})
-            await i.response.edit_message(content="👋 Bạn đã rời khỏi party.", view=None, embed=None)
+            await i.response.edit_message(content="👋You left party.", view=None, embed=None)
         except Exception as e:
             print(f"Lỗi Leave: {e}")
             await i.response.send_message("❌ Lỗi Database.", ephemeral=True)
