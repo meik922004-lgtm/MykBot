@@ -288,16 +288,31 @@ class LobbyView(ui.View):
         parties_on_page = parties[self.page * 6 : self.page * 6 + 6]
         if parties_on_page: self.add_item(LobbySelectParty(parties_on_page))
 
-        btn_create = ui.Button(label="Create", style=discord.ButtonStyle.primary, row=1, callback=lambda i: i.response.send_modal(CreatePartyModal()))
-        btn_search = ui.Button(label="Search", style=discord.ButtonStyle.secondary, row=1, callback=lambda i: i.response.send_modal(SearchModal(self)))
-        btn_refresh = ui.Button(label="Refresh", style=discord.ButtonStyle.secondary, row=1, callback=self.update_lobby)
-        btn_manage = ui.Button(label="Manage My Party", style=discord.ButtonStyle.success, row=1, callback=self.manage_party_callback)
+        # Định nghĩa các hàm callback riêng
+        async def create_callback(i: discord.Interaction): await i.response.send_modal(CreatePartyModal())
+        async def search_callback(i: discord.Interaction): await i.response.send_modal(SearchModal(self))
+        
+        btn_create = ui.Button(label="Create", style=discord.ButtonStyle.primary, row=1)
+        btn_create.callback = create_callback
+        
+        btn_search = ui.Button(label="Search", style=discord.ButtonStyle.secondary, row=1)
+        btn_search.callback = search_callback
+        
+        btn_refresh = ui.Button(label="Refresh", style=discord.ButtonStyle.secondary, row=1)
+        btn_refresh.callback = self.update_lobby
+        
+        btn_manage = ui.Button(label="Manage My Party", style=discord.ButtonStyle.success, row=1)
+        btn_manage.callback = self.manage_party_callback
         
         self.add_item(btn_create); self.add_item(btn_search); self.add_item(btn_refresh); self.add_item(btn_manage)
 
         if len(parties) > 6:
-            btn_prev = ui.Button(label="◀ Prev", style=discord.ButtonStyle.secondary, disabled=(self.page == 0), row=2, callback=self.prev_page)
-            btn_next = ui.Button(label="Next ▶", style=discord.ButtonStyle.secondary, disabled=(self.page == max_pages - 1), row=2, callback=self.next_page)
+            btn_prev = ui.Button(label="◀ Prev", style=discord.ButtonStyle.secondary, disabled=(self.page == 0), row=2)
+            btn_prev.callback = self.prev_page
+            
+            btn_next = ui.Button(label="Next ▶", style=discord.ButtonStyle.secondary, disabled=(self.page == max_pages - 1), row=2)
+            btn_next.callback = self.next_page
+            
             self.add_item(btn_prev); self.add_item(btn_next)
 
     async def update_lobby(self, interaction: discord.Interaction):
