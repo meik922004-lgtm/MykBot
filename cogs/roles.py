@@ -13,7 +13,7 @@ STAGE_ROLES = ["Newbie stage", "Mid game stage", "Endgame stage"]
 
 def load_roles_data():
     if not os.path.exists(CONFIG_FILE):
-        default_data = {"general_roles": ["Member"], "combat_roles": ["DPS", "TANK"]}
+        default_data = {"general_roles": ["Member"], "combat_roles": ["DPS", "UFM", "TANK"]}
         with open(CONFIG_FILE, "w") as f:
             json.dump(default_data, f)
         return default_data
@@ -42,7 +42,7 @@ class GeneralRolesSelect(discord.ui.Select):
 class DynamicCombatSelect(discord.ui.Select):
     def __init__(self):
         data = load_roles_data()
-        roles = data.get("combat_roles", ["DPS", "TANK"])
+        roles = data.get("combat_roles", ["DPS", "UFM" "TANK"])
         options = [discord.SelectOption(label=r, emoji="⚔️") for r in roles]
         super().__init__(placeholder="🗡️ Combat Styles...", min_values=0, max_values=len(options), options=options, row=1)
 
@@ -59,7 +59,7 @@ class ServerRolesView(discord.ui.View):
 # ==========================
 # COG: ROLES
 # ==========================
-class roles(commands.Cog):
+class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.add_view(ServerRolesView())
@@ -85,4 +85,4 @@ class roles(commands.Cog):
             await interaction.response.send_message("❌ Role already exists!", ephemeral=True)
 
 async def setup(bot):
-    await bot.add_cog(roles(bot))
+    await bot.add_cog(Roles(bot))
