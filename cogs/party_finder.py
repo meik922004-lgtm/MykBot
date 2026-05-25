@@ -192,63 +192,87 @@ class KickMemberSelect(ui.Select):
         self.party = party
 
     async def callback(self, interaction: discord.Interaction):
-        global parties_col
-        member_id = int(self.values[0])
-        
-        # Xóa khỏi DB
-        parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": member_id}}})
-        
-        # Gửi thông báo DM cho người bị kick
         try:
-            user = await interaction.client.fetch_user(member_id)
-            await user.send(f"⚠️ You have been kicked from the party: **{self.party['dg_name']}**")
-        except: pass
-        
-        await interaction.response.send_message(f"✅ Member kicked successfully.", ephemeral=True)
+            member_id = int(self.values[0])
+            # Xóa khỏi DB
+            parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": member_id}}})
+            
+            # Xóa UI Menu Dropdown ngay sau khi chọn xong
+            await interaction.response.edit_message(content=f"✅ Member kicked successfully.", view=None)
+            
+            # Gửi DM
+            try:
+                user = await interaction.client.fetch_user(member_id)
+                await user.send(f"⚠️ You have been kicked from the party: **{self.party['dg_name']}**")
+            except: pass
+        except Exception as e:
+            print(f"Lỗi khi Kick: {e}")
+            await interaction.response.send_message("❌ Lỗi hệ thống khi Kick.", ephemeral=True)
 
-# 2. Thay thế Class ManagePartyView cũ bằng Class này
 class ManagePartyView(ui.View):
     def __init__(self, party, is_leader):
+        global parties_col
         super().__init__(timeout=None)
         self.party = party
         self.is_leader = is_leader
 
     @ui.button(label="View Members", style=discord.ButtonStyle.primary)
     async def view_members(self, i: discord.Interaction, b: ui.Button):
-        embed = discord.Embed(title=f"👥 Party Members: {self.party['dg_name']}", color=discord.Color.blue())
-        for idx, mem in enumerate(self.party["members"]):
+        # Fetch data mới nhất từ DB đề phòng có người vừa vào/ra
+        current_party = parties_col.find_one({"id": self.party["id"]})
+        if not current_party:
+            return await i.response.send_message("❌ Party no longer exist.", ephemeral=True)
+
+        embed = discord.Embed(title=f"👥 Party Members: {current_party['dg_name']}", color=discord.Color.blue())
+        for idx, mem in enumerate(current_party["members"]):
             gear = get_gear_from_db(mem["id"], mem["role"])
-            is_host = "👑 (Leader)" if mem["id"] == self.party["host_id"] else ""
+            is_host = "👑 (Leader)" if mem["id"] == current_party["host_id"] else ""
             embed.add_field(name=f"[{idx+1}] {mem['ign']} {is_host}", value=f"Role: {mem['role']}\n{gear}", inline=False)
         await i.response.send_message(embed=embed, ephemeral=True)
 
     @ui.button(label="Toggle AutoFill Filter", style=discord.ButtonStyle.secondary)
     async def toggle_filter(self, i: discord.Interaction, b: ui.Button):
-        global parties_col
-        if not self.is_leader: return await i.response.send_message("❌ Only the Leader can manage this.", ephemeral=True)
-        new_val = not self.party.get("filter_enabled", True)
-        parties_col.update_one({"id": self.party["id"]}, {"$set": {"filter_enabled": new_val}})
-        status = 'ON 🟢' if new_val else 'OFF 🔴'
-        await i.response.send_message(f"✅ Filter status: **{status}**", ephemeral=True)
+        if not self.is_leader: 
+            return await i.response.send_message("❌ Only the Leader can use this function.", ephemeral=True)
+        
+        try:
+            new_val = not self.party.get("filter_enabled", True)
+            parties_col.update_one({"id": self.party["id"]}, {"$set": {"filter_enabled": new_val}})
+            self.party["filter_enabled"] = new_val # Cập nhật biến RAM tạm thời để bấm lần 2 không bị lỗi
+            
+            status = 'ON 🟢' if new_val else 'OFF 🔴'
+            await i.response.send_message(f"✅ Filter status: **{status}**", ephemeral=True)
+        except Exception as e:
+            print(f"Lỗi Toggle Filter: {e}")
+            await i.response.send_message("❌ Database error.", ephemeral=True)
 
     @ui.button(label="Kick Member", style=discord.ButtonStyle.danger)
     async def kick_member_btn(self, i: discord.Interaction, b: ui.Button):
-        if not self.is_leader: return await i.response.send_message("❌ Only the Leader can kick.", ephemeral=True)
-        if len(self.party["members"]) <= 1: return await i.response.send_message("❌ No members to kick.", ephemeral=True)
+        if not self.is_leader: 
+            return await i.response.send_message("❌ Only the Leader can kick.", ephemeral=True)
+        
+        # Fetch DB mới nhất
+        current_party = parties_col.find_one({"id": self.party["id"]})
+        if not current_party or len(current_party["members"]) <= 1: 
+            return await i.response.send_message("❌ No members to kick.", ephemeral=True)
         
         view = ui.View()
-        view.add_item(KickMemberSelect(self.party, self.is_leader))
+        view.add_item(KickMemberSelect(current_party, self.is_leader))
         await i.response.send_message("Select a member to kick:", view=view, ephemeral=True)
 
     @ui.button(label="Leave Party", style=discord.ButtonStyle.danger)
     async def leave_party(self, i: discord.Interaction, b: ui.Button):
-        global parties_col
-        if self.is_leader:
-            parties_col.delete_one({"id": self.party["id"]})
-            await i.response.send_message("💥 Party disbanded.", ephemeral=True)
-        else:
-            parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": i.user.id}}})
-            await i.response.send_message("👋 You left the party.", ephemeral=True)
+        try:
+            if self.is_leader:
+                parties_col.delete_one({"id": self.party["id"]})
+                # Edit message để XÓA các nút bấm đi (view=None), vì party đã giải tán
+                await i.response.edit_message(content="💥 Party disbanded.", view=None)
+            else:
+                parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": i.user.id}}})
+                await i.response.edit_message(content="👋 You left the party.", view=None)
+        except Exception as e:
+            print(f"Error: Leave Party: {e}")
+            await i.response.send_message("❌ Database error when leave party.", ephemeral=True)
 class LobbySelectParty(ui.Select):
     def __init__(self, parties_on_page):
         options = [discord.SelectOption(label=f"Join: {p['dg_name']}", description=f"Leader: {p['leader_ign']} | Role: {p['recruitment']}", value=p["id"]) for p in parties_on_page]
@@ -327,20 +351,41 @@ class LobbyView(ui.View):
             if any(m["id"] == interaction.user.id for m in p["members"]):
                 return await interaction.response.send_message(f"⚙️ Managing: {p['dg_name']}", view=ManagePartyView(p, p["host_id"] == interaction.user.id), ephemeral=True)
         await interaction.response.send_message("❌ You are not in any party.", ephemeral=True)
-
 def build_lobby_embed(page=0, search_query=""):
-    parties = sorted(active_parties.values(), key=lambda x: x["created_at"], reverse=True)
-    if search_query: parties = [p for p in parties if search_query in p["dg_name"].lower()]
+    # Lấy và sắp xếp trực tiếp từ Database
+    parties = list(parties_col.find().sort("created_at", -1))
+    if search_query: 
+        parties = [p for p in parties if search_query in p["dg_name"].lower()]
     
-    embed = discord.Embed(title="🏰 PARTY LOBBY", description=f"🔍 Filter: `{search_query}`" if search_query else "", color=discord.Color.dark_theme())
+    embed = discord.Embed(
+        title="🏰 PARTY LOBBY", 
+        description=f"🔍 Filter: `{search_query}`" if search_query else "List of parties recuitting", 
+        color=discord.Color.dark_theme()
+    )
     embed.set_author(name=f"Active Parties: {len(parties)}")
     
-    for i in range(6):
-        if i + (page * 6) < len(parties):
-            p = parties[i + (page * 6)]
-            embed.add_field(name=f"🎮 {p['dg_name']} (ID: {p['id']})", value=f"Leader: {p['leader_ign']}\nNeed: {p['recruitment']}\nStarts: {p['start_in']}\nMembers: `[{len(p['members'])}/4]`\nCreated: <t:{int(p['created_at'].timestamp())}:R>", inline=True)
-        else:
-            embed.add_field(name="🪹 [Empty]", value="No party here.", inline=True)
+    # Tính toán trang
+    start_idx = page * 6
+    end_idx = start_idx + 6
+    parties_on_page = parties[start_idx:end_idx]
+
+    if not parties_on_page:
+        embed.add_field(name="🪹 Emty", value="There are no party in this page.", inline=False)
+    else:
+        for p in parties_on_page:
+            created_time = p["created_at"].replace(tzinfo=timezone.utc).timestamp()
+            
+            # Đổi sang format danh sách dọc, dùng Blockquote (>) để làm nổi bật thông tin
+            header = f"🎮 **{p['dg_name']}** (ID: `{p['id']}`)"
+            body = (
+                f"> **Leader:** {p['leader_ign']} | **need:** {p['recruitment']}\n"
+                f"> **start:** {p['start_in']} | **member:** `{len(p['members'])}/4`\n"
+                f"> 🕒 Tạo lúc: <t:{int(created_time)}:R>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━" # Đường kẻ phân cách
+            )
+            # inline=False giúp mỗi party nằm trên 1 hàng riêng biệt
+            embed.add_field(name=header, value=body, inline=False) 
+            
     return embed
 
 class PartyFinder(commands.Cog):
