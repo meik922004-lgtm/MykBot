@@ -233,6 +233,30 @@ class ManagePartyView(ui.View):
                 if not self.is_leader: self.remove_item(child) 
             elif getattr(child, "label", None) == "Leave Party":
                 if self.is_leader: self.remove_item(child) 
+    @ui.button(label="Ready Check", style=discord.ButtonStyle.primary, row=2)
+    async def ready_check_btn(self, i: discord.Interaction, b: ui.Button):
+        # Kiểm tra nếu người bấm là Leader
+        if i.user.id != self.party["host_id"]:
+            return await i.response.send_message("❌ Only the Leader can initiate a Ready Check.", ephemeral=True)
+        
+        view = ReadyCheckView(self.party)
+        embed = discord.Embed(
+            title=f"🔔 Ready Check: {self.party['dg_name']}",
+            description="All members, please respond to the Ready Check!",
+            color=discord.Color.gold()
+        )
+        
+        # Gửi thông báo cho tất cả thành viên trong nhóm
+        await i.response.send_message("✅ Ready Check initiated!", ephemeral=True)
+        msg = await i.channel.send(embed=embed, view=view)
+        
+        # Đợi 60 giây để thu thập kết quả
+        await asyncio.sleep(60)
+        
+        # Tổng hợp kết quả
+        results = "\n".join([f"{uid}: {status}" for uid, status in view.ready_members.items()])
+        result_embed = discord.Embed(title="📊 Ready Check Results", description=results or "No one responded.", color=discord.Color.blue())
+        await msg.edit(embed=result_embed, view=None)
 
     @ui.button(label="View Members", style=discord.ButtonStyle.primary)
     async def view_members(self, i: discord.Interaction, b: ui.Button):
@@ -338,6 +362,22 @@ class LobbySelectParty(ui.Select):
         
         join_cooldowns[user_id] = now
         await interaction.response.send_modal(RequestJoinModal(party))
+
+class ReadyCheckView(ui.View):
+    def __init__(self, party):
+        super().__init__(timeout=60) # Tự hủy sau 60 giây
+        self.party = party
+        self.ready_members = {}
+
+    @ui.button(label="✅ Ready", style=discord.ButtonStyle.success)
+    async def ready(self, i: discord.Interaction, b: ui.Button):
+        self.ready_members[i.user.id] = "Ready"
+        await i.response.send_message("✅ You marked yourself as Ready!", ephemeral=True)
+
+    @ui.button(label="❌ Not Ready", style=discord.ButtonStyle.danger)
+    async def not_ready(self, i: discord.Interaction, b: ui.Button):
+        self.ready_members[i.user.id] = "Not Ready"
+        await i.response.send_message("❌ You marked yourself as Not Ready!", ephemeral=True)
 
 class LobbyView(ui.View):
     def __init__(self):
