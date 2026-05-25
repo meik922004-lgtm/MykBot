@@ -177,7 +177,7 @@ class DungeonStats(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="dglist", description="List of Dungeons")
+    @app_commands.command(name="dglist", description="Check gear requirement of dg")
     async def dglist(self, interaction: discord.Interaction):
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
         if not dungeons: 

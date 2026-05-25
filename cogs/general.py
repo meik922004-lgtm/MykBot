@@ -91,18 +91,18 @@ class General(commands.Cog, name="Basic command"):
         # Đăng ký view để nút bấm luôn hoạt động ngay cả khi bot khởi động lại
         self.bot.add_view(HelpTranslationView())
 
-    @app_commands.command(name="hello", description="Bot sẽ gửi lời chào thân thiện đến bạn")
+    @app_commands.command(name="hello", description="Bot say hello to you")
     async def hello(self, interaction: discord.Interaction):
         await interaction.response.send_message(f"👋 Hello {interaction.user.mention}! Wish you have an awesome day gaming! 🦖")
 
-    @app_commands.command(name="help", description="Mở danh sách hướng dẫn sử dụng bot")
+    @app_commands.command(name="help", description="open helper for commands")
     async def help(self, interaction: discord.Interaction):
         # Khởi tạo view và lấy embed tiếng Anh làm mặc định
         view = HelpTranslationView()
         embed = view.get_translated_embed("en", interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view)
     
-    @app_commands.command(name="schedule", description="Xem lịch trình Boss và Bless Raid hiện tại")
+    @app_commands.command(name="schedule", description="To see scheule spawn time of raid")
     async def schedule(self, interaction: discord.Interaction):
         # Tránh lỗi timeout khi truy vấn DB
         await interaction.response.defer()
@@ -132,7 +132,7 @@ class General(commands.Cog, name="Basic command"):
             )
             embed.add_field(name="📌 Bless Raid timer", value=bless_text, inline=False)
         else:
-            embed.add_field(name="📌 Bless Raid timer", value="*Chưa thiết lập, admin dùng lệnh `/setbless`*", inline=False)
+            embed.add_field(name="📌 Bless Raid timer", value="*didnt set up, use admin command: `/setbless`*", inline=False)
 
         # 2. Hiển thị Digital Raid
         if boss_data and "bosses" in boss_data and boss_data["bosses"]:
@@ -154,11 +154,11 @@ class General(commands.Cog, name="Basic command"):
                         f"------------------"
                     )
                 except Exception as e:
-                    boss_lines.append(f"Lỗi xử lý boss {b_key}: {e}")
+                    boss_lines.append(f"Error:boss {b_key}: {e}")
             
             embed.add_field(name="🚨 Digital Raid timer", value="\n".join(boss_lines), inline=False)
         else:
-            embed.add_field(name="🚨 Digital Raid timer", value="*Chưa thiết lập, admin dùng lệnh `/setboss`*", inline=False)
+            embed.add_field(name="🚨 Digital Raid timer", value="*didnt setup, use admin command: `/setboss`*", inline=False)
 
         await interaction.followup.send(embed=embed)
     
