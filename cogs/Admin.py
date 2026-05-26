@@ -208,6 +208,27 @@ class Admin(commands.Cog):
             embed.add_field(name="Lỗi", value="\n".join(errors), inline=False)
         
         await ctx.send(embed=embed)
+        @app_commands.command(name="debug_cog", description="Công cụ ép load Cog để bắt tận tay lỗi ẩn")
+    async def debug_cog(self, interaction: discord.Interaction, cog_name: str):
+        await interaction.response.defer(ephemeral=True)
+        import traceback
+        
+        try:
+            # Thử load file cog
+            await self.bot.load_extension(f"cogs.{cog_name}")
+            await self.bot.tree.sync() # Sync lệnh ngay lập tức
+            await interaction.followup.send(f"✅ Đã tải và đồng bộ thành công file `{cog_name}`!")
+            
+        except commands.ExtensionAlreadyLoaded:
+            # Nếu file đã tồn tại nhưng kẹt, thử reload lại
+            try:
+                await self.bot.reload_extension(f"cogs.{cog_name}")
+                await self.bot.tree.sync()
+                await interaction.followup.send(f"✅ Đã làm mới (reload) thành công `{cog_name}`!")
+            except Exception as e:
+                err = traceback.format_exc()
+                await interaction.followup.send(f"❌ **LỖI KHI RELOAD FILE {cog_name}:**\n
+
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
