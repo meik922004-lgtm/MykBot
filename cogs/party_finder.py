@@ -27,7 +27,7 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     if page > max_pages: page = max_pages
     
     skip_value = (page - 1) * per_page
-    active_parties = await parties_col.find(query_filter).skip(skip_value).limit(per_page)
+    active_parties = await parties_col.find(query_filter).skip(skip_value).limit(per_page).to_list(length=per_page)
 
     embed = discord.Embed(
         title="⚔️ SYSTEM PARTY LOBBY HUB ⚔️",
@@ -438,7 +438,7 @@ class ManagePartyView(discord.ui.View):
 # ==========================================
 # MAIN COMMANDS EXTENSION COG CLASS
 # ==========================================
-
+import asyncio
 class PartyFinder(commands.Cog):
     """Professional System Group Formation and Dungeon Party Finder Engine"""
     def __init__(self, bot: commands.Bot):
@@ -446,10 +446,13 @@ class PartyFinder(commands.Cog):
 
     @app_commands.command(name="party_lobby", description="Open the system dungeon matchmaking party hub interface panel")
     async def party_lobby(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        embed, _ = await build_lobby_embed(page=1)
-        view = LobbyView(page=1)
-        await interaction.followup.send(embed=embed, view=view)
+        try:
+            await asyncio.sleep(0)  # ép chạy ngay
+            embed, _ = await build_lobby_embed(page=1)
+            view = LobbyView(page=1)
+            await interaction.followup.send(embed=embed, view=view)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Lỗi: {e}", ephemeral=True)
 
     @app_commands.command(name="manage_party", description="Open your current active party group panel dashboard dashboard")
     async def manage_party(self, interaction: discord.Interaction):
