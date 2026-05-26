@@ -11,14 +11,14 @@ from Database import players_col, parties_col, dungeon_configs
 # CONSTANTS & HELPER FUNCTIONS (EMBED BUILDERS)
 # ==========================================
 
-def build_lobby_embed(page: int = 1, search_query: str = None):
+async def build_lobby_embed(page: int = 1, search_query: str = None):
     """Builds the main party lobby listing embed based on pagination and filters"""
     query_filter = {}
     if search_query:
         query_filter["dungeon"] = {"$regex": search_query, "$options": "i"}
 
     # Pagination calculation
-    total_parties = parties_col.count_documents(query_filter)
+    total_parties = await parties_col.count_documents(query_filter)
     per_page = 5
     max_pages = max(1, math.ceil(total_parties / per_page))
     
