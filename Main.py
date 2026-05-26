@@ -47,13 +47,16 @@ class MyKBot(commands.Bot):
         print("✅ Synced commands to test guild")
 
     async def load_all_extensions(self):
+        print("=== Bắt đầu load cogs ===", flush=True)
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
                 try:
-                    await self.load_extension(f'cogs.{filename[:-3]}')  # Dùng self, không dùng bot
-                    print(f"✅ Loaded cog thành công: {filename}")
+                    await self.load_extension(f'cogs.{filename[:-3]}')
+                    print(f"✅ Loaded cog thành công: {filename}", flush=True)
                 except Exception as e:
-                    print(f"❌ KHÔNG THỂ load được file {filename}! Lỗi cụ thể: {e}")
+                    print(f"❌ KHÔNG THỂ load được file {filename}!", flush=True)
+                    import traceback
+                    traceback.print_exc()  # in full traceback
 
 bot = MyKBot()
 
