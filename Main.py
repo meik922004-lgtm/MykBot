@@ -55,8 +55,8 @@ class MyKBot(commands.Bot):
                     print(f"✅ Loaded cog thành công: {filename}", flush=True)
                 except Exception as e:
                     print(f"❌ KHÔNG THỂ load được file {filename}!", flush=True)
-                    import traceback
-                    traceback.print_exc()  # in full traceback
+                import traceback
+                traceback.print_exc()
 
 bot = MyKBot()
 
