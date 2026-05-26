@@ -243,7 +243,7 @@ class LobbyView(discord.ui.View):
         self.page = page
         self.search_query = search_query
 
-    @discord.ui.button(label="◀️ Prev", style=discord.Style.secondary, custom_id="lobby_prev")
+    @discord.ui.button(label="◀️ Prev", style=discord.ButtonStyle.secondary, custom_id="lobby_prev")
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page > 1:
             self.page -= 1
@@ -252,7 +252,7 @@ class LobbyView(discord.ui.View):
         else:
             await interaction.response.send_message("You are already on the first page!", ephemeral=True)
 
-    @discord.ui.button(label="Next ▶️", style=discord.Style.secondary, custom_id="lobby_next")
+    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.secondary, custom_id="lobby_next")
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed, max_pages = build_lobby_embed(self.page, self.search_query)
         if self.page < max_pages:
@@ -262,11 +262,11 @@ class LobbyView(discord.ui.View):
         else:
             await interaction.response.send_message("You are already on the last page!", ephemeral=True)
 
-    @discord.ui.button(label="🔍 Filter Dungeon", style=discord.Style.primary, custom_id="lobby_filter")
+    @discord.ui.button(label="🔍 Filter Dungeon", style=discord.ButtonStyle.primary, custom_id="lobby_filter")
     async def filter_dungeon(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SearchDungeonModal(self.page))
 
-    @discord.ui.button(label="➕ Create Party", style=discord.Style.success, custom_id="lobby_create")
+    @discord.ui.button(label="➕ Create Party", style=discord.ButtonStyle.success, custom_id="lobby_create")
     async def create_party_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CreatePartyModal())
 
@@ -282,7 +282,7 @@ class BroadcastJoinView(discord.ui.View):
         # Dynamic deterministic mapping custom string definition
         self.join_req_trigger.custom_id = f"btn_join_req:{party_id}"
 
-    @discord.ui.button(label="Join Request", style=discord.Style.primary)
+    @discord.ui.button(label="Join Request", style=discord.ButtonStyle.primary)
     async def join_req_trigger(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = parties_col.find_one({"id": self.party_id})
         if not party:
@@ -340,7 +340,7 @@ class ManagePartyView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="📝 Edit Needs", style=discord.Style.secondary)
+    @discord.ui.button(label="📝 Edit Needs", style=discord.ButtonStyle.secondary)
     async def edit_requirements(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = parties_col.find_one({"id": self.party_id})
         if party["leader_id"] != interaction.user.id:
@@ -348,7 +348,7 @@ class ManagePartyView(discord.ui.View):
             return
         await interaction.response.send_modal(EditNeedModal(self.party_id))
 
-    @discord.ui.button(label="✅ Approve Request", style=discord.Style.success)
+    @discord.ui.button(label="✅ Approve Request", style=discord.ButtonStyle.success)
     async def approve_member(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = parties_col.find_one({"id": self.party_id})
         if party["leader_id"] != interaction.user.id:
@@ -394,7 +394,7 @@ class ManagePartyView(discord.ui.View):
         select_view.add_item(user_select)
         await interaction.response.send_message("Approve selection:", view=select_view, ephemeral=True)
 
-    @discord.ui.button(label="❌ Reject Request", style=discord.Style.danger)
+    @discord.ui.button(label="❌ Reject Request", style=discord.ButtonStyle.danger)
     async def reject_member(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = parties_col.find_one({"id": self.party_id})
         if party["leader_id"] != interaction.user.id:
@@ -420,7 +420,7 @@ class ManagePartyView(discord.ui.View):
         select_view.add_item(user_select)
         await interaction.response.send_message("Reject selection:", view=select_view, ephemeral=True)
 
-    @discord.ui.button(label="💥 Disband / Leave", style=discord.Style.danger)
+    @discord.ui.button(label="💥 Disband / Leave", style=discord.ButtonStyle.danger)
     async def leave_or_disband(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = parties_col.find_one({"id": self.party_id})
         
