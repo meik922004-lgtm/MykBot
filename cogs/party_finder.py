@@ -27,7 +27,7 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     if page > max_pages: page = max_pages
     
     skip_value = (page - 1) * per_page
-    active_parties = parties_col.find(query_filter).skip(skip_value).limit(per_page)
+    active_parties = await parties_col.find(query_filter).skip(skip_value).limit(per_page)
 
     embed = discord.Embed(
         title="⚔️ SYSTEM PARTY LOBBY HUB ⚔️",
@@ -447,7 +447,7 @@ class PartyFinder(commands.Cog):
     @app_commands.command(name="party_lobby", description="Open the system dungeon matchmaking party hub interface panel")
     async def party_lobby(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
-        embed, _ = build_lobby_embed(page=1)
+        embed, _ = await build_lobby_embed(page=1)
         view = LobbyView(page=1)
         await interaction.followup.send(embed=embed, view=view)
 
