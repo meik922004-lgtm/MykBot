@@ -5,13 +5,13 @@ import asyncio
 from discord import app_commands, ui
 from discord.ext import commands
 from datetime import datetime, timezone
-from pymongo import MongoClient
+from Database import db
 import os
 import time
 
 # --- CONFIG ---
 MONGO_URI = os.getenv("MONGO_URI", "YOUR_MONGO_URI_HERE")
-client = MongoClient(MONGO_URI)
+client = db(MONGO_URI)
 db = client["database0"]
 players_col = db["players"]
 parties_col = db["parties"]
