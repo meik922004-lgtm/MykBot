@@ -6,13 +6,12 @@ import uuid
 import asyncio
 from datetime import datetime, timezone
 from pymongo import MongoClient
+from Database import players_col, parties_col, dungeon_configs,db
 
 # ==========================================
 # DATABASE CONNECTION INITIALIZATION (MONGO)
 # ==========================================
-MONGO_URI = os.getenv("MONGO_URI", "YOUR_MONGO_URI_HERE")
-client = MongoClient(MONGO_URI)
-db = client["database0"]
+
 
 players_col = db["players"]
 parties_col = db["parties"]
@@ -363,11 +362,11 @@ class LobbyView(discord.ui.View):
     @discord.ui.button(label="🔍 Search Dungeon", style=discord.Style.primary, custom_id="lobby_search")
     async def search_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SearchDungeonModal(self.page))
-class SearchDungeonModal(discord.ui.Modal, title="Search For Parties"):
+class SearchDungeonModal(discord.ui.Modal):
     query = discord.ui.TextInput(label="Enter dungeon keyword", placeholder="e.g., Castle / Hard / Raid... (Leave blank to show all)")
 
     def __init__(self, current_page: int):
-        super().__init__()
+        super().__init__(title="Search For Parties")
         self.current_page = current_page
 
     async def on_submit(self, interaction: discord.Interaction):
