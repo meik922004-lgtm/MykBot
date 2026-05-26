@@ -47,16 +47,17 @@ class MyKBot(commands.Bot):
 
     async def setup_hook(self):
         # 1. Load các Cogs
-        cog_path = "./cogs"
-        if os.path.exists(cog_path):
-            for filename in os.listdir(cog_path):
-                if filename.endswith(".py") and not filename.startswith("__"):
+        async def load_all_extensions():
+            for filename in os.listdir('./cogs'):
+                if filename.endswith('.py'):
                     try:
-                        await self.load_extension(f"cogs.{filename[:-3]}")
-                        print(f"✅ Loaded extension: {filename}")
+                        # BẮT BUỘC phải có `await` trước bot.load_extension
+                        await bot.load_extension(f'cogs.{filename[:-3]}')
+                        print(f"✅ Loaded cog thành công: {filename}")
                     except Exception as e:
-                        print(f"❌ Failed to load {filename}: {e}")
-        
+                        # In chi tiết lỗi ra Terminal để không bao giờ bị lỗi ẩn
+                        print(f"❌ KHÔNG THỂ load được file {filename}! Lỗi cụ thể: {e}")
+                
 bot = MyKBot()
 
 @bot.command()
