@@ -30,7 +30,7 @@ class StageSelect(discord.ui.Select):
     def __init__(self, options_list):
         options = [discord.SelectOption(label=name, value=name) for name in options_list]
         super().__init__(
-            placeholder="Chọn Stage Role (Chỉ được chọn 1)...", 
+            placeholder="=Select stage role (Only 1)...", 
             min_values=1, 
             max_values=1, 
             options=options, 
@@ -63,7 +63,7 @@ class StageSelect(discord.ui.Select):
         if role_to_add and role_to_add not in member.roles:
             await member.add_roles(role_to_add)
             
-        await interaction.followup.send(f"✅ Đã cập nhật Stage Role thành: **{selected_name}**", ephemeral=True)
+        await interaction.followup.send(f"✅ Stage Role has been updated to: **{selected_name}**", ephemeral=True)
 
 
 class GeneralSelect(discord.ui.Select):
@@ -71,7 +71,7 @@ class GeneralSelect(discord.ui.Select):
         options = [discord.SelectOption(label=name, value=name) for name in options_list]
         max_vals = min(len(options), 25) if options else 1
         super().__init__(
-            placeholder="Chọn General Roles (Có thể chọn nhiều)...", 
+            placeholder="Select General Roles (You can select multiple roles)...", 
             min_values=0, 
             max_values=max_vals, 
             options=options, 
@@ -106,7 +106,7 @@ class GeneralSelect(discord.ui.Select):
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove)
             
-        await interaction.followup.send("✅ Đã cập nhật danh sách General Roles của bạn!", ephemeral=True)
+        await interaction.followup.send("✅ Your General Roles list has been updated!", ephemeral=True)
 
 
 class CombatSelect(discord.ui.Select):
@@ -114,7 +114,7 @@ class CombatSelect(discord.ui.Select):
         options = [discord.SelectOption(label=name, value=name) for name in options_list]
         max_vals = min(len(options), 25) if options else 1
         super().__init__(
-            placeholder="Chọn Combat Roles (Có thể chọn nhiều)...", 
+            placeholder="Select Combat Roles (You can select multiple roles)...", 
             min_values=0, 
             max_values=max_vals, 
             options=options, 
@@ -149,7 +149,7 @@ class CombatSelect(discord.ui.Select):
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove)
             
-        await interaction.followup.send("✅ Đã cập nhật danh sách Combat Roles của bạn!", ephemeral=True)
+        await interaction.followup.send("✅ Your Combat Roles list has been updated!", ephemeral=True)
 
 
 class RolesMenuView(discord.ui.View):
@@ -170,23 +170,23 @@ class RolesCog(commands.Cog):
         self.bot = bot
         load_config()
 
-    @app_commands.command(name="roles_menu", description="Gửi menu nhận role tự động vào kênh")
+    @app_commands.command(name="roles_menu", description="Send the menu to automatically assign roles to the channel.")
     @app_commands.default_permissions(administrator=True)
     async def send_roles_menu(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="🎭 HỆ THỐNG TỰ NHẬN ROLES",
-            description="Vui lòng tương tác với các Menu thả xuống dưới đây để nhận Role tương ứng:\n\n"
-                        "1️⃣ **Stage Role**: Chọn 1 trong 3 mức độ chơi (Endgame / Midgame / Newbie).\n"
-                        "2️⃣ **General Roles**: Các vai trò chung, có thể chọn cùng lúc nhiều role.\n"
-                        "3️⃣ **Combat Roles**: Các vai trò chiến đấu, có thể chọn cùng lúc nhiều role.",
+            title="🎭 AUTOMATIC ROLES RECOGNITION SYSTEM",
+            description="Please interact with the dropdown menus below to receive your corresponding role.:\n\n"
+                        "1️⃣ **Stage Role**: Choose one of three difficulty levels (Endgame / Midgame / Newbie).\n"
+                        "2️⃣ **General Roles**: General roles, multiple roles can be selected at the same time..\n"
+                        "3️⃣ **Combat Roles**: Combat roles, multiple roles can be selected simultaneously.",
             color=discord.Color.from_rgb(46, 204, 113)
         )
-        embed.set_footer(text="Hệ thống tự động sync role theo lựa chọn của bạn.")
+        embed.set_footer(text="The system automatically syncs roles based on your selection..")
         view = RolesMenuView()
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(name="addrole", description="Thêm một role từ server vào menu cấu hình")
-    @app_commands.describe(category="Danh mục để thêm role vào", role="Role cần thêm")
+    @app_commands.command(name="addrole", description="Add a server role to the configuration menu.")
+    @app_commands.describe(category="Categories to add roles to", role="Roles need to be added.")
     @app_commands.choices(category=[
         app_commands.Choice(name="Stage Role", value="stage"),
         app_commands.Choice(name="General Roles", value="general"),
@@ -198,15 +198,15 @@ class RolesCog(commands.Cog):
         config = load_config()
         
         if role.name in config[cat_value]:
-            await interaction.response.send_message(f"⚠️ Role **{role.name}** đã có sẵn trong danh mục `{cat_value}`.", ephemeral=True)
+            await interaction.response.send_message(f"⚠️ Role **{role.name}**already available in the catalog `{cat_value}`.", ephemeral=True)
             return
 
         config[cat_value].append(role.name)
         save_config(config)
-        await interaction.response.send_message(f"✅ Đã thêm thành công role **{role.name}** vào menu `{cat_value}`!\n💡 Hãy sử dụng lại lệnh `/roles_menu` để cập nhật hiển thị.", ephemeral=True)
+        await interaction.response.send_message(f"✅Role **{role.name}** has been successfully added to the menu.`{cat_value}`!\n💡 Hãy sử dụng lại lệnh `/roles_menu` để cập nhật hiển thị.", ephemeral=True)
 
-    @app_commands.command(name="removerole", description="Xóa một role ra khỏi menu cấu hình")
-    @app_commands.describe(category="Danh mục chứa role cần xóa", role_name="Tên role cần xóa (ghi chính xác chữ hoa/thường)")
+    @app_commands.command(name="removerole", description="Remove a role from the configuration menu.")
+    @app_commands.describe(category="Category containing roles to be deleted", role_name="Name of the role to be deleted (write exactly in uppercase/lowercase).)")
     @app_commands.choices(category=[
         app_commands.Choice(name="Stage Role", value="stage"),
         app_commands.Choice(name="General Roles", value="general"),
@@ -218,12 +218,12 @@ class RolesCog(commands.Cog):
         config = load_config()
         
         if role_name not in config[cat_value]:
-            await interaction.response.send_message(f"⚠️ Không tìm thấy role mang tên **{role_name}** trong danh mục `{cat_value}`.", ephemeral=True)
+            await interaction.response.send_message(f"⚠️ No role named **{role_name}** was found in the catalog. `{cat_value}`.", ephemeral=True)
             return
 
         config[cat_value].remove(role_name)
         save_config(config)
-        await interaction.response.send_message(f"✅ Đã xóa thành công role **{role_name}** khỏi menu `{cat_value}`!\n💡 Hãy sử dụng lại lệnh `/roles_menu` để cập nhật hiển thị.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Role **{role_name}** has been successfully removed from the `{cat_value}` menu!\n💡 Please use the `/roles_menu` command again to update the display..", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(RolesCog(bot))
