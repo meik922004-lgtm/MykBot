@@ -59,7 +59,7 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     return embed, max_pages
 
 
-async def build_manage_embed(party):
+def build_manage_embed(party):
     """Builds the internal management dashboard embed for party leaders/members"""
     embed = discord.Embed(
         title=f"🛡️ PARTY MANAGEMENT: {party['dungeon'].upper()}",
@@ -103,7 +103,7 @@ class SearchDungeonModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         search_str = self.query.value.strip() or None
-        embed, _ = build_lobby_embed(page=1, search_query=search_str)
+        embed, _ = await build_lobby_embed(page=1, search_query=search_str)
         view = LobbyView(page=1, search_query=search_str)
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -228,7 +228,7 @@ class CreatePartyModal(discord.ui.Modal):
             await chan.send(embed=broadcast_embed, view=public_view)
             
         # Refresh current UI
-        embed, _ = build_lobby_embed(page=1)
+        embed, _ = await build_lobby_embed(page=1)
         await interaction.response.edit_message(embed=embed, view=LobbyView(page=1))
 
 
@@ -247,17 +247,17 @@ class LobbyView(discord.ui.View):
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page > 1:
             self.page -= 1
-            embed, _ = build_lobby_embed(self.page, self.search_query)
+            embed, _ = await build_lobby_embed(self.page, self.search_query)
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await interaction.response.send_message("You are already on the first page!", ephemeral=True)
 
     @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.secondary, custom_id="lobby_next")
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed, max_pages = build_lobby_embed(self.page, self.search_query)
+        embed, max_pages = await build_lobby_embed(self.page, self.search_query)
         if self.page < max_pages:
             self.page += 1
-            embed, _ = build_lobby_embed(self.page, self.search_query)
+            embed, _ = await build_lobby_embed(self.page, self.search_query)
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await interaction.response.send_message("You are already on the last page!", ephemeral=True)
@@ -446,6 +446,7 @@ class PartyFinder(commands.Cog):
 
     @app_commands.command(name="party_lobby", description="Open the system dungeon matchmaking party hub interface panel")
     async def party_lobby(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         try:
             await asyncio.sleep(0)  # ép chạy ngay
             embed, _ = await build_lobby_embed(page=1)
