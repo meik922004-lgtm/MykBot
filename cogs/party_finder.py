@@ -178,6 +178,7 @@ class BroadcastJoinView(discord.ui.View):
     def __init__(self, party_id: str):
         super().__init__(timeout=None)
         self.party_id = party_id
+        self.join_request.custom_id = f"btn_join_req:{party_id}"
         
     @discord.ui.button(label="Join Request", style=discord.Style.primary, custom_id="btn_join_req")
     async def join_request(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -215,11 +216,11 @@ class JoinFormView(discord.ui.View):
         await interaction.response.send_modal(JoinInputIGNModal(self.party_id, self.selected_role))
 
 
-class JoinInputIGNModal(discord.ui.Modal, title="Enter Character Name"):
+class JoinInputIGNModal(discord.ui.Modal):
     ign = discord.ui.TextInput(label="Your In-Game Name (IGN)", placeholder="Must be exact for Gear validation...")
 
     def __init__(self, party_id: str, role: str):
-        super().__init__()
+        super().__init__(title="Enter Character Name")
         self.party_id = party_id
         self.role = role
 
@@ -323,8 +324,10 @@ class DecisionView(discord.ui.View):
         await interaction.response.defer()
         await interaction.edit_original_response(content=f"❌ You have REJECTED {self.candidate.mention}.", embed=None, view=None)
         
-        try: await self.candidate.send(f"⚠️ Your request to join the party has been declined by the Leader.")
-        except: pass
+        try: 
+            await self.candidate.send(f"⚠️ Your request to join the party has been declined by the Leader.")
+        except: 
+            pass
 
 
 class LobbyView(discord.ui.View):
@@ -376,7 +379,7 @@ class SearchDungeonModal(discord.ui.Modal):
 class ManagePartyView(discord.ui.View):
     """Internal Control Panel for Party Members and Leaders"""
     def __init__(self, party_id: str, user_id: int):
-        super().__init__(timeout=None)
+        super().__init__(timeout=600)
         self.party_id = party_id
         self.user_id = user_id
 
@@ -510,11 +513,11 @@ class ManagePartyView(discord.ui.View):
         await interaction.followup.send(f"⚙️ Auto-Filter status has been toggled to: **{txt}**", ephemeral=True)
 
 
-class EditNeedModal(discord.ui.Modal, title="Update Recruitment Requirements"):
+class EditNeedModal(discord.ui.Modal):
     recruitment = discord.ui.TextInput(label="New requirements", placeholder="e.g., Changed to: looking for 1 Fire-element DPS...")
 
     def __init__(self, party_id: str):
-        super().__init__()
+        super().__init__( title="Update Recruitment Requirements")
         self.party_id = party_id
 
     async def on_submit(self, interaction: discord.Interaction):
