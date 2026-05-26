@@ -61,15 +61,21 @@ bot = MyKBot()
 
 @bot.command()
 async def sync(ctx):
-    # Thay '123456789012345678' bằng ID Discord của bạn để bảo mật
+    # ID Discord của bạn
     if ctx.author.id == 1283689737567211581: 
         try:
+            # 1. Xóa sạch các lệnh ở phạm vi Guild hiện tại (tránh đúp)
+            bot.tree.clear_commands(guild=ctx.guild)
+            await bot.tree.sync(guild=ctx.guild)
+            
+            # 2. Đồng bộ lại các lệnh ở phạm vi Global
             synced = await bot.tree.sync()
-            await ctx.send(f"✅ Đã đồng bộ thành công {len(synced)} lệnh Slash!")
+            
+            await ctx.send(f"✅ Đã dọn dẹp lệnh đúp và đồng bộ thành công {len(synced)} lệnh Slash Global!")
         except Exception as e:
             await ctx.send(f"❌ Lỗi: {e}")
     else:
-        await ctx.send("❌ You dont have permission to use this command.")
+        await ctx.send("❌ You don't have permission to use this command.")
 
 
 @bot.event
