@@ -59,7 +59,7 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     return embed, max_pages
 
 
-def build_manage_embed(party):
+async def build_manage_embed(party):
     """Builds the internal management dashboard embed for party leaders/members"""
     embed = discord.Embed(
         title=f"🛡️ PARTY MANAGEMENT: {party['dungeon'].upper()}",
@@ -455,7 +455,7 @@ class PartyFinder(commands.Cog):
     async def manage_party(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         # Search membership track indicators matches
-        party = parties_col.find_one({"$or": [{"leader_id": user_id}, {"members.user_id": user_id}]})
+        party = await parties_col.find_one({"$or": [{"leader_id": user_id}, {"members.user_id": user_id}]})
         
         if not party:
             await interaction.response.send_message("❌ You are currently not associated with any active raiding group parties.", ephemeral=True)
