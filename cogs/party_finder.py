@@ -126,18 +126,23 @@ class CreatePartyModal(ui.Modal, title="Create New Party"):
         pid = str(uuid.uuid4())[:6].upper()
         now = datetime.now(timezone.utc)
         
-        # Tạo Thread nhóm ngay tại channel người dùng bấm nút
+       # Tạo Thread nhóm RIÊNG TƯ ngay tại channel người dùng bấm nút
         thread = None
         try:
             thread = await interaction.channel.create_thread(
-                name=f"Party {pid}: {self.dg_name.value}",
-                type=discord.ChannelType.public_thread,
+                name=f"🔒 Party {pid}: {self.dg_name.value}",
+                type=discord.ChannelType.private_thread, # Đổi thành private_thread
                 auto_archive_duration=60
             )
+            # Thêm Leader vào thread và gửi tin nhắn ping
             await thread.add_user(interaction.user)
-            await thread.send(f"👋 Xin chào {interaction.user.mention}! Group Chat tạm thời cho party **{self.dg_name.value}** đã sẵn sàng. Các thành viên mới sẽ được tự động thêm vào đây.")
-        except Exception:
-            pass # Bỏ qua nếu bot thiếu quyền tạo thread
+            await thread.send(
+                f"👋 Xin chào {interaction.user.mention}! **🔒 PRIVATE** Group Chat for party **{self.dg_name.value}** is ready.\n"
+                f"> When new members join the group, they will be automatically added and pinged here.."
+            )
+        except Exception as e:
+            print(f"Error creating a private thread: {e}")
+            pass
         
         embed = discord.Embed(title=f"⚔️ [PARTY RECRUITMENT] {self.dg_name.value}", color=discord.Color.blue())
         embed.add_field(name="Leader", value=self.leader_ign.value, inline=True)
@@ -240,15 +245,18 @@ class DecisionView(ui.View):
             # Thêm user vào Thread nếu có
             if party.get("thread_id"):
                 try:
-                    for guild in i.client.guilds:
-                        thread = guild.get_thread(party["thread_id"]) or await guild.fetch_channel(party["thread_id"])
-                        if thread:
-                            member = guild.get_member(self.user.id)
-                            if member:
-                                await thread.add_user(member)
-                                await thread.send(f"🎉 Chào mừng {member.mention} đã gia nhập Party!")
-                                break
-                except Exception: pass
+                    # Lấy trực tiếp channel/thread bằng ID từ client cho nhanh và chính xác
+                    thread = i.client.get_channel(party["thread_id"]) or await i.client.fetch_channel(party["thread_id"])
+                    if thread:
+                        # Thêm user vào nhóm kín
+                        await thread.add_user(self.user)
+                        # Gửi tin nhắn ping thành viên đó công khai trong nhóm
+                        await thread.send(f"🎉 Welcome {self.user.mention} to the Party! Get your gear ready!.")
+                except Exception as e: 
+                    print(f"Unable to add user to thread: {e}")
+            
+            try: await self.user.send(f"🎉 Your join request for **{party['dg_name']}** was accepted!")
+            except: pass
             
             try: await self.user.send(f"🎉 Your join request for **{party['dg_name']}** was accepted!")
             except: pass
@@ -362,12 +370,12 @@ class ManagePartyView(ui.View):
             if board:
                 try:
                     role_mention = get_ping_role(current_party['dg_name']) if guild == i.guild else ""
-                    msg = await board.send(content=f"{role_mention} 📢 Party đang tìm thêm thành viên!", embed=embed, view=OpenLobbyView())
+                    msg = await board.send(content=f"{role_mention} 📢 The party is looking for more members.!", embed=embed, view=OpenLobbyView())
                     new_broadcasts.append({"channel_id": board.id, "message_id": msg.id})
                 except Exception: pass
 
         parties_col.update_one({"id": self.party["id"]}, {"$set": {"broadcasts": new_broadcasts}})
-        await i.followup.send("✅ Broadcast sent! Xem kênh #party-board.", ephemeral=True)
+        await i.followup.send("✅ Broadcast sent! look at #party-board.", ephemeral=True)
 
     @ui.button(label="Ready Check", style=discord.ButtonStyle.primary, row=1)
     async def ready_check_btn(self, i: discord.Interaction, b: ui.Button):
@@ -444,15 +452,18 @@ class ManagePartyView(ui.View):
                 return await i.followup.send("❌ Party not found or already disbanded.", ephemeral=True)
             
             # Khóa Thread Chat Tạm thời
+            # --- XÓA HOÀN TOÀN THREAD CHAT KHI DISBAND ---
             if current_party.get("thread_id"):
                 try:
-                    for guild in i.client.guilds:
-                        thread = guild.get_thread(current_party["thread_id"]) or await guild.fetch_channel(current_party["thread_id"])
-                        if thread:
-                            await thread.send("💥 Party đã bị Disband bởi Trưởng nhóm. Thread chat này sẽ được khóa lại.")
-                            await thread.edit(archived=True, locked=True)
-                            break
-                except Exception: pass
+                    thread = i.client.get_channel(current_party["thread_id"]) or await i.client.fetch_channel(current_party["thread_id"])
+                    if thread:
+                        # Thông báo trước 2 giây rồi xóa sạch nhóm
+                        await thread.send("💥 The party has been disbanded by the party leader. This group chat will automatically cancel in a few moments....")
+                        await asyncio.sleep(2)
+                        await thread.delete() # Xóa vĩnh viễn thread
+                except Exception as e: 
+                    print(f"Cannot delete thread: {e}")
+                    pass
 
             if "broadcasts" in current_party:
                 for b_info in current_party["broadcasts"]:
