@@ -41,7 +41,7 @@ class MyKBot(commands.Bot):
         await self.load_all_extensions()
         
         # Sync lệnh cho guild test để hiện ngay. Xóa dòng này sau khi test xong
-        GUILD_ID = 123456789012345678  # Thay ID server của bạn vào
+        GUILD_ID = 1266433856328831008  # Thay ID server của bạn vào
         guild = discord.Object(id=GUILD_ID)
         await self.tree.sync(guild=guild)
         print("✅ Synced commands to test guild")
