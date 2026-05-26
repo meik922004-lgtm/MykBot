@@ -74,6 +74,38 @@ def is_player_qualified(user_id, role_input, dungeon_name):
     return False
 
 # --- MODALS ---
+class EditNeedModal(ui.Modal, title="Edit Party Recruitment"):
+    new_need = ui.TextInput(label="Roles Needed", placeholder="e.g: 1 TANK, 2 DPS SK/AA", max_length=100)
+    
+    def __init__(self, party):
+        super().__init__()
+        self.party = party
+        
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        new_val = self.new_need.value
+        
+        parties_col.update_one({"id": self.party["id"]}, {"$set": {"recruitment": new_val}})
+        current_party = parties_col.find_one({"id": self.party["id"]})
+        
+        # Cập nhật lại tin nhắn Broadcast trên party-board
+        if current_party and "broadcasts" in current_party:
+            for b_info in current_party["broadcasts"]:
+                try:
+                    ch = interaction.client.get_channel(b_info["channel_id"]) or await interaction.client.fetch_channel(b_info["channel_id"])
+                    msg = await ch.fetch_message(b_info["message_id"])
+                    embed = msg.embeds[0]
+                    for index, field in enumerate(embed.fields):
+                        if field.name == "Looking for":
+                            embed.set_field_at(index, name="Looking for", value=new_val, inline=field.inline)
+                            break
+                    await msg.edit(embed=embed)
+                except Exception:
+                    pass
+                    
+        await interaction.followup.send(f"✅ Updated Need to: **{new_val}**", ephemeral=True)
+
+
 class CreatePartyModal(ui.Modal, title="Create New Party"):
     dg_name = ui.TextInput(label="Dungeon Name", placeholder="e.g: PDG, MDG")
     leader_ign = ui.TextInput(label="Leader IGN")
@@ -93,6 +125,19 @@ class CreatePartyModal(ui.Modal, title="Create New Party"):
 
         pid = str(uuid.uuid4())[:6].upper()
         now = datetime.now(timezone.utc)
+        
+        # Tạo Thread nhóm ngay tại channel người dùng bấm nút
+        thread = None
+        try:
+            thread = await interaction.channel.create_thread(
+                name=f"Party {pid}: {self.dg_name.value}",
+                type=discord.ChannelType.public_thread,
+                auto_archive_duration=60
+            )
+            await thread.add_user(interaction.user)
+            await thread.send(f"👋 Xin chào {interaction.user.mention}! Group Chat tạm thời cho party **{self.dg_name.value}** đã sẵn sàng. Các thành viên mới sẽ được tự động thêm vào đây.")
+        except Exception:
+            pass # Bỏ qua nếu bot thiếu quyền tạo thread
         
         embed = discord.Embed(title=f"⚔️ [PARTY RECRUITMENT] {self.dg_name.value}", color=discord.Color.blue())
         embed.add_field(name="Leader", value=self.leader_ign.value, inline=True)
@@ -122,11 +167,13 @@ class CreatePartyModal(ui.Modal, title="Create New Party"):
             "start_in": self.start_in.value, "host_id": interaction.user.id, "created_at": now,
             "members": [{"id": interaction.user.id, "ign": self.leader_ign.value, "role": self.leader_role.value}],
             "filter_enabled": True,
-            "broadcasts": broadcasts
+            "broadcasts": broadcasts,
+            "thread_id": thread.id if thread else None # Lưu lại Thread ID
         }
         parties_col.insert_one(party_data)
         
-        await interaction.followup.send(f"✅ Party **{self.dg_name.value}** created successfully!", ephemeral=True)
+        await interaction.followup.send(f"✅ Party **{self.dg_name.value}** created successfully! Group chat: {thread.mention if thread else 'Không thể tạo'}", ephemeral=True)
+
 
 class RequestJoinModal(ui.Modal, title="Join Party Request"):
     ign = ui.TextInput(label="Your IGN")
@@ -162,6 +209,7 @@ class RequestJoinModal(ui.Modal, title="Join Party Request"):
             await host.send(embed=embed, view=DecisionView(latest_party["id"], interaction.user, self.ign.value, self.role.value))
             await interaction.response.send_message("✅ Request sent to the Leader!", ephemeral=True)
 
+
 class SearchModal(ui.Modal, title="Search Party"):
     keyword = ui.TextInput(label="Dungeon Keyword")
     def __init__(self, parent_view):
@@ -188,6 +236,20 @@ class DecisionView(ui.View):
         if party and len(party["members"]) < 4:
             parties_col.update_one({"id": self.pid}, {"$push": {"members": {"id": self.user.id, "ign": self.ign, "role": self.role}}})
             await i.response.edit_message(content="✅ Member accepted.", embed=None, view=None)
+            
+            # Thêm user vào Thread nếu có
+            if party.get("thread_id"):
+                try:
+                    for guild in i.client.guilds:
+                        thread = guild.get_thread(party["thread_id"]) or await guild.fetch_channel(party["thread_id"])
+                        if thread:
+                            member = guild.get_member(self.user.id)
+                            if member:
+                                await thread.add_user(member)
+                                await thread.send(f"🎉 Chào mừng {member.mention} đã gia nhập Party!")
+                                break
+                except Exception: pass
+            
             try: await self.user.send(f"🎉 Your join request for **{party['dg_name']}** was accepted!")
             except: pass
         else:
@@ -198,6 +260,7 @@ class DecisionView(ui.View):
         await i.response.edit_message(content="❌ Member rejected.", embed=None, view=None)
         try: await self.user.send("💔 Your join request has been rejected.")
         except: pass
+
 
 class KickMemberSelect(ui.Select):
     def __init__(self, party):
@@ -215,6 +278,20 @@ class KickMemberSelect(ui.Select):
             member_id = int(self.values[0])
             parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": member_id}}})
             await interaction.response.edit_message(content="✅ Kick successful.", view=None)
+            
+            # Xóa thành viên khỏi Thread
+            if self.party.get("thread_id"):
+                try:
+                    for guild in interaction.client.guilds:
+                        thread = guild.get_thread(self.party["thread_id"])
+                        if thread:
+                            member_to_kick = guild.get_member(member_id)
+                            if member_to_kick:
+                                await thread.remove_user(member_to_kick)
+                                await thread.send(f"⚠️ {member_to_kick.display_name} đã bị kick khỏi Party.")
+                                break
+                except Exception: pass
+
             try:
                 user = await interaction.client.fetch_user(member_id)
                 await user.send(f"⚠️ You were kicked from party: **{self.party['dg_name']}**")
@@ -222,20 +299,78 @@ class KickMemberSelect(ui.Select):
         except Exception:
             await interaction.response.send_message("❌ System error during kick.", ephemeral=True)
 
+
 class ManagePartyView(ui.View):
     def __init__(self, party, is_leader):
         super().__init__(timeout=None)
         self.party = party
         self.is_leader = is_leader
 
+        # Các Nút Chỉ Dành Cho Leader
+        leader_only_buttons = ["Toggle AutoFill Filter", "Kick Member", "Disband Party", "Ready Check", "Edit Need", "Broadcast Recruit"]
+        
         for child in self.children:
-            if getattr(child, "label", None) in ["Toggle AutoFill Filter", "Kick Member", "Disband Party"]:
-                if not self.is_leader: self.remove_item(child) 
-            elif getattr(child, "label", None) == "Leave Party":
-                if self.is_leader: self.remove_item(child) 
-    @ui.button(label="Ready Check", style=discord.ButtonStyle.primary, row=2)
+            label = getattr(child, "label", None)
+            if label in leader_only_buttons and not self.is_leader:
+                self.remove_item(child) 
+            elif label == "Leave Party" and self.is_leader:
+                self.remove_item(child) 
+
+    @ui.button(label="Edit Need", style=discord.ButtonStyle.secondary, emoji="✏️", row=1)
+    async def edit_need_btn(self, i: discord.Interaction, b: ui.Button):
+        if i.user.id != self.party["host_id"]:
+            return await i.response.send_message("❌ Only Leader can edit.", ephemeral=True)
+        await i.response.send_modal(EditNeedModal(self.party))
+
+    @ui.button(label="Broadcast Recruit", style=discord.ButtonStyle.success, emoji="📢", row=1)
+    async def broadcast_btn(self, i: discord.Interaction, b: ui.Button):
+        if i.user.id != self.party["host_id"]:
+            return await i.response.send_message("❌ Only Leader can broadcast.", ephemeral=True)
+            
+        await i.response.defer(ephemeral=True)
+        current_party = parties_col.find_one({"id": self.party["id"]})
+        if not current_party: 
+            return await i.followup.send("❌ Party not found.", ephemeral=True)
+
+        # Xóa các broadcast cũ
+        if "broadcasts" in current_party:
+            for b_info in current_party["broadcasts"]:
+                try:
+                    ch = i.client.get_channel(b_info["channel_id"]) or await i.client.fetch_channel(b_info["channel_id"])
+                    msg = await ch.fetch_message(b_info["message_id"])
+                    await msg.delete()
+                except Exception: pass
+
+        # Tạo Broadcast Embed mới
+        embed = discord.Embed(title=f"⚔️ [BUMP] PARTY RECRUITMENT: {current_party['dg_name']}", color=discord.Color.green())
+        embed.add_field(name="Leader", value=current_party['leader_ign'], inline=True)
+        embed.add_field(name="Looking for", value=current_party['recruitment'], inline=True)
+        embed.add_field(name="Starts", value=current_party['start_in'], inline=True)
+        
+        mem_list = ", ".join([f"{m['ign']} ({m['role']})" for m in current_party['members']])
+        embed.add_field(name=f"Current Roster ({len(current_party['members'])}/4)", value=mem_list, inline=False)
+
+        class OpenLobbyView(ui.View):
+            def __init__(self): super().__init__(timeout=None)
+            @ui.button(label="Open Lobby UI", style=discord.ButtonStyle.success)
+            async def open_lobby(self, inter: discord.Interaction, btn: ui.Button):
+                await inter.response.send_message(embed=build_lobby_embed(), view=LobbyView(), ephemeral=True)
+
+        new_broadcasts = []
+        for guild in i.client.guilds:
+            board = discord.utils.get(guild.text_channels, name="party-board")
+            if board:
+                try:
+                    role_mention = get_ping_role(current_party['dg_name']) if guild == i.guild else ""
+                    msg = await board.send(content=f"{role_mention} 📢 Party đang tìm thêm thành viên!", embed=embed, view=OpenLobbyView())
+                    new_broadcasts.append({"channel_id": board.id, "message_id": msg.id})
+                except Exception: pass
+
+        parties_col.update_one({"id": self.party["id"]}, {"$set": {"broadcasts": new_broadcasts}})
+        await i.followup.send("✅ Broadcast sent! Xem kênh #party-board.", ephemeral=True)
+
+    @ui.button(label="Ready Check", style=discord.ButtonStyle.primary, row=1)
     async def ready_check_btn(self, i: discord.Interaction, b: ui.Button):
-        # Kiểm tra nếu người bấm là Leader
         if i.user.id != self.party["host_id"]:
             return await i.response.send_message("❌ Only the Leader can initiate a Ready Check.", ephemeral=True)
         
@@ -246,21 +381,20 @@ class ManagePartyView(ui.View):
             color=discord.Color.gold()
         )
         
-        # Gửi thông báo cho tất cả thành viên trong nhóm
-        await i.response.send_message("✅ Ready Check initiated!", ephemeral=True)
+        await i.response.send_message("✅ Ready Check initiated! Waiting 60s...", ephemeral=True)
         for member in self.party["members"]:
-            await i.client.get_user(member["id"]).send(...)
+            try:
+                user = await i.client.fetch_user(member["id"])
+                await user.send(embed=embed, view=view)
+            except Exception: pass
         
-        # Đợi 60 giây để thu thập kết quả
         await asyncio.sleep(60)
         
-        # Tổng hợp kết quả
-        results = "\n".join([f"{uid}: {status}" for uid, status in view.ready_members.items()])
+        results = "\n".join([f"<@{uid}>: {status}" for uid, status in view.ready_members.items()])
         result_embed = discord.Embed(title="📊 Ready Check Results", description=results or "No one responded.", color=discord.Color.blue())
-        # Thay vì dùng msg.edit, hãy dùng i.message.edit
-        await i.message.edit(embed=result_embed, view=None)
+        await i.edit_original_response(embed=result_embed, view=None)
 
-    @ui.button(label="View Members", style=discord.ButtonStyle.primary)
+    @ui.button(label="View Members", style=discord.ButtonStyle.primary, row=2)
     async def view_members(self, i: discord.Interaction, b: ui.Button):
         await i.response.defer(ephemeral=True)
         try:
@@ -277,7 +411,7 @@ class ManagePartyView(ui.View):
         except Exception:
             await i.followup.send("❌ Error retrieving data.", ephemeral=True)
 
-    @ui.button(label="Toggle Filter", style=discord.ButtonStyle.secondary)
+    @ui.button(label="Toggle AutoFill Filter", style=discord.ButtonStyle.secondary, row=2)
     async def toggle_filter(self, i: discord.Interaction, b: ui.Button):
         try:
             new_val = not self.party.get("filter_enabled", True)
@@ -288,7 +422,7 @@ class ManagePartyView(ui.View):
         except Exception:
             await i.response.send_message("❌ Database error.", ephemeral=True)
 
-    @ui.button(label="Kick Member", style=discord.ButtonStyle.danger)
+    @ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=3)
     async def kick_member_btn(self, i: discord.Interaction, b: ui.Button):
         try:
             current_party = parties_col.find_one({"id": self.party["id"]})
@@ -301,7 +435,7 @@ class ManagePartyView(ui.View):
         except Exception:
             await i.response.send_message("❌ Database error.", ephemeral=True)
 
-    @ui.button(label="Disband Party", style=discord.ButtonStyle.danger)
+    @ui.button(label="Disband Party", style=discord.ButtonStyle.danger, row=3)
     async def disband_party(self, i: discord.Interaction, b: ui.Button):
         await i.response.defer(ephemeral=True)
         try:
@@ -309,6 +443,17 @@ class ManagePartyView(ui.View):
             if not current_party:
                 return await i.followup.send("❌ Party not found or already disbanded.", ephemeral=True)
             
+            # Khóa Thread Chat Tạm thời
+            if current_party.get("thread_id"):
+                try:
+                    for guild in i.client.guilds:
+                        thread = guild.get_thread(current_party["thread_id"]) or await guild.fetch_channel(current_party["thread_id"])
+                        if thread:
+                            await thread.send("💥 Party đã bị Disband bởi Trưởng nhóm. Thread chat này sẽ được khóa lại.")
+                            await thread.edit(archived=True, locked=True)
+                            break
+                except Exception: pass
+
             if "broadcasts" in current_party:
                 for b_info in current_party["broadcasts"]:
                     try:
@@ -330,11 +475,26 @@ class ManagePartyView(ui.View):
         except Exception:
             await i.followup.send("❌ Error disbanding the party.", ephemeral=True)
 
-    @ui.button(label="Leave Party", style=discord.ButtonStyle.danger)
+    @ui.button(label="Leave Party", style=discord.ButtonStyle.danger, row=3)
     async def leave_party(self, i: discord.Interaction, b: ui.Button):
         await i.response.defer(ephemeral=True)
         try:
+            current_party = parties_col.find_one({"id": self.party["id"]})
             parties_col.update_one({"id": self.party["id"]}, {"$pull": {"members": {"id": i.user.id}}})
+            
+            # Xóa thành viên khỏi Thread
+            if current_party and current_party.get("thread_id"):
+                try:
+                    for guild in i.client.guilds:
+                        thread = guild.get_thread(current_party["thread_id"])
+                        if thread:
+                            member = guild.get_member(i.user.id)
+                            if member:
+                                await thread.remove_user(member)
+                                await thread.send(f"⚠️ {member.display_name} đã rời khỏi Party.")
+                                break
+                except Exception: pass
+
             try:
                 host_user = await i.client.fetch_user(self.party["host_id"])
                 await host_user.send(f"⚠️ Member **{i.user.display_name}** left your party **{self.party['dg_name']}**!")
@@ -343,6 +503,7 @@ class ManagePartyView(ui.View):
             await i.edit_original_response(content="👋 You left the party.", view=None, embed=None)
         except Exception:
             await i.followup.send("❌ Database error.", ephemeral=True)
+
 
 class LobbySelectParty(ui.Select):
     def __init__(self, parties_on_page):
@@ -365,9 +526,10 @@ class LobbySelectParty(ui.Select):
         join_cooldowns[user_id] = now
         await interaction.response.send_modal(RequestJoinModal(party))
 
+
 class ReadyCheckView(ui.View):
     def __init__(self, party):
-        super().__init__(timeout=60) # Tự hủy sau 60 giây
+        super().__init__(timeout=60)
         self.party = party
         self.ready_members = {}
 
@@ -380,6 +542,7 @@ class ReadyCheckView(ui.View):
     async def not_ready(self, i: discord.Interaction, b: ui.Button):
         self.ready_members[i.user.id] = "Not Ready"
         await i.response.send_message("❌ You marked yourself as Not Ready!", ephemeral=True)
+
 
 class LobbyView(ui.View):
     def __init__(self):
