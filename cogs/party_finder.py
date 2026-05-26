@@ -5,17 +5,15 @@ import os
 import uuid
 import asyncio
 from datetime import datetime, timezone
-from pymongo import MongoClient
-from Database import players_col, parties_col, dungeon_configs,db
+# ❌ ĐÃ XÓA dòng: from pymongo import MongoClient (Không cần nữa)
 
 # ==========================================
 # DATABASE CONNECTION INITIALIZATION (MONGO)
 # ==========================================
+# 🟢 Chỉ cần import trực tiếp các collection từ file Database.py của bạn là đủ sạch sẽ
+from Database import players_col, parties_col, dungeon_configs
 
-
-players_col = db["players"]
-parties_col = db["parties"]
-dungeon_configs = db["dungeon_configs"]
+# ❌ XÓA CÁC DÒNG NÀY ĐI (vì lệnh import ở trên đã lấy trực tiếp các biến này rồi, không cần định nghĩa lại nữa):
 
 # ==========================================
 # HELPER FUNCTIONS
