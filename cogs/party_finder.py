@@ -486,39 +486,34 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         if not passed_gear_data:
             return await interaction.response.send_message(f"❌ **Validation failed for `{role_entered}`:**\n" + "\n".join(error_msgs), ephemeral=True)
 
-        # 2. LOGIC HIỂN THỊ DYNAMIC (Đây là phần bạn cần)
+        
        # 2. LOGIC HIỂN THỊ DYNAMIC (SỬA LẠI ĐỂ HIỂN THỊ FULL GEAR)
-        gear_details = []
-        
-        # Danh sách các role được coi là thuộc nhóm DPS cần hiện full gear
         DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk"]
-        
-        # Kiểm tra xem role người dùng nhập có thuộc nhóm DPS hay không
-        is_dps = any(dps_role == role_entered.lower() for dps_role in DPS_GROUPS)
+        clean_role = role_entered.lower().replace("(", "").replace(")", "").strip()
+        is_dps = clean_role in DPS_GROUPS
+        gear_details = []
         if is_dps:
-            header_name = "Verified Gear Profiles (AA & SK)"
-            # Quét tất cả key trong stats, nếu là AA hoặc SK thì lấy ra
+            # Quét cả AA và SK trong database của người đó
             for r_key in ["AA", "SK"]:
                 data = stats.get(r_key)
                 if isinstance(data, dict):
-                    # Cách viết gợi ý để dễ đọc hơn trên Discord mobile/desktop
-                    gear_details.append(f"**{r_key}**: Gear: {data.get('gear', 'N/A')} • Vice: {data.get('vice', 'N/A')} • Deck: {data.get('deck', 'N/A')}")
+                    gear_details.append(
+                        f"**{r_key}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}"
+                    )
         else:
-            # Nếu không phải nhóm DPS (ví dụ TANK), chỉ hiển thị role họ nhập
-            header_name = f"Verified Gear Profile ({passed_actual_role})"
+            # Chỉ lấy role họ chọn
             data = stats.get(passed_actual_role.upper())
             if isinstance(data, dict):
                 gear_details.append(f"**{passed_actual_role}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
-        
-        gear_summary = "\n".join(gear_details) if gear_details else "No gear data found."
 
+        gear_summary = "\n".join(gear_details) if gear_details else "No gear data found."
         # 3. GỬI CHO LEADER
         leader = self.bot.get_user(party.get('leader_id', 0))
         if leader:
             embed = discord.Embed(title="📩 Join Request Received!", color=discord.Color.green())
             embed.add_field(name="Applicant", value=self.ign.value, inline=True)
             embed.add_field(name="Role Selected", value=role_entered.upper(), inline=True)
-            embed.add_field(name=header_name, value=gear_summary, inline=False)
+            embed.add_field(name="Gear profile", value=gear_summary, inline=False)
             
             try:
                 await leader.send(embed=embed, view=RequestJoinView(self.bot, self.party_id, interaction.user.id, self.ign.value, role_entered))
