@@ -350,38 +350,83 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
 
         role_entered = self.role.value.strip()
         stats = profile.get("my_stats", {})
+        dg_config = await get_dungeon_config(party.get('dg_name'))
         
-        role_gear_data = None
-        for key, data in stats.items():
-            if key.lower() == role_entered.lower():
-                role_gear_data = data
+        # 1. HỆ THỐNG TỰ ĐỘNG CHUYỂN ĐỔI (ALIAS MAPPING)
+        ROLE_ALIASES = {
+            "dps": ["aa", "sk"],
+            "ufm": ["aa", "sk"],
+            "fm": ["aa", "sk"],
+            "future": ["aa", "sk"],
+            "ulforce": ["aa", "sk"],
+            "future mode": ["aa", "sk"]
+        }
+        
+        # Nếu role nhập vào nằm trong danh sách bí danh, lấy mảng check ["aa", "sk"]. Nếu không, check đúng từ khóa họ nhập.
+        search_keys = ROLE_ALIASES.get(role_entered.lower(), [role_entered.lower()])
+        available_roles = [k for k, v in stats.items() if isinstance(v, dict)]
+        
+        passed_gear_data = None
+        passed_actual_role = None
+        error_msgs = []
+
+        # 2. KIỂM TRA LẦN LƯỢT CÁC ROLE
+        for key in search_keys:
+            gear_data = next((v for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), None)
+            actual_db_key = next((k for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), key.upper())
+            
+            if not gear_data:
+                error_msgs.append(f"- `{actual_db_key}`: No gear setup found in /mygear.")
+                continue
+                
+            if dg_config:
+                is_valid, reason = await check_gear_requirements(actual_db_key, gear_data, dg_config)
+                if is_valid:
+                    passed_gear_data = gear_data
+                    passed_actual_role = actual_db_key
+                    break # Pass điều kiện phát là dừng vòng lặp luôn
+                else:
+                    error_msgs.append(f"- `{actual_db_key}`: {reason}")
+            else:
+                passed_gear_data = gear_data
+                passed_actual_role = actual_db_key
                 break
 
-        if not role_gear_data:
-            return await interaction.response.send_message(f"❌ Could not find gear data for Role: **{role_entered}** in your `/mygear` profile.", ephemeral=True)
+        # 3. NẾU KHÔNG CÓ ROLE NÀO PASS
+        if not passed_gear_data:
+            roles_str = ", ".join(available_roles) if available_roles else "None"
+            errors = "\n".join(error_msgs)
+            return await interaction.response.send_message(f"❌ **Validation failed for `{role_entered}`:**\n{errors}\n💡 **Your available roles are:** `{roles_str}`", ephemeral=True)
 
-        # Kiểm tra điều kiện chứa Từ Khóa
-        dg_config = await get_dungeon_config(party.get('dg_name'))
-        if dg_config:
-            is_valid, reason = await check_gear_requirements(role_entered, role_gear_data, dg_config)
-            if not is_valid:
-                return await interaction.response.send_message(f"⛔ **Requirements not met:** {reason}", ephemeral=True)
+        gear_details = []
+        for role_key in ["aa", "sk"]:
+            data = stats.get(role_key.upper()) # Lấy từ DB (AA hoặc SK)
+            if isinstance(data, dict):
+                gear_details.append(
+                    f"**{role_key.upper()}**: Gear: {data.get('gear', 'N/A')} | "
+                    f"Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}"
+                )
+        
+        gear_summary = "\n".join(gear_details) if gear_details else "No gear data available."
 
         leader = self.bot.get_user(party.get('leader_id', 0))
         if leader:
             embed = discord.Embed(title="📩 Join Request Received!", color=discord.Color.green())
             embed.add_field(name="Applicant", value=self.ign.value, inline=True)
             embed.add_field(name="Discord", value=interaction.user.mention, inline=True)
-            embed.add_field(name="Role Selected", value=role_entered, inline=True)
-            embed.add_field(name="Extracted Gear Profile", 
-                            value=f"**Gear:** {role_gear_data.get('gear', 'N/A')}\n**Vice:** {role_gear_data.get('vice', 'N/A')}\n**Deck:** {role_gear_data.get('deck', 'N/A')}", 
+            embed.add_field(name="Role Selected", value=role_entered.upper(), inline=True)
+            
+            # Hiển thị thông tin kiểm tra cả 2 role
+            embed.add_field(name="Verified Gear Profiles (AA & SK)", 
+                            value=gear_summary, 
                             inline=False)
             
             try:
+                # Gửi cho leader xem luôn cả 2 role
                 await leader.send(embed=embed, view=RequestJoinView(self.bot, self.party_id, interaction.user.id, self.ign.value, role_entered))
-                await interaction.response.send_message("✅ Request sent to the leader with your verified gear!", ephemeral=True)
+                await interaction.response.send_message(f"✅ Request sent! Leader can see both your AA & SK profiles.", ephemeral=True)
             except discord.Forbidden:
-                await interaction.response.send_message("❌ Cannot DM the leader (DM blocked).", ephemeral=True)
+                await interaction.response.send_message("❌ Cannot DM the leader.", ephemeral=True)
 
 
 class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
@@ -398,28 +443,59 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     async def on_submit(self, interaction: discord.Interaction):
         profile = await get_player_profile(interaction.user.id)
         role_entered = self.role.value.strip()
+        stats = profile.get("my_stats", {})
         
-        role_gear_data = None
-        for k, v in profile.get("my_stats", {}).items():
-            if k.lower() == role_entered.lower(): role_gear_data = v; break
-
-        if not role_gear_data:
-            return await interaction.response.send_message(f"❌ You do not have gear setup for **{role_entered}**.", ephemeral=True)
-
+        # Khởi tạo config mặc định nếu DB chưa có Dungeon này
         dg_config = await get_dungeon_config(self.dg_name.value)
         if not dg_config:
-            # Tạo mới bản ghi nếu chưa có
             dg_config = {
                 "dg_name": self.dg_name.value,
-                "ping_role_name": self.dg_name.value,  # Đặt mặc định tên Role cần ping trùng tên Dungeon
-                "req_keywords": [self.dg_name.value],  # Mặc định yêu cầu từ khóa trùng tên Dungeon
-                "description": "Automatically created config data."
+                "ping_role": None,  
+                "reqs": {"gear": [], "vice": [], "deck": []} 
             }
             await dungeon_configs_col.insert_one(dg_config)
+
+        # 1. HỆ THỐNG TỰ ĐỘNG CHUYỂN ĐỔI (ALIAS MAPPING)
+        ROLE_ALIASES = {
+            "dps": ["aa", "sk"],
+            "ufm": ["aa", "sk"],
+            "fm": ["aa", "sk"],
+            "future": ["aa", "sk"],
+            "ulforce": ["aa", "sk"],
+            "future mode": ["aa", "sk"]
+        }
+        
+        search_keys = ROLE_ALIASES.get(role_entered.lower(), [role_entered.lower()])
+        available_roles = [k for k, v in stats.items() if isinstance(v, dict)]
+        
+        passed_gear_data = None
+        passed_actual_role = None
+        error_msgs = []
+
+        # 2. KIỂM TRA LẦN LƯỢT CÁC ROLE
+        for key in search_keys:
+            gear_data = next((v for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), None)
+            actual_db_key = next((k for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), key.upper())
             
-        is_valid, reason = await check_gear_requirements(role_entered, role_gear_data, dg_config)
-        if not is_valid:
-            return await interaction.response.send_message(f"⛔ **You don't meet requirements to create this party:** {reason}", ephemeral=True)
+            if not gear_data:
+                error_msgs.append(f"- `{actual_db_key}`: No gear setup found in /mygear.")
+                continue
+                
+            is_valid, reason = await check_gear_requirements(actual_db_key, gear_data, dg_config)
+            if is_valid:
+                passed_gear_data = gear_data
+                passed_actual_role = actual_db_key
+                break
+            else:
+                error_msgs.append(f"- `{actual_db_key}`: {reason}")
+
+        # 3. NẾU KHÔNG CÓ ROLE NÀO PASS
+        if not passed_gear_data:
+            roles_str = ", ".join(available_roles) if available_roles else "None"
+            errors = "\n".join(error_msgs)
+            return await interaction.response.send_message(f"⛔ **You don't meet requirements to create this party as `{role_entered}`:**\n{errors}\n💡 **Your available roles are:** `{roles_str}`", ephemeral=True)
+
+        display_role = f"{role_entered} ({passed_actual_role})" if role_entered.lower() != passed_actual_role.lower() else passed_actual_role
 
         party_doc = {
             "leader_id": interaction.user.id,
@@ -427,7 +503,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             "dg_name": self.dg_name.value,
             "start_time": self.start_time.value,
             "requirements": self.requirements.value,
-            "members": [{"user_id": interaction.user.id, "ign": self.ign, "role": role_entered}],
+            "members": [{"user_id": interaction.user.id, "ign": self.ign, "role": display_role}],
             "broadcasts": [],
             "chat_channel_id": None
         }
@@ -437,14 +513,13 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
 
         await handle_cross_server_chat(self.bot, party_doc, action="create", guild=interaction.guild)
 
-        # Broadcast Liên Server kèm theo Ping tự động quét theo Role Name
         embed = create_party_embed(party_doc)
         broadcast_records = await broadcast_to_all_servers(self.bot, embed, str(result.inserted_id), dg_config, interaction.guild)
         
         if broadcast_records:
             await parties_col.update_one({"_id": result.inserted_id}, {"$set": {"broadcasts": broadcast_records}})
             
-        await interaction.response.send_message(f"Party created & Broadcasted with ping successfully!", ephemeral=True)
+        await interaction.response.send_message(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
 
 class EditReqModal(discord.ui.Modal, title='Edit Party Requirements'):
     requirements = discord.ui.TextInput(label='New Requirements', style=discord.TextStyle.paragraph)
