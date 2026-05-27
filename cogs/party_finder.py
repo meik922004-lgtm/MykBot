@@ -201,30 +201,42 @@ class ManagePartyView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
         self.party = party
+        
     @discord.ui.button(label="View Party Profiles", style=discord.ButtonStyle.primary, row=2)
     async def view_profiles(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
-        # Lấy danh sách thành viên từ DB
         party_data = await parties_col.find_one({"_id": self.party['_id']})
         members = party_data.get("members", [])
         
         embed = discord.Embed(title=f"📋 Party Profiles - {self.party.get('dg_name')}", color=discord.Color.blue())
         
+        DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk"]
+        
         for m in members:
-            # Lấy profile người dùng để xem gear
             profile = await get_player_profile(m['user_id'])
             stats = profile.get("my_stats", {})
-            role_key = m['role'].upper() # Role đã chọn (VD: TANK, hoặc DPS(SK))
+            role_input = m['role'].lower()
             
-            # Lấy dữ liệu gear (xử lý logic nếu là DPS đã chọn SK/AA)
-            gear_info = "No setup found"
-            # Nếu role chứa chuỗi SK hoặc AA, ta tìm key tương ứng
-            search_key = "SK" if "SK" in role_key else ("AA" if "AA" in role_key else role_key)
+            # Kiểm tra xem role thành viên có thuộc nhóm DPS không
+            is_dps = any(dps_role in role_input for dps_role in DPS_GROUPS)
             
-            data = stats.get(search_key)
-            if isinstance(data, dict):
-                gear_info = f"Gear: {data.get('gear', 'N/A')}\nVice: {data.get('vice', 'N/A')}"
+            gear_lines = []
+            if is_dps:
+                # Nếu là DPS, lấy cả AA và SK nếu có trong stats
+                for r in ["AA", "SK"]:
+                    data = stats.get(r)
+                    if isinstance(data, dict):
+                        gear_lines.append(f"**{r}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
+            else:
+                # Nếu là TANK hoặc role khác, lấy đúng role đó
+                # Xử lý lấy key (ví dụ: TANK(DK) -> TANK)
+                role_key = m['role'].split('(')[0].strip().upper()
+                data = stats.get(role_key)
+                if isinstance(data, dict):
+                    gear_lines.append(f"**{role_key}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
+            
+            gear_info = "\n".join(gear_lines) if gear_lines else "No gear setup found."
             
             embed.add_field(
                 name=f"{m['ign']} ({m['role']})",
