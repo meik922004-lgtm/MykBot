@@ -81,7 +81,9 @@ async def check_gear_requirements(role_name: str, role_gear_data: dict, dg_confi
         return False, f"Your deck (`{p_deck}`) is not qualified for this dungeon."
 
     return True, "Passed"
+
 # --- 2. CẢI TIẾN: BROADCAST + PING LIÊN SERVER THEO TÊN ROLE ---
+
 def find_flexible_role(guild, dg_name):
     """
     Tự động tìm role có tên chứa từ khóa của Dungeon.
@@ -97,6 +99,7 @@ def find_flexible_role(guild, dg_name):
             return role.mention
             
     return None # Không tìm thấy role nào phù hợp
+
 async def broadcast_to_all_servers(bot, embed, party_id_str, dg_config: dict, origin_guild: discord.Guild = None):
     broadcasts = []
     view = BroadcastView(party_id=party_id_str)
@@ -233,11 +236,11 @@ class ManagePartyView(discord.ui.View):
 
     @discord.ui.button(label="Edit Dungeon Name", style=discord.ButtonStyle.secondary)
     async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditDungeonModal(self.party))
+        await interaction.response.send_modal(EditDungeonModal(self.party, interaction.client))
 
     @discord.ui.button(label="Edit Requirements", style=discord.ButtonStyle.secondary)
     async def edit_reqs(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditReqModal(self.party))
+        await interaction.response.send_modal(EditDungeonModal(self.party, interaction.client))
 
     @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=0)
     async def kick_member(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -593,9 +596,10 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
 class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
 
-    def __init__(self, party):
+    def __init__(self, party, bot):
         super().__init__()
         self.party = party
+        self.bot = bot
         self.new_name.default = party.get('dg_name')
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -607,9 +611,10 @@ class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
 class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
     new_req = discord.ui.TextInput(label='New Requirements', style=discord.TextStyle.paragraph, required=True)
 
-    def __init__(self, party):
+    def __init__(self, party, bot):
         super().__init__()
         self.party = party
+        self.bot = bot
         self.new_req.default = party.get('requirements')
 
     async def on_submit(self, interaction: discord.Interaction):
