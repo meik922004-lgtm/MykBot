@@ -18,4 +18,4 @@ db = client.database0
 # Thêm 3 dòng này vào cuối file
 players_col = db.players
 parties_col = db.parties
-dungeon_configs = db.dungeon_configs
+dungeon_configs_col = db["dungeon_configs"]

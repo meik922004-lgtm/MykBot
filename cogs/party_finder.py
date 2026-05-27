@@ -27,12 +27,39 @@ async def check_profile_validity(user_id: int):
         "deck": stats.get("deck", "None")
     }
     return True, player.get("ign", "Unknown"), profile_data
-
 async def check_gear_requirement(profile_data: dict, dungeon_name: str) -> bool:
-    """Check the conditions for inputting the DG. You can add min-gear comparison logic here.."""
+    """
+    So sánh profile của người chơi với danh sách yêu cầu (reqs) trong Database.
+    Nếu trang bị của người chơi không nằm trong danh sách cho phép của Dungeon -> Trả về False (Chặn)
+    """
     dg_config = await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dungeon_name}$", "$options": "i"}})
+    
+    # Nếu Dungeon không tồn tại hoặc không có setup yêu cầu (reqs), mặc định cho phép vào
     if not dg_config or "reqs" not in dg_config:
         return True 
+
+    reqs = dg_config["reqs"]
+    my_stats = profile_data.get("my_stats", {})
+    user_gear = profile_data.get("gear", "")
+    user_vice = profile_data.get("vice", "")
+    user_deck = profile_data.get("deck", "")
+
+    # Kiểm tra GEAR
+    # Nếu Dungeon có mảng 'gear' và gear của người chơi không nằm trong mảng đó -> Không đạt
+    if "gear" in reqs and isinstance(reqs["gear"], list) and len(reqs["gear"]) > 0:
+        if user_gear not in reqs["gear"]:
+            return False
+            
+    # Kiểm tra VICE
+    if "vice" in reqs and isinstance(reqs["vice"], list) and len(reqs["vice"]) > 0:
+        if user_vice not in reqs["vice"]:
+            return False
+            
+    # Kiểm tra DECK
+    if "deck" in reqs and isinstance(reqs["deck"], list) and len(reqs["deck"]) > 0:
+        if user_deck not in reqs["deck"]:
+            return False
+
     return True
 
 async def get_dg_ping_role(dungeon_name: str) -> str:
