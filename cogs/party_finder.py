@@ -373,7 +373,6 @@ class LobbyPaginationView(discord.ui.View):
             self.add_item(self.select)
 
     async def send_request_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         party_id = self.select.values[0]
         profile = await get_player_profile(interaction.user.id)
         if not profile:
@@ -418,22 +417,23 @@ class LobbyPaginationView(discord.ui.View):
         embed = create_party_embed(party)
         await interaction.followup.send(embed=embed, view=ManagePartyView(self.bot, party), ephemeral=True)
 
-    async def update_lobby(self, interaction: discord.Interaction, new_page: int):
-        await interaction.response.defer(ephemeral=True)
+    async def update_lobby(self, target, new_page: int):
+        # 1. KHÔNG dùng defer ở đây nữa để tránh lỗi InteractionResponded
+        
         fresh_parties = await parties_col.find({}).to_list(length=100)
         view = LobbyPaginationView(self.bot, fresh_parties, new_page)
         
-        embed = discord.Embed(title="🌐 Party Finder Lobby", description=f"Page {new_page+1}/{view.max_pages}", color=discord.Color.purple())
+        # Sửa một chút ở max_pages để không bị lỗi Page 1/0 nếu chưa có party nào
+        max_pages = max(1, view.max_pages)
+        embed = discord.Embed(title="🌐 Party Finder Lobby", description=f"Page {new_page+1}/{max_pages}", color=discord.Color.purple())
         
         for p in fresh_parties[new_page * view.items_per_page : (new_page + 1) * view.items_per_page]:
-            # Lấy thông tin từ party (sử dụng .get() để tránh lỗi nếu thiếu key)
             dg_name = p.get('dg_name', 'Unknown')
             start_time = p.get('start_time', 'ASAP')
             leader = p.get('leader_ign', 'Unknown')
             reqs = p.get('requirements', 'No specific requirements')
             members_count = len(p.get('members', []))
             
-            # Cập nhật hiển thị thêm Requirements và chỉnh chu thông tin
             embed.add_field(
                 name=f"🎮 {dg_name} | Start: {start_time}", 
                 value=f"👤 Leader: **{leader}**\n👥 Members: `{members_count}/4`\n📝 Req: *{reqs}*", 
@@ -443,7 +443,17 @@ class LobbyPaginationView(discord.ui.View):
         if not fresh_parties: 
             embed.description = "No active parties found."
             
-        await interaction.response.edit_message(embed=embed, view=view)
+        # 2. Xử lý linh hoạt cho Auto-update và Nút bấm Refresh
+        if isinstance(target, discord.Interaction):
+            # Nếu người dùng tự bấm nút Refresh hoặc chuyển trang
+            if not target.response.is_done():
+                await target.response.edit_message(embed=embed, view=view)
+            else:
+                await target.edit_original_response(embed=embed, view=view)
+                
+        elif isinstance(target, discord.Message):
+            # Dành cho việc tự động update Lobby từ trong Modal tạo Party
+            await target.edit(embed=embed, view=view)
 
 # --- MODALS ---
 
@@ -585,7 +595,8 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             await parties_col.update_one({"_id": result.inserted_id}, {"$set": {"broadcasts": broadcast_records}})
             
         await interaction.followup.send(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
-
+        if interaction.message:
+            await self.lobby_view.update_lobby(interaction.message, self.lobby_view.page)
 class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
 
