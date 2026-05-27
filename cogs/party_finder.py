@@ -347,6 +347,7 @@ class LobbyPaginationView(discord.ui.View):
             self.add_item(self.select)
 
     async def send_request_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         party_id = self.select.values[0]
         profile = await get_player_profile(interaction.user.id)
         if not profile:
@@ -361,6 +362,7 @@ class LobbyPaginationView(discord.ui.View):
     @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=1)
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page > 0: await self.update_lobby(interaction, self.page - 1)
+        
 
     @discord.ui.button(label="Refresh", style=discord.ButtonStyle.blurple, row=1)
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -372,35 +374,51 @@ class LobbyPaginationView(discord.ui.View):
 
     @discord.ui.button(label="➕ Create Party", style=discord.ButtonStyle.success, row=2)
     async def create_party(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         if not profile:
-            return await interaction.response.send_message("⚠️ Please set up `/mygear` first!", ephemeral=True)
+            return await interaction.followup.send("⚠️ Please set up `/mygear` first!", ephemeral=True)
         if await parties_col.find_one({"members.user_id": interaction.user.id}):
-            return await interaction.response.send_message("❌ You are already in a party!", ephemeral=True)
+            return await interaction.followup.send("❌ You are already in a party!", ephemeral=True)
             
         await interaction.response.send_modal(CreatePartyModal(self.bot, profile.get('ign', 'Unknown')))
 
     @discord.ui.button(label="⚙️ Manage My Party", style=discord.ButtonStyle.primary, row=2)
     async def manage_party(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         party = await parties_col.find_one({"members.user_id": interaction.user.id})
         if not party:
-            return await interaction.response.send_message("You are not currently in a party.", ephemeral=True)
+            return await interaction.followup.send("You are not currently in a party.", ephemeral=True)
         
         embed = create_party_embed(party)
-        await interaction.response.send_message(embed=embed, view=ManagePartyView(self.bot, party), ephemeral=True)
+        await interaction.followup.send(embed=embed, view=ManagePartyView(self.bot, party), ephemeral=True)
 
     async def update_lobby(self, interaction: discord.Interaction, new_page: int):
+        await interaction.response.defer(ephemeral=True)
         fresh_parties = await parties_col.find({}).to_list(length=100)
         view = LobbyPaginationView(self.bot, fresh_parties, new_page)
         
         embed = discord.Embed(title="🌐 Party Finder Lobby", description=f"Page {new_page+1}/{view.max_pages}", color=discord.Color.purple())
+        
         for p in fresh_parties[new_page * view.items_per_page : (new_page + 1) * view.items_per_page]:
-            embed.add_field(name=f"🎮 {p.get('dg_name', 'Unknown')} | Start: {p.get('start_time', 'N/A')}", 
-                            value=f"Leader: **{p.get('leader_ign', 'Unknown')}** | Members: {len(p.get('members', []))}/4", inline=False)
+            # Lấy thông tin từ party (sử dụng .get() để tránh lỗi nếu thiếu key)
+            dg_name = p.get('dg_name', 'Unknown')
+            start_time = p.get('start_time', 'ASAP')
+            leader = p.get('leader_ign', 'Unknown')
+            reqs = p.get('requirements', 'No specific requirements')
+            members_count = len(p.get('members', []))
             
-        if not fresh_parties: embed.description = "No active parties found."
+            # Cập nhật hiển thị thêm Requirements và chỉnh chu thông tin
+            embed.add_field(
+                name=f"🎮 {dg_name} | Start: {start_time}", 
+                value=f"👤 Leader: **{leader}**\n👥 Members: `{members_count}/4`\n📝 Req: *{reqs}*", 
+                inline=False
+            )
+            
+        if not fresh_parties: 
+            embed.description = "No active parties found."
+            
         await interaction.response.edit_message(embed=embed, view=view)
-
 
 # --- MODALS ---
 
@@ -513,6 +531,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         self.ign = ign
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         role_entered = self.role.value.strip()
         stats = profile.get("my_stats", {})
@@ -565,7 +584,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         if not passed_gear_data:
             roles_str = ", ".join(available_roles) if available_roles else "None"
             errors = "\n".join(error_msgs)
-            return await interaction.response.send_message(f"⛔ **You don't meet requirements to create this party as `{role_entered}`:**\n{errors}\n💡 **Your available roles are:** `{roles_str}`", ephemeral=True)
+            return await interaction.followup.send(f"⛔ **You don't meet requirements to create this party as `{role_entered}`:**\n{errors}\n💡 **Your available roles are:** `{roles_str}`", ephemeral=True)
 
         display_role = f"{role_entered} ({passed_actual_role})" if role_entered.lower() != passed_actual_role.lower() else passed_actual_role
 
@@ -591,7 +610,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         if broadcast_records:
             await parties_col.update_one({"_id": result.inserted_id}, {"$set": {"broadcasts": broadcast_records}})
             
-        await interaction.response.send_message(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
+        await interaction.followup.send(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
 
 class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
