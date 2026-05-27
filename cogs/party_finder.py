@@ -4,6 +4,7 @@ from discord import app_commands
 import motor.motor_asyncio
 from bson.objectid import ObjectId
 from typing import List, Optional
+from Database import db
 
 # --- CÁC HÀM HỖ TRỢ DATABASE & TIỆN ÍCH ---
 
