@@ -20,6 +20,8 @@ async def check_profile_validity(user_id: int):
         return False, None, None
     
     stats = player["my_stats"]
+    active_role = stats.get("role", "TANK") # Mặc định là TANK nếu không thấy
+    data_source = stats.get(active_role, stats)
     profile_data = {
         "role": stats.get("role", "Unknown"),
         "gear": stats.get("gear", "None"),
@@ -114,31 +116,17 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     skip_value = (page - 1) * per_page
     active_parties = await parties_col.find(query_filter).skip(skip_value).limit(per_page).to_list(length=per_page)
 
-    embed = discord.Embed(
-        title="⚔️ SYSTEM PARTY LOBBY HUB ⚔️",
-        description=f"Showing active dungeon recruiting parties.\nFilter keyword: `{search_query or 'None'}`",
-        color=discord.Color.blue(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    embed = discord.Embed(title="⚔️ SYSTEM PARTY LOBBY HUB ⚔️", color=discord.Color.blue())
     embed.set_footer(text=f"Page {page}/{max_pages} • Total Parties: {total_parties}")
 
-    count = 0
     for party in active_parties:
-        leader_id = party.get('leader_id')
-        if not leader_id: continue 
-            
-        count += 1
+        status = "✅ Gatekeep" if party.get("gatekeeping_enabled", True) else "⚠️ Open"
         embed.add_field(
-            name=f"{count}. 🏰 {party['dungeon'].upper()}",
-            value=f"• **Leader:** <@{leader_id}>\n"
-                  f"• **Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}` | ⏰ `{party.get('start_time', 'ASAP')}`\n"
-                  f"• **Requirements:** *{party.get('requirements', 'None')}*",
+            name=f"🏰 {party['dungeon'].upper()} [{status}]",
+            value=f"• **Leader:** <@{party.get('leader_id')}>\n"
+                  f"• **Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}` | ⏰ `{party.get('start_time', 'ASAP')}`",
             inline=False
         )
-        
-    if count == 0:
-        embed.description += "\n\n🛑 *No active parties found matching the criteria.*"
-
     return embed, max_pages
 
 def build_manage_embed(party):
@@ -162,87 +150,66 @@ def build_manage_embed(party):
 # ==========================================
 # INTERACTIVE MODALS & VIEWS
 # ==========================================
+async def get_dungeon_match(dungeon_name: str):
+    # Loại bỏ từ "dungeon" nếu có, cắt khoảng trắng
+    clean_name = dungeon_name.lower().replace("dungeon", "").strip()
+    
+    # Chỉ tìm nếu input có từ 3 kí tự trở lên
+    if len(clean_name) < 3:
+        return None
+        
+    # Tìm kiếm trong database dungeon_configs
+    # $regex tìm chuỗi chứa từ khóa, $options: 'i' để không phân biệt hoa thường
+    return await dungeon_configs_col.find_one({
+        "dg_name": {"$regex": clean_name, "$options": "i"}
+    })
 
 class CreatePartyModal(discord.ui.Modal):
-    dungeon = discord.ui.TextInput(label="Dungeon Keyword", placeholder="Must match DB (e.g., MDG, PDG)", max_length=50)
+    dungeon = discord.ui.TextInput(label="Dungeon Name/Keyword", placeholder="e.g., PDG, MDG...", min_length=3)
     slots = discord.ui.TextInput(label="Max Slots (2-4)", default="4", max_length=1)
-    start_time = discord.ui.TextInput(label="Expected Start Time", default="ASAP", max_length=30)
-    reqs = discord.ui.TextInput(label="Requirements", required=False, max_length=100)
+    start_time = discord.ui.TextInput(label="Start Time", default="ASAP")
+    reqs = discord.ui.TextInput(label="Requirements", required=False)
 
     def __init__(self, ign: str):
         super().__init__(title="Create New Party")
         self.ign = ign
 
     async def on_submit(self, interaction: discord.Interaction):
-        dg_name = self.dungeon.value.strip().upper()
-        valid_dg = await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dg_name}$", "$options": "i"}})
-        if not valid_dg:
-            await interaction.response.send_message(f"❌ Keyword `{dg_name}` không tồn tại trong hệ thống Database.", ephemeral=True)
-            return
+        dg_input = self.dungeon.value.strip()
+        matched_config = await get_dungeon_match(dg_input)
 
-        try:
-            max_slots = int(self.slots.value)
-            if not (2 <= max_slots <= 4): raise ValueError
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid slots number (2-4).", ephemeral=True)
-            return
-
-        user_id = interaction.user.id
-        existing = await parties_col.find_one({"leader_id": user_id})
-        if existing:
-            await interaction.response.send_message("❌ You are already leading another party!", ephemeral=True)
-            return
-
-        party_id = str(uuid.uuid4())[:8]
-        guild = interaction.guild
+        # Logic: Tìm thấy -> dùng tên chuẩn & bật gatekeep. Không thấy -> dùng tên nhập & tắt gatekeep
+        gatekeeping = False
+        dg_name = dg_input.upper() # Mặc định lấy tên người dùng nhập nếu không match
         
-        channel_id = None
-        if guild:
-            category = discord.utils.get(guild.categories, name="Raid Parties")
-            if not category:
-                try:
-                    category = await guild.create_category("Raid Parties")
-                except discord.Forbidden:
-                    category = None
-            
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, manage_webhooks=True)
-            }
-            
-            try:
-                safe_dungeon_name = dg_name.lower().replace(" ", "-")
-                party_channel = await guild.create_text_channel(
-                    name=f"pt-{safe_dungeon_name}-{party_id}",
-                    category=category,
-                    overwrites=overwrites
-                )
-                channel_id = party_channel.id
-                await party_channel.send(f"🛡️ **Party chat {dg_name}**\nLeader: <@{user_id}>. Mọi tin nhắn tại đây sẽ được đồng bộ Webhook với các thành viên Cross-server.")
-            except discord.Forbidden:
-                pass 
+        if matched_config:
+            dg_name = matched_config["dg_name"] # Lấy tên chuẩn từ DB (VD: "Stage of Clown(PIED)")
+            gatekeeping = True
 
+        # Chuẩn bị dữ liệu tạo phòng
         new_party = {
-            "id": party_id,
-            "leader_id": user_id,
-            "guild_id": guild.id if guild else None,
-            "channel_id": channel_id,
-            "connected_channels": [{"guild_id": guild.id, "channel_id": channel_id}] if channel_id else [],
+            "id": str(uuid.uuid4())[:8],
+            "leader_id": interaction.user.id,
             "dungeon": dg_name,
-            "slots": max_slots,
-            "start_time": self.start_time.value.strip(),
-            "requirements": self.reqs.value.strip() or "None",
-            "members": [{"user_id": user_id, "ign": self.ign, "role": "Leader"}],
+            "gatekeeping_enabled": gatekeeping, # Lưu flag này để dùng khi check Join
+            "slots": int(self.slots.value),
+            "start_time": self.start_time.value,
+            "requirements": self.reqs.value or "None",
+            "members": [{"user_id": interaction.user.id, "ign": self.ign, "role": "Leader"}],
+            "connected_channels": [],
             "created_at": datetime.now(timezone.utc)
         }
-        
+
+        # Lưu vào DB
         await parties_col.insert_one(new_party)
+        
+        # Broadcast ra các channel đã kết nối (nếu có)
         await perform_cross_server_broadcast(interaction.client, new_party)
         
-        embed, _ = await build_lobby_embed(page=1)
-        await interaction.response.edit_message(embed=embed, view=LobbyView(page=1))
-
+        await interaction.response.send_message(
+            f"✅ Party created for **{dg_name}**! (Gatekeep: {'ON' if gatekeeping else 'OFF'})", 
+            ephemeral=True
+        )
 
 class JoinByKeywordModal(discord.ui.Modal):
     keyword = discord.ui.TextInput(label="Enter Dungeon Keyword", min_length=2, max_length=50)
@@ -296,6 +263,7 @@ async def handle_join_request(interaction: discord.Interaction, party: dict, ign
             discord.SelectOption(label="Tanker", value="TANK", emoji="🧱")
         ]
     )
+    
 
     async def select_callback(inter: discord.Interaction):
         selected_role = role_select.values[0]
@@ -449,41 +417,28 @@ class DMApprovalView(discord.ui.View):
 # ==========================================
 
 class BroadcastJoinView(discord.ui.View):
-    def __init__(self, party_id: str, dungeon_name: str):
+    def __init__(self, party_id: str, dungeon_name: str, gatekeeping_enabled: bool):
         super().__init__(timeout=None)
         self.party_id = party_id
         self.dungeon_name = dungeon_name
-        self.join_req_trigger.custom_id = f"btn_join_req:{party_id}"
+        self.gatekeeping_enabled = gatekeeping_enabled
 
-    @discord.ui.button(label="Join Request", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Join Request", style=discord.ButtonStyle.primary, custom_id="join_req")
     async def join_req_trigger(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ **Auto reject:** You need to run the command `/mygear` to set up your profile before using Party Finder!", ephemeral=True)
+            await interaction.response.send_message("❌ Use `/mygear` first.", ephemeral=True)
             return
 
-        meets_req = await check_gear_requirement(profile_data, self.dungeon_name)
-        if not meets_req:
-            await interaction.response.send_message(f"🛑 **System reject:** Your gear is not eligible to participate `{self.dungeon_name.upper()}`.", ephemeral=True)
-            return
+        # Chỉ check gear nếu gatekeeping_enabled là True
+        if self.gatekeeping_enabled:
+            meets_req = await check_gear_requirement(profile_data, self.dungeon_name)
+            if not meets_req:
+                await interaction.response.send_message("🛑 Your gear does not meet the requirements.", ephemeral=True)
+                return
 
         party = await parties_col.find_one({"id": self.party_id})
-        if not party:
-            await interaction.response.send_message("❌ This party has disbanded..", ephemeral=True)
-            return
-
-        if len(party.get("members", [])) >= party.get("slots", 4):
-            await interaction.response.send_message("🛑 The party is full!", ephemeral=True)
-            return
-
         await handle_join_request(interaction, party, ign, profile_data)
-
-    @discord.ui.button(label="Mở Lobby", style=discord.ButtonStyle.secondary)
-    async def open_lobby_trigger(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed, _ = await build_lobby_embed(page=1)
-        await interaction.response.send_message(embed=embed, view=LobbyView(page=1), ephemeral=True)
-
-
 class SearchDungeonModal(discord.ui.Modal):
     query = discord.ui.TextInput(label="Enter dungeon keyword", required=False)
     def __init__(self, current_page: int):
@@ -634,6 +589,7 @@ class ManagePartyView(discord.ui.View):
 # ==========================================
 # MAIN COMMANDS EXTENSION COG CLASS
 # ==========================================
+
 
 class PartyFinder(commands.Cog):
     def __init__(self, bot: commands.Bot):
