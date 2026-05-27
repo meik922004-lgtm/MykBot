@@ -41,11 +41,18 @@ def create_party_embed(party: dict) -> discord.Embed:
     
     members_text = ""
     for idx, member in enumerate(party.get('members', [])):
-        members_text += f"{idx+1}. **{member.get('ign', 'Unknown')}** (Role: {member.get('role')})\n"
-    
+        # --- BẮT ĐẦU SỬA TẠI ĐÂY ---
+        raw_role = member.get('role', 'Unknown')
+        
+        # Cắt bỏ phần trong ngoặc và tự động viết hoa (vd: "dps (AA)" -> "DPS")
+        clean_role = raw_role.split('(')[0].strip().upper() 
+        
+        # Dùng clean_role thay vì raw_role
+        members_text += f"{idx+1}. **{member.get('ign', 'Unknown')}** (Role: {clean_role})\n"
+        # --- KẾT THÚC SỬA ---
+        
     embed.add_field(name=f"👥 Members ({len(party.get('members', []))}/4)", value=members_text or "Empty", inline=False)
     return embed
-
 
 # --- 1. CẢI TIẾN: LOGIC CHECK TỪ KHÓA GEAR (LESS HARDCORE) ---
 async def check_gear_requirements(role_name: str, role_gear_data: dict, dg_config: dict) -> tuple[bool, str]:
