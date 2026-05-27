@@ -430,7 +430,8 @@ class PartySelect(discord.ui.Select):
             placeholder="👥 Chọn phòng muốn tham gia...",
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
+            row=2
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -440,20 +441,20 @@ class PartySelect(discord.ui.Select):
         # 1. Lấy dữ liệu party từ DB
         party = await parties_col.find_one({"id": party_id})
         if not party:
-            await interaction.response.send_message("❌ Phòng này không còn tồn tại.", ephemeral=True)
+            await interaction.response.send_message("❌ This party no longer exist.", ephemeral=True)
             return
 
         # 2. Kiểm tra profile người dùng
         is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ Hãy dùng `/mygear` trước.", ephemeral=True)
+            await interaction.response.send_message("❌ please update your gear profile (/mygear) first.", ephemeral=True)
             return
             
         # 3. Kiểm tra gatekeep (dựa trên logic cũ của bạn)
         if party.get("gatekeeping_enabled", True):
             meets_req = await check_gear_requirement(profile_data, party['dungeon'])
             if not meets_req:
-                await interaction.response.send_message("🛑 Gear của bạn không đủ yêu cầu cho phòng này.", ephemeral=True)
+                await interaction.response.send_message("🛑 Your gear isnt reach the min requirement for this dg yet.", ephemeral=True)
                 return
 
         # 4. Thực hiện hàm join (Sử dụng lại hàm handle_join_request bạn đã có)
@@ -498,18 +499,25 @@ class LobbyView(discord.ui.View):
         self.page = page
         self.search_query = search_query
     async def get_party_options(self):
-        # Lấy các phòng đang mở (ví dụ: lấy 25 phòng mới nhất)
+    # Lấy 25 party mới nhất
         cursor = parties_col.find({}).sort("created_at", -1).limit(25)
         options = []
-        
+
         async for party in cursor:
-            # Format: Tên Dungeon + Slots trống
-            label = f"{party['dungeon']} ({len(party.get('members', []))}/{party.get('slots', 4)})"
+            # Sử dụng 'id' thay vì '_id' nếu bạn lưu custom ID ở bước tạo
+            party_id = str(party.get("id"))
             
-            # Lưu party['id'] vào value để callback biết chọn phòng nào
-            description = f"Leader: {party.get('leader_id')}" # Có thể lấy tên nếu cần
-            options.append(discord.SelectOption(label=label, value=party['id'], description=description))
+            # Tạo label hiển thị: Dungeon + Leader
+            label = f"{party.get('dungeon', 'Unknown')} - {party.get('leader_name', 'Leader')}"
+            # Hiển thị số slot: 2/4
+            description = f"Slots: {len(party.get('members', []))}/{party.get('slots', 4)}"
             
+            options.append(discord.SelectOption(
+                label=label,
+                description=description,
+                value=party_id
+            ))
+        
         return options
 
     
@@ -721,15 +729,11 @@ class PartyFinder(commands.Cog):
         try:
             embed, _ = await build_lobby_embed(page=1)
             view = LobbyView(page=1)
+            await interaction.followup.send(embed=embed, view=view)
             options = await view.get_party_options()
-        
             if options:
                 view.add_item(PartySelect(options))
-            else:
-                await interaction.followup.send("Hiện tại không có phòng nào đang mở.", ephemeral=True)
-                return
             await interaction.followup.send(embed=embed, view=view)
-
         except Exception as e:
             try:
                 await interaction.followup.send(f"❌ System error: {e}", ephemeral=True)
