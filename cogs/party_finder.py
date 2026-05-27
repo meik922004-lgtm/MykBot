@@ -140,6 +140,29 @@ async def broadcast_to_all_servers(bot, embed, party_id_str, dg_config: dict, or
     return broadcasts
 # --- UI VIEWS ---
 
+async def get_formatted_gear_summary(stats, role_entered):
+    """Hàm chung để lấy chuỗi hiển thị gear dựa trên role"""
+    DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk"]
+    clean_role = role_entered.lower().replace("(", "").replace(")", "").strip()
+    is_dps = clean_role in DPS_GROUPS
+    
+    gear_details = []
+    if is_dps:
+        for r_key in ["AA", "SK"]:
+            data = stats.get(r_key)
+            if isinstance(data, dict):
+                gear_details.append(
+                    f"**{r_key}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}"
+                )
+    else:
+        # Nếu không phải DPS, lấy role dựa trên input hoặc key mặc định
+        role_key = role_entered.split('(')[0].strip().upper()
+        data = stats.get(role_key)
+        if isinstance(data, dict):
+            gear_details.append(f"**{role_key}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
+            
+    return "\n".join(gear_details) if gear_details else "No gear data found."
+
 class BroadcastView(discord.ui.View):
     def __init__(self, party_id=None):
         super().__init__(timeout=None) 
@@ -211,35 +234,19 @@ class ManagePartyView(discord.ui.View):
         
         embed = discord.Embed(title=f"📋 Party Profiles - {self.party.get('dg_name')}", color=discord.Color.blue())
         
-        DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk"]
-        
         for m in members:
             profile = await get_player_profile(m['user_id'])
             stats = profile.get("my_stats", {})
-            role_input = m['role'].lower()
             
-            # Kiểm tra xem role thành viên có thuộc nhóm DPS không
-            is_dps = any(dps_role in role_input for dps_role in DPS_GROUPS)
+            # --- THAY THẾ TẠI ĐÂY ---
+            # Gọi hàm dùng chung để lấy thông tin gear đã được định dạng
+            gear_info = await get_formatted_gear_summary(stats, m['role'])
             
-            gear_lines = []
-            if is_dps:
-                # Nếu là DPS, lấy cả AA và SK nếu có trong stats
-                for r in ["AA", "SK"]:
-                    data = stats.get(r)
-                    if isinstance(data, dict):
-                        gear_lines.append(f"**{r}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
-            else:
-                # Nếu là TANK hoặc role khác, lấy đúng role đó
-                # Xử lý lấy key (ví dụ: TANK(DK) -> TANK)
-                role_key = m['role'].split('(')[0].strip().upper()
-                data = stats.get(role_key)
-                if isinstance(data, dict):
-                    gear_lines.append(f"**{role_key}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
-            
-            gear_info = "\n".join(gear_lines) if gear_lines else "No gear setup found."
+            # Lấy tên role đã làm sạch để hiển thị đẹp hơn
+            clean_role = m['role'].split('(')[0].strip()
             
             embed.add_field(
-                name=f"{m['ign']} ({m['role']})",
+                name=f"{m['ign']} ({clean_role})",
                 value=gear_info,
                 inline=False
             )
@@ -457,68 +464,10 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         stats = profile.get("my_stats", {})
         dg_config = await get_dungeon_config(party.get('dg_name'))
         
-        ROLE_ALIASES = {
-            "dps": ["aa", "sk"],
-            "ufm": ["aa", "sk"],
-            "fm": ["aa", "sk"],
-            "future": ["aa", "sk"],
-            "ulforce": ["aa", "sk"],
-            "future mode": ["aa", "sk"]
-        }
-        
-        search_keys = ROLE_ALIASES.get(role_entered.lower(), [role_entered.lower()])
-        available_roles = [k for k, v in stats.items() if isinstance(v, dict)]
-        
-        passed_gear_data = None
-        passed_actual_role = None
-        error_msgs = []
-
-        # 1. KIỂM TRA ĐIỀU KIỆN
-        for key in search_keys:
-            gear_data = next((v for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), None)
-            actual_db_key = next((k for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), key.upper())
-            
-            if not gear_data:
-                error_msgs.append(f"- `{actual_db_key}`: No gear setup found.")
-                continue
-                
-            if dg_config:
-                is_valid, reason = await check_gear_requirements(actual_db_key, gear_data, dg_config)
-                if is_valid:
-                    passed_gear_data = gear_data
-                    passed_actual_role = actual_db_key
-                    break 
-                else:
-                    error_msgs.append(f"- `{actual_db_key}`: {reason}")
-            else:
-                passed_gear_data = gear_data
-                passed_actual_role = actual_db_key
-                break
-
-        if not passed_gear_data:
-            return await interaction.response.send_message(f"❌ **Validation failed for `{role_entered}`:**\n" + "\n".join(error_msgs), ephemeral=True)
+        gear_summary = await get_formatted_gear_summary(stats, role_entered)
 
         
-       # 2. LOGIC HIỂN THỊ DYNAMIC (SỬA LẠI ĐỂ HIỂN THỊ FULL GEAR)
-        DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk"]
-        clean_role = role_entered.lower().replace("(", "").replace(")", "").strip()
-        is_dps = clean_role in DPS_GROUPS
-        gear_details = []
-        if is_dps:
-            # Quét cả AA và SK trong database của người đó
-            for r_key in ["AA", "SK"]:
-                data = stats.get(r_key)
-                if isinstance(data, dict):
-                    gear_details.append(
-                        f"**{r_key}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}"
-                    )
-        else:
-            # Chỉ lấy role họ chọn
-            data = stats.get(passed_actual_role.upper())
-            if isinstance(data, dict):
-                gear_details.append(f"**{passed_actual_role}**: Gear: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
-
-        gear_summary = "\n".join(gear_details) if gear_details else "No gear data found."
+        # 3. GỬI CHO LEADER
         # 3. GỬI CHO LEADER
         leader = self.bot.get_user(party.get('leader_id', 0))
         if leader:
@@ -529,9 +478,14 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
             
             try:
                 await leader.send(embed=embed, view=RequestJoinView(self.bot, self.party_id, interaction.user.id, self.ign.value, role_entered))
-                await interaction.response.send_message("✅ Request sent!", ephemeral=True)
+                # SỬA Ở ĐÂY: Dùng followup vì đã defer ở đầu
+                await interaction.followup.send("✅ Request sent!", ephemeral=True)
             except discord.Forbidden:
-                await interaction.response.send_message("❌ Cannot DM the leader.", ephemeral=True)
+                # SỬA Ở ĐÂY: Dùng followup
+                await interaction.followup.send("❌ Cannot DM the leader.", ephemeral=True)
+        else:
+             # SỬA Ở ĐÂY: Dùng followup
+            await interaction.followup.send("❌ Leader not found.", ephemeral=True)
 
 
 class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
