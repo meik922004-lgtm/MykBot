@@ -72,29 +72,38 @@ async def get_dg_ping_role(dungeon_name: str) -> str:
     return ""
 
 async def perform_cross_server_broadcast(client: discord.Client, party: dict):
-    """Quét Tên DG từ config và broadcast"""
     ping_tag = await get_dg_ping_role(party['dungeon'])
     
     embed = discord.Embed(
-        title=f"📢 CROSS-SERVER RECRUITMENT: {party['dungeon'].upper()}",
+        title=f"📢 RECRUITMENT: {party['dungeon'].upper()}",
         description=f"**Leader:** <@{party['leader_id']}>\n"
-                    f"**Slots Available:** `{len(party.get('members', []))}/{party.get('slots', 4)}`\n"
-                    f"**Start Time:** ⏰ `{party.get('start_time', 'ASAP')}`\n"
-                    f"**Requirements:** {party.get('requirements', 'None')}",
+                    f"**Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}`\n"
+                    f"**Start:** ⏰ `{party.get('start_time', 'ASAP')}`\n"
+                    f"**Reqs:** {party.get('requirements', 'None')}",
         color=discord.Color.gold()
     )
-    embed.set_footer(text=f"Keyword/ID: {party['dungeon']} • Cross-Server Network")
+    
+    # Check trạng thái gatekeeping để hiển thị footer
+    is_gatekeep = party.get("gatekeeping_enabled", True)
+    if not is_gatekeep:
+        embed.set_footer(text="Cross-server Network | No Min Req")
+    else:
+        embed.set_footer(text=f"Keyword: {party['dungeon']} • Cross-server Network")
 
     count = 0
     for guild in client.guilds:
         chan = discord.utils.get(guild.text_channels, name="party-board")
         if chan:
-            view = BroadcastJoinView(party['id'], party['dungeon'])
+            # SỬA Ở ĐÂY: Truyền thêm tham số gatekeeping_enabled vào View
+            view = BroadcastJoinView(
+                party['id'], 
+                party['dungeon'], 
+                is_gatekeep
+            )
             try:
                 await chan.send(content=ping_tag if ping_tag else None, embed=embed, view=view)
                 count += 1
-            except discord.Forbidden:
-                pass
+            except discord.Forbidden: pass
     return count
 
 # ==========================================
@@ -415,7 +424,28 @@ class DMApprovalView(discord.ui.View):
 # ==========================================
 # PUBLIC VIEWS (BROADCAST & LOBBY)
 # ==========================================
+class DungeonSelect(discord.ui.Select):
+    def __init__(self, options):
+        super().__init__(
+            placeholder="🔍 Chọn Dungeon để tham gia...",
+            min_values=1,
+            max_values=1,
+            options=options # Danh sách các Dungeon lấy từ DB
+        )
 
+    async def callback(self, interaction: discord.Interaction):
+        selected_dg = self.values[0]
+        
+        # Kiểm tra gear trước khi tiếp tục
+        is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
+        if not is_valid:
+            await interaction.response.send_message("❌ Hãy dùng `/mygear` cập nhật hồ sơ trước.", ephemeral=True)
+            return
+            
+        # Tại đây bạn có thể mở tiếp 1 modal hoặc tìm party trực tiếp dựa trên selected_dg
+        # Ví dụ: Mở một Modal nhỏ để xác nhận hoặc tìm party từ DB
+        await interaction.response.send_message(f"Bạn đã chọn: **{selected_dg}**. Đang tìm phòng...", ephemeral=True)
+        # TODO: Thêm logic tìm phòng hoặc join party theo selected_dg ở đây
 class BroadcastJoinView(discord.ui.View):
     def __init__(self, party_id: str, dungeon_name: str, gatekeeping_enabled: bool):
         super().__init__(timeout=None)
@@ -455,6 +485,23 @@ class LobbyView(discord.ui.View):
         super().__init__(timeout=None)
         self.page = page
         self.search_query = search_query
+
+    async def update_select(self):
+        options = await self.get_dungeon_options()
+        if options:
+            self.add_item(DungeonSelect(options))
+
+    async def get_dungeon_options(self):
+        cursor = dungeon_configs_col.find({})
+        options = []
+        async for dg in cursor:
+            # Discord giới hạn label tối đa 100 ký tự
+            label = dg["dg_name"][:100]
+            options.append(discord.SelectOption(label=label, value=label, description="Tham gia phòng này"))
+            if len(options) >= 25: break # Discord chỉ cho tối đa 25 items trong 1 dropdown
+        return options
+
+    
 
     @discord.ui.button(label="◀️ Prev", style=discord.ButtonStyle.secondary, row=0, custom_id="lobby_prev")
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -501,11 +548,17 @@ class LobbyView(discord.ui.View):
     async def direct_join_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ **Auto reject:** Hãy dùng `/mygear` cập nhật hồ sơ trước.", ephemeral=True)
+            await interaction.response.send_message("❌ *Auto reject:** Please use `/mygear` to set up your profile before creating a Party...", ephemeral=True)
             return
         await interaction.response.send_modal(JoinByKeywordModal(ign, profile_data))
 
-
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, emoji="🔄", custom_id="lobby_refresh")
+    async def refresh_lobby(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Gọi lại hàm xây dựng embed để lấy dữ liệu mới nhất từ DB
+        embed, max_pages = await build_lobby_embed(page=self.page)
+        
+        # Cập nhật thông điệp hiện tại với embed mới
+        await interaction.response.edit_message(embed=embed, view=self)
 # ==========================================
 # INTERNAL PRIVATE CONTROL PANEL VIEW
 # ==========================================
@@ -657,6 +710,7 @@ class PartyFinder(commands.Cog):
         try:
             embed, _ = await build_lobby_embed(page=1)
             view = LobbyView(page=1)
+            await view.update_select()
             await interaction.followup.send(embed=embed, view=view)
         except Exception as e:
             try:
