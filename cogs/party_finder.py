@@ -198,12 +198,46 @@ class ManagePartyView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
         self.party = party
+    @discord.ui.button(label="View Party Profiles", style=discord.ButtonStyle.primary, row=2)
+    async def view_profiles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        
+        # Lấy danh sách thành viên từ DB
+        party_data = await parties_col.find_one({"_id": self.party['_id']})
+        members = party_data.get("members", [])
+        
+        embed = discord.Embed(title=f"📋 Party Profiles - {self.party.get('dg_name')}", color=discord.Color.blue())
+        
+        for m in members:
+            # Lấy profile người dùng để xem gear
+            profile = await get_player_profile(m['user_id'])
+            stats = profile.get("my_stats", {})
+            role_key = m['role'].upper() # Role đã chọn (VD: TANK, hoặc DPS(SK))
+            
+            # Lấy dữ liệu gear (xử lý logic nếu là DPS đã chọn SK/AA)
+            gear_info = "No setup found"
+            # Nếu role chứa chuỗi SK hoặc AA, ta tìm key tương ứng
+            search_key = "SK" if "SK" in role_key else ("AA" if "AA" in role_key else role_key)
+            
+            data = stats.get(search_key)
+            if isinstance(data, dict):
+                gear_info = f"Gear: {data.get('gear', 'N/A')}\nVice: {data.get('vice', 'N/A')}"
+            
+            embed.add_field(
+                name=f"{m['ign']} ({m['role']})",
+                value=gear_info,
+                inline=False
+            )
+            
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Edit Requirements", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Edit Dungeon Name", style=discord.ButtonStyle.secondary)
+    async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditDungeonModal(self.party))
+
+    @discord.ui.button(label="Edit Requirements", style=discord.ButtonStyle.secondary)
     async def edit_reqs(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.party.get('leader_id'):
-            return await interaction.response.send_message("Only the leader can edit this!", ephemeral=True)
-        await interaction.response.send_modal(EditReqModal(self.bot, self.party['_id']))
+        await interaction.response.send_modal(EditReqModal(self.party))
 
     @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=0)
     async def kick_member(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -218,16 +252,36 @@ class ManagePartyView(discord.ui.View):
         select = discord.ui.Select(placeholder="Select member to kick...", options=options)
         
         async def kick_callback(inter: discord.Interaction):
+            # 1. Defer để giữ tương tác, tránh lỗi 404
+            await inter.response.defer(ephemeral=True)
+            
             target_id = int(select.values[0])
+            
+            # 2. Xử lý logic xóa khỏi Database
             await parties_col.update_one({"_id": self.party['_id']}, {"$pull": {"members": {"user_id": target_id}}})
             await handle_cross_server_chat(self.bot, self.party, target_id, action="remove")
             await update_broadcast_messages(self.bot, str(self.party['_id']))
-            await inter.response.send_message("Kicked successfully.", ephemeral=True)
             
+            # 3. Thông báo cho người bị kick qua DM
+            # Lấy thông tin member từ guild của interaction
+            member = inter.guild.get_member(target_id)
+            if member:
+                try:
+                    embed = discord.Embed(
+                        title="⛔ You have been kicked",
+                        description=f"You have been removed from the party for **{self.party.get('dg_name', 'this dungeon')}**.",
+                        color=discord.Color.red()
+                    )
+                    await member.send(embed=embed)
+                except discord.Forbidden:
+                    # Người dùng chặn DM hoặc chưa kết bạn với bot, bỏ qua không làm crash bot
+                    pass 
+
+            # 4. Phản hồi cho Leader
+            await inter.followup.send(f"✅ Successfully kicked {member.name if member else 'user'} and notified them.", ephemeral=True)
+
+        # Gán callback vào select menu
         select.callback = kick_callback
-        view = discord.ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Who do you want to kick?", view=view, ephemeral=True)
 
     @discord.ui.button(label="Disband / Leave", style=discord.ButtonStyle.secondary, row=1)
     async def disband_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -347,6 +401,7 @@ class LobbyPaginationView(discord.ui.View):
 
 # --- MODALS ---
 
+
 class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
     ign = discord.ui.TextInput(label='In-game Name', required=True)
     role = discord.ui.TextInput(label='Your Role (e.g., DPS, TANK, UFM)', placeholder='Type your role exactly...', required=True)
@@ -358,11 +413,12 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         self.ign.default = current_ign
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         party = await parties_col.find_one({"_id": ObjectId(self.party_id)})
         profile = await get_player_profile(interaction.user.id)
         
         if not party or not profile:
-            return await interaction.response.send_message("Party or Profile not found.", ephemeral=True)
+            return await interaction.followup.send("Party or Profile not found.", ephemeral=True)
 
         role_entered = self.role.value.strip()
         stats = profile.get("my_stats", {})
@@ -534,18 +590,33 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             
         await interaction.response.send_message(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
 
-class EditReqModal(discord.ui.Modal, title='Edit Party Requirements'):
-    requirements = discord.ui.TextInput(label='New Requirements', style=discord.TextStyle.paragraph)
+class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
+    new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
 
-    def __init__(self, bot, party_id):
+    def __init__(self, party):
         super().__init__()
-        self.bot = bot
-        self.party_id = party_id
+        self.party = party
+        self.new_name.default = party.get('dg_name')
 
     async def on_submit(self, interaction: discord.Interaction):
-        await parties_col.update_one({"_id": self.party_id}, {"$set": {"requirements": self.requirements.value}})
-        await update_broadcast_messages(self.bot, self.party_id)
-        await interaction.response.send_message("Requirements updated!", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"dg_name": self.new_name.value}})
+        await update_broadcast_messages(self.bot, str(self.party['_id']))
+        await interaction.followup.send("✅ Dungeon name updated!", ephemeral=True)
+
+class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
+    new_req = discord.ui.TextInput(label='New Requirements', style=discord.TextStyle.paragraph, required=True)
+
+    def __init__(self, party):
+        super().__init__()
+        self.party = party
+        self.new_req.default = party.get('requirements')
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"requirements": self.new_req.value}})
+        await update_broadcast_messages(self.bot, str(self.party['_id']))
+        await interaction.followup.send("✅ Requirements updated!", ephemeral=True)
 
 
 # --- CHAT SYSTEM ---
