@@ -98,7 +98,7 @@ async def broadcast_to_all_servers(bot, embed, party_id_str, dg_config: dict, or
 
     for guild in bot.guilds:
         # Quét đúng kênh mang tên 'party-finder' ở từng server
-        channel = discord.utils.get(guild.text_channels, name="party-finder")
+        channel = discord.utils.get(guild.text_channels, name="party-board")
         if channel:
             try:
                 content_ping = ""
@@ -249,7 +249,7 @@ class ManagePartyView(discord.ui.View):
             await parties_col.update_one({"_id": self.party['_id']}, {"$push": {"broadcasts": {"$each": new_broadcasts}}})
             await interaction.followup.send("Broadcast sent to all servers!", ephemeral=True)
         else:
-            await interaction.followup.send("No 'party-finder' channels found to broadcast.", ephemeral=True)
+            await interaction.followup.send("No 'party-board' channels found to broadcast.", ephemeral=True)
 
 
 class LobbyPaginationView(discord.ui.View):
