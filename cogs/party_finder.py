@@ -41,7 +41,7 @@ def create_party_embed(party: dict) -> discord.Embed:
     
     members_text = ""
     for idx, member in enumerate(party.get('members', [])):
-        members_text += f"{idx+1}. **{member.get('ign', 'Unknown')}** (Role: {member.get('role', 'Unknown')})\n"
+        members_text += f"{idx+1}. **{member.get('ign', 'Unknown')}** (Role: {member.get('role')})\n"
     
     embed.add_field(name=f"👥 Members ({len(party.get('members', []))}/4)", value=members_text or "Empty", inline=False)
     return embed
@@ -320,7 +320,7 @@ class ManagePartyView(discord.ui.View):
                         msg = await channel.fetch_message(msg_data["message_id"])
                         await msg.edit(embed=embed, view=None)
                     except: pass
-            await interaction.response.send_message("Party has been disbanded!", ephemeral=True)
+            await interaction.followup.send("Party has been disbanded!", ephemeral=True)
         else:
             await parties_col.update_one({"_id": self.party['_id']}, {"$pull": {"members": {"user_id": interaction.user.id}}})
             await update_broadcast_messages(self.bot, self.party['_id'])
@@ -393,7 +393,6 @@ class LobbyPaginationView(discord.ui.View):
 
     @discord.ui.button(label="➕ Create Party", style=discord.ButtonStyle.success, row=2)
     async def create_party(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         if not profile:
             return await interaction.followup.send("⚠️ Please set up `/mygear` first!", ephemeral=True)
@@ -444,7 +443,7 @@ class LobbyPaginationView(discord.ui.View):
 
 class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
     ign = discord.ui.TextInput(label='In-game Name', required=True)
-    role = discord.ui.TextInput(label='Your Role (e.g., DPS, TANK, UFM)', placeholder='Type your role exactly...', required=True)
+    role = discord.ui.TextInput(label='Your Role (e.g., DPS, TANK, UFM)', placeholder='Type your role...', required=True)
 
     def __init__(self, bot, party_id, current_ign):
         super().__init__()
@@ -467,7 +466,6 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         gear_summary = await get_formatted_gear_summary(stats, role_entered)
 
         
-        # 3. GỬI CHO LEADER
         # 3. GỬI CHO LEADER
         leader = self.bot.get_user(party.get('leader_id', 0))
         if leader:
