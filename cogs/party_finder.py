@@ -729,8 +729,8 @@ class PartyFinder(commands.Cog):
         try:
             embed, _ = await build_lobby_embed(page=1)
             view = LobbyView(page=1)
-            await interaction.followup.send(embed=embed, view=view)
             options = await view.get_party_options()
+            print(f"DEBUG: Số lượng party tìm thấy: {len(options)}") # Xem terminal bot
             if options:
                 view.add_item(PartySelect(options))
             await interaction.followup.send(embed=embed, view=view)
