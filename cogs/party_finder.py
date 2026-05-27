@@ -7,33 +7,45 @@ from datetime import datetime, timezone
 import asyncio
 
 # Import collections từ Database
-from Database import players_col, parties_col, dungeon_configs
+from Database import players_col, parties_col, dungeon_configs_col
 
 # ==========================================
-# CƠ CHẾ KIỂM TRA PROFILE & CROSS-SERVER PING
+# CƠ CHẾ KIỂM TRA PROFILE & ĐIỀU KIỆN (GATEKEEPING)
 # ==========================================
 
 async def check_profile_validity(user_id: int):
-    """Kiểm tra xem User đã đăng ký /mygear chưa"""
+    """Check Profile based on new DB structure"i"""
     player = await players_col.find_one({"user_id": user_id})
-    if not player or "my_stats" not in player or not player["my_stats"].get("gear"):
+    if not player or "my_stats" not in player:
         return False, None, None
-    return True, player.get("ign", "Unknown"), player["my_stats"]["gear"]
-
-def get_cross_server_ping(guild: discord.Guild, dungeon_name: str) -> str:
-    """Quét Role theo TÊN trong từng Server riêng biệt để Ping Cross-Server"""
-    dungeon_lower = dungeon_name.lower()
-    KEYWORDS = ["RBH","PDG","MDG","PIED","MUGEN","APO", "PILLAR AB","FDG","BERSERK",]
-    matched_kw = next((k for k in KEYWORDS if k in dungeon_lower), None)
     
-    if matched_kw:
-        for role in guild.roles:
-            if matched_kw in role.name.lower():
-                return role.mention
+    stats = player["my_stats"]
+    profile_data = {
+        "role": stats.get("role", "Unknown"),
+        "gear": stats.get("gear", "None"),
+        "vice": stats.get("vice", "None"),
+        "deck": stats.get("deck", "None")
+    }
+    return True, player.get("ign", "Unknown"), profile_data
+
+async def check_gear_requirement(profile_data: dict, dungeon_name: str) -> bool:
+    """Check the conditions for inputting the DG. You can add min-gear comparison logic here.."""
+    dg_config = await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dungeon_name}$", "$options": "i"}})
+    if not dg_config or "reqs" not in dg_config:
+        return True 
+    return True
+
+async def get_dg_ping_role(dungeon_name: str) -> str:
+    """Get the Role ID ping directly from dungeon_configs."""
+    dg_config = await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dungeon_name}$", "$options": "i"}})
+    if dg_config and "ping_role" in dg_config:
+        return f"<@&{dg_config['ping_role']}>"
     return ""
 
 async def perform_cross_server_broadcast(client: discord.Client, party: dict):
-    """Gửi Broadcast đến TOÀN BỘ server có kênh #party-board"""
+    """Quét Tên DG từ config và broadcast"""
+    ping_tag = await get_dg_ping_role(party['dungeon'])
+    
     embed = discord.Embed(
         title=f"📢 CROSS-SERVER RECRUITMENT: {party['dungeon'].upper()}",
         description=f"**Leader:** <@{party['leader_id']}>\n"
@@ -42,16 +54,15 @@ async def perform_cross_server_broadcast(client: discord.Client, party: dict):
                     f"**Requirements:** {party.get('requirements', 'None')}",
         color=discord.Color.gold()
     )
-    embed.set_footer(text=f"Party ID: {party['id']} • Cross-Server Network")
+    embed.set_footer(text=f"Keyword/ID: {party['dungeon']} • Cross-Server Network")
 
     count = 0
     for guild in client.guilds:
         chan = discord.utils.get(guild.text_channels, name="party-board")
         if chan:
-            ping = get_cross_server_ping(guild, party['dungeon'])
-            view = BroadcastJoinView(party['id'])
+            view = BroadcastJoinView(party['id'], party['dungeon'])
             try:
-                await chan.send(content=ping, embed=embed, view=view)
+                await chan.send(content=ping_tag if ping_tag else None, embed=embed, view=view)
                 count += 1
             except discord.Forbidden:
                 pass
@@ -87,12 +98,11 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     count = 0
     for party in active_parties:
         leader_id = party.get('leader_id')
-        if not leader_id:
-            continue 
+        if not leader_id: continue 
             
         count += 1
         embed.add_field(
-            name=f"{count}. 🏰 {party['dungeon'].upper()} [ID: {party['id']}]",
+            name=f"{count}. 🏰 {party['dungeon'].upper()}",
             value=f"• **Leader:** <@{leader_id}>\n"
                   f"• **Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}` | ⏰ `{party.get('start_time', 'ASAP')}`\n"
                   f"• **Requirements:** *{party.get('requirements', 'None')}*",
@@ -107,7 +117,7 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
 def build_manage_embed(party):
     embed = discord.Embed(
         title=f"🛡️ PARTY MANAGEMENT: {party['dungeon'].upper()}",
-        description=f"**Party ID:** `{party['id']}`\n**Start Time:** `{party.get('start_time', 'ASAP')}`\n**Requirements:** {party.get('requirements', 'None')}",
+        description=f"**Start Time:** `{party.get('start_time', 'ASAP')}`\n**Requirements:** {party.get('requirements', 'None')}\n*(Applicant requests are now sent directly to your DMs)*",
         color=discord.Color.green(),
         timestamp=datetime.now(timezone.utc)
     )
@@ -117,23 +127,17 @@ def build_manage_embed(party):
     
     members_str = ""
     for idx, m in enumerate(party.get("members", []), 1):
-        members_str += f"{idx}. <@{m['user_id']}> (IGN: `{m.get('ign', 'Unknown')}`)\n"
+        members_str += f"{idx}. <@{m['user_id']}> (IGN: `{m.get('ign', 'Unknown')}` | Role: `{m.get('role', 'Any')}`)\n"
     
     embed.add_field(name=f"👥 Members ({len(party.get('members', []))}/{party.get('slots', 4)})", value=members_str or "*Empty*", inline=False)
-    
-    reqs_str = ""
-    for r in party.get("requests", []):
-        reqs_str += f"• <@{r['user_id']}> | Role: `{r.get('role', 'DPS')}`\n  ↳ IGN: `{r.get('ign', 'Unknown')}` | Gear: `{r.get('gear', 'Chưa cập nhật')}`\n"
-        
-    embed.add_field(name=f"⏳ Pending Requests ({len(party.get('requests', []))})", value=reqs_str or "*No pending requests*", inline=False)
     return embed
 
 # ==========================================
-# INTERACTIVE MODALS
+# INTERACTIVE MODALS & VIEWS
 # ==========================================
 
 class CreatePartyModal(discord.ui.Modal):
-    dungeon = discord.ui.TextInput(label="Dungeon Name", placeholder="e.g., PDG/Pied/APO", max_length=50)
+    dungeon = discord.ui.TextInput(label="Dungeon Keyword", placeholder="Must match DB (e.g., MDG, PDG)", max_length=50)
     slots = discord.ui.TextInput(label="Max Slots (2-4)", default="4", max_length=1)
     start_time = discord.ui.TextInput(label="Expected Start Time", default="ASAP", max_length=30)
     reqs = discord.ui.TextInput(label="Requirements", required=False, max_length=100)
@@ -143,6 +147,12 @@ class CreatePartyModal(discord.ui.Modal):
         self.ign = ign
 
     async def on_submit(self, interaction: discord.Interaction):
+        dg_name = self.dungeon.value.strip().upper()
+        valid_dg = await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dg_name}$", "$options": "i"}})
+        if not valid_dg:
+            await interaction.response.send_message(f"❌ Keyword `{dg_name}` không tồn tại trong hệ thống Database.", ephemeral=True)
+            return
+
         try:
             max_slots = int(self.slots.value)
             if not (2 <= max_slots <= 4): raise ValueError
@@ -159,7 +169,6 @@ class CreatePartyModal(discord.ui.Modal):
         party_id = str(uuid.uuid4())[:8]
         guild = interaction.guild
         
-        # 1. TẠO PHÒNG CHAT KÍN (PRIVATE TEXT CHANNEL)
         channel_id = None
         if guild:
             category = discord.utils.get(guild.categories, name="Raid Parties")
@@ -172,33 +181,32 @@ class CreatePartyModal(discord.ui.Modal):
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, manage_webhooks=True)
             }
             
             try:
-                # Format tên kênh: pt-nanomon-a1b2c3d4
-                safe_dungeon_name = self.dungeon.value.strip().lower().replace(" ", "-")
+                safe_dungeon_name = dg_name.lower().replace(" ", "-")
                 party_channel = await guild.create_text_channel(
                     name=f"pt-{safe_dungeon_name}-{party_id}",
                     category=category,
                     overwrites=overwrites
                 )
                 channel_id = party_channel.id
-                await party_channel.send(f"🛡️ **Party chat  {self.dungeon.value.strip()}**\nLeader: <@{user_id}>. Thành viên mới sẽ tự động được thêm vào kênh này.")
+                await party_channel.send(f"🛡️ **Party chat {dg_name}**\nLeader: <@{user_id}>. Mọi tin nhắn tại đây sẽ được đồng bộ Webhook với các thành viên Cross-server.")
             except discord.Forbidden:
-                pass # Bỏ qua nếu Bot không đủ quyền tạo kênh
+                pass 
 
         new_party = {
             "id": party_id,
             "leader_id": user_id,
             "guild_id": guild.id if guild else None,
             "channel_id": channel_id,
-            "dungeon": self.dungeon.value.strip(),
+            "connected_channels": [{"guild_id": guild.id, "channel_id": channel_id}] if channel_id else [],
+            "dungeon": dg_name,
             "slots": max_slots,
             "start_time": self.start_time.value.strip(),
             "requirements": self.reqs.value.strip() or "None",
             "members": [{"user_id": user_id, "ign": self.ign, "role": "Leader"}],
-            "requests": [],
             "created_at": datetime.now(timezone.utc)
         }
         
@@ -209,50 +217,29 @@ class CreatePartyModal(discord.ui.Modal):
         await interaction.response.edit_message(embed=embed, view=LobbyView(page=1))
 
 
-class JoinByIdModal(discord.ui.Modal):
-    party_id = discord.ui.TextInput(label="Enter Party ID to Join", min_length=4, max_length=10)
+class JoinByKeywordModal(discord.ui.Modal):
+    keyword = discord.ui.TextInput(label="Enter Dungeon Keyword", min_length=2, max_length=50)
     
-    def __init__(self, ign: str, gear: str):
-        super().__init__(title="Join Party by ID")
+    def __init__(self, ign: str, profile_data: dict):
+        super().__init__(title="Join Party by Keyword")
         self.ign = ign
-        self.gear = gear
+        self.profile_data = profile_data
 
     async def on_submit(self, interaction: discord.Interaction):
-        target_id = self.party_id.value.strip()
-        party = await parties_col.find_one({"id": target_id})
+        target_kw = self.keyword.value.strip()
+        parties = await parties_col.find({"dungeon": {"$regex": target_kw, "$options": "i"}}).to_list(length=10)
         
-        if not party:
-            await interaction.response.send_message("❌ Party no longer exist or disbanded.", ephemeral=True)
+        if not parties:
+            await interaction.response.send_message("❌ No parties were found recruiting for this Dungeon..", ephemeral=True)
+            return
+            
+        target_party = next((p for p in parties if len(p.get("members", [])) < p.get("slots", 4)), None)
+        
+        if not target_party:
+            await interaction.response.send_message("🛑 All the parties for this Dungeon are full.!", ephemeral=True)
             return
 
-        if len(party.get("members", [])) >= party.get("slots", 4):
-            await interaction.response.send_message("🛑 This party already full!", ephemeral=True)
-            return
-
-        select_view = discord.ui.View(timeout=60)
-        role_select = discord.ui.Select(
-            placeholder="Choose your combat role...",
-            options=[
-                discord.SelectOption(label="DPS Attacker", value="DPS", emoji="⚔️"),
-                discord.SelectOption(label="UFM", value="UFM", emoji="🪃"),
-                discord.SelectOption(label="Tanker", value="TANK", emoji="🧱")
-            ]
-        )
-
-        async def select_callback(inter: discord.Interaction):
-            new_request = {
-                "user_id": inter.user.id, 
-                "ign": self.ign, 
-                "role": role_select.values[0], 
-                "gear": self.gear, 
-                "timestamp": datetime.now(timezone.utc)
-            }
-            await parties_col.update_one({"id": target_id}, {"$push": {"requests": new_request}})
-            await inter.response.send_message("✅ Send!", ephemeral=True)
-
-        role_select.callback = select_callback
-        select_view.add_item(role_select)
-        await interaction.response.send_message(f"You requesting to join `{party['dungeon']}`. Please select role", view=select_view, ephemeral=True)
+        await handle_join_request(interaction, target_party, self.ign, self.profile_data)
 
 
 class EditNeedModal(discord.ui.Modal):
@@ -260,6 +247,7 @@ class EditNeedModal(discord.ui.Modal):
     def __init__(self, party_id: str):
         super().__init__(title="Update Requirements")
         self.party_id = party_id
+        
     async def on_submit(self, interaction: discord.Interaction):
         new_req = self.recruitment.value.strip() or "None"
         await parties_col.update_one({"id": self.party_id}, {"$set": {"requirements": new_req}})
@@ -268,55 +256,205 @@ class EditNeedModal(discord.ui.Modal):
         await interaction.response.edit_message(embed=embed, view=ManagePartyView(self.party_id, interaction.user.id))
 
 # ==========================================
+# DM APPROVAL SYSTEM & WEBHOOK LOGIC
+# ==========================================
+
+async def handle_join_request(interaction: discord.Interaction, party: dict, ign: str, profile_data: dict):
+    select_view = discord.ui.View(timeout=60)
+    role_select = discord.ui.Select(
+        placeholder="Choose your role...",
+        options=[
+            discord.SelectOption(label="DPS Attacker", value="DPS", emoji="⚔️"),
+            discord.SelectOption(label="UFM", value="UFM", emoji="🪃"),
+            discord.SelectOption(label="Tanker", value="TANK", emoji="🧱")
+        ]
+    )
+
+    async def select_callback(inter: discord.Interaction):
+        selected_role = role_select.values[0]
+        leader_id = party['leader_id']
+        leader = inter.client.get_user(leader_id) or await inter.client.fetch_user(leader_id)
+        
+        if leader:
+            embed = discord.Embed(
+                title=f"📩 NEW: PARTICIPATION REQUIRED {party['dungeon'].upper()}",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="Player", value=f"<@{inter.user.id}>", inline=True)
+            embed.add_field(name="IGN", value=f"`{ign}`", inline=True)
+            embed.add_field(name="role", value=f"**{selected_role}**", inline=True)
+            embed.add_field(name="Gear profile", value=f"• Gear: `{profile_data['gear']}`\n• Vice: `{profile_data['vice']}`\n• Deck: `{profile_data['deck']}`", inline=False)
+            
+            dm_view = DMApprovalView(party['id'], inter.user.id, ign, selected_role)
+            try:
+                await leader.send(embed=embed, view=dm_view)
+                await inter.response.send_message("✅Your profile information has been sent to the Leader's DMs.!", ephemeral=True)
+            except discord.Forbidden:
+                await inter.response.send_message("❌ The leader has locked the DMs, so requests cannot be sent..", ephemeral=True)
+        else:
+            await inter.response.send_message("❌ Leader could not be found..", ephemeral=True)
+
+    role_select.callback = select_callback
+    select_view.add_item(role_select)
+    await interaction.response.send_message(f"You are applying to join a `{party['dungeon']}`. Choose your Role.:", view=select_view, ephemeral=True)
+
+
+class DMApprovalView(discord.ui.View):
+    def __init__(self, party_id: str, applicant_id: int, applicant_ign: str, role: str):
+        super().__init__(timeout=None) 
+        self.party_id = party_id
+        self.applicant_id = applicant_id
+        self.applicant_ign = applicant_ign
+        self.role = role
+
+    @discord.ui.button(label="✅Accept", style=discord.ButtonStyle.success)
+    async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        curr_party = await parties_col.find_one({"id": self.party_id})
+        if not curr_party:
+            await interaction.response.send_message("❌ This party has disbanded..", ephemeral=True)
+            return
+
+        if len(curr_party.get("members", [])) >= curr_party.get("slots", 4):
+            await interaction.response.send_message("❌ Unacceptable, the party is already full.!", ephemeral=True)
+            return
+
+        applicant = interaction.client.get_user(self.applicant_id) or await interaction.client.fetch_user(self.applicant_id)
+        
+        # Kiểm tra xem Applicant có ở chung Server với Leader không
+        leader_guild_id = curr_party.get("guild_id")
+        leader_guild = interaction.client.get_guild(leader_guild_id) if leader_guild_id else None
+        applicant_in_leader_guild = False
+        member_in_leader_guild = None
+
+        if leader_guild:
+            try:
+                member_in_leader_guild = leader_guild.get_member(self.applicant_id) or await leader_guild.fetch_member(self.applicant_id)
+                if member_in_leader_guild: applicant_in_leader_guild = True
+            except:
+                pass
+
+        new_connected_node = None
+        instruction_msg = "Check out the Party channel.!"
+
+        # NẾU CÙNG SERVER: Cấp quyền trực tiếp vào kênh chính
+        if applicant_in_leader_guild and curr_party.get("channel_id"):
+            main_chan = leader_guild.get_channel(curr_party["channel_id"])
+            if main_chan:
+                try:
+                    await main_chan.set_permissions(member_in_leader_guild, read_messages=True, send_messages=True)
+                    instruction_msg = f"Please go to channel <#{main_chan.id}> on the server.**{leader_guild.name}**."
+                except Exception as e:
+                    print(f"Lỗi phân quyền: {e}")
+
+        # NẾU KHÁC SERVER (CROSS-SERVER): Tạo Private Thread
+        else:
+            applicant_guild = None
+            base_channel = None
+            for g in interaction.client.guilds:
+                if g.id == leader_guild_id: continue # Bỏ qua server của Leader
+                if g.get_member(self.applicant_id):
+                    ch = discord.utils.get(g.text_channels, name="party-board")
+                    if ch:
+                        applicant_guild = g
+                        base_channel = ch
+                        break
+            
+            if applicant_guild and base_channel:
+                try:
+                    thread = await base_channel.create_thread(
+                        name=f"pt-{curr_party['dungeon'].lower()}-{self.party_id}",
+                        type=discord.ChannelType.private_thread,
+                        invitable=False
+                    )
+                    applicant_member = applicant_guild.get_member(self.applicant_id)
+                    await thread.add_user(applicant_member)
+                    await thread.send(f"🎉 <@{self.applicant_id}>Welcome! Messages in this thread will be synchronized to the Leader's group via Webhook.")
+                    
+                    new_connected_node = {"guild_id": applicant_guild.id, "channel_id": thread.id}
+                    instruction_msg = f"Connected! Please chat in the thread **{thread.name}** on the Server.**{applicant_guild.name}**."
+                except Exception as e:
+                    print(f"Thread creation error: {e}")
+
+        # Cập nhật Database
+        update_query = {"$push": {"members": {"user_id": self.applicant_id, "ign": self.applicant_ign, "role": self.role}}}
+        if new_connected_node:
+            update_query["$push"]["connected_channels"] = new_connected_node
+
+        await parties_col.update_one({"id": self.party_id}, update_query)
+
+        # Thông báo cho Leader
+        if leader_guild and curr_party.get("channel_id"):
+            channel = leader_guild.get_channel(curr_party["channel_id"])
+            if channel:
+                msg = "same server" if applicant_in_leader_guild else "another server (Cross-server Webhook)"
+                await channel.send(f"🎉 <@{self.applicant_id}> (`{self.applicant_ign}` - {self.role}) đã tham gia Party từ {msg}!")
+
+        # Gửi DM cho người xin
+        if applicant:
+            try:
+                await applicant.send(f"🎉Congratulations, your request to join **{curr_party['dungeon'].upper()}** has been accepted.!\n🔗 **{instruction_msg}**")
+            except discord.Forbidden:
+                pass 
+
+        button.disabled = True
+        self.children[1].disabled = True
+        await interaction.response.edit_message(content="✅ **ACCEPTED**", view=self)
+
+    @discord.ui.button(label="❌ reject", style=discord.ButtonStyle.danger)
+    async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        curr_party = await parties_col.find_one({"id": self.party_id})
+        dg_name = curr_party['dungeon'].upper() if curr_party else "a Party"
+        
+        applicant = interaction.client.get_user(self.applicant_id) or await interaction.client.fetch_user(self.applicant_id)
+        if applicant:
+            try:
+                await applicant.send(f"💔 Unfortunately, your request to join **{dg_name}** has been denied (Slot is full or does not fit the team)..")
+            except discord.Forbidden:
+                pass
+
+        button.disabled = True
+        self.children[0].disabled = True
+        await interaction.response.edit_message(content="❌ **REJECTED**", view=self)
+
+
+# ==========================================
 # PUBLIC VIEWS (BROADCAST & LOBBY)
 # ==========================================
 
 class BroadcastJoinView(discord.ui.View):
-    def __init__(self, party_id: str):
+    def __init__(self, party_id: str, dungeon_name: str):
         super().__init__(timeout=None)
         self.party_id = party_id
+        self.dungeon_name = dungeon_name
         self.join_req_trigger.custom_id = f"btn_join_req:{party_id}"
 
     @discord.ui.button(label="Join Request", style=discord.ButtonStyle.primary)
     async def join_req_trigger(self, interaction: discord.Interaction, button: discord.ui.Button):
-        is_valid, ign, gear = await check_profile_validity(interaction.user.id)
+        is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ **Auto reject:** Please update your gear profile (`/mygear`) before join or create party!", ephemeral=True)
+            await interaction.response.send_message("❌ **Auto reject:** You need to run the command `/mygear` to set up your profile before using Party Finder!", ephemeral=True)
+            return
+
+        meets_req = await check_gear_requirement(profile_data, self.dungeon_name)
+        if not meets_req:
+            await interaction.response.send_message(f"🛑 **System reject:** Your gear is not eligible to participate `{self.dungeon_name.upper()}`.", ephemeral=True)
             return
 
         party = await parties_col.find_one({"id": self.party_id})
         if not party:
-            await interaction.response.send_message("❌ This party has already been disbanded.", ephemeral=True)
+            await interaction.response.send_message("❌ This party has disbanded..", ephemeral=True)
             return
 
         if len(party.get("members", [])) >= party.get("slots", 4):
-            await interaction.response.send_message("🛑 This party is already full!", ephemeral=True)
+            await interaction.response.send_message("🛑 The party is full!", ephemeral=True)
             return
 
-        select_view = discord.ui.View(timeout=60)
-        role_select = discord.ui.Select(
-            placeholder="Choose your combat role...",
-            options=[
-                discord.SelectOption(label="DPS Attacker", value="DPS", emoji="⚔️"),
-                discord.SelectOption(label="Utility / Flex", value="UFM", emoji="🪃"),
-                discord.SelectOption(label="Tanker", value="TANK", emoji="🧱")
-            ]
-        )
+        await handle_join_request(interaction, party, ign, profile_data)
 
-        async def select_callback(inter: discord.Interaction):
-            new_request = {
-                "user_id": inter.user.id, 
-                "ign": ign, 
-                "role": role_select.values[0], 
-                "gear": gear, 
-                "timestamp": datetime.now(timezone.utc)
-            }
-            await parties_col.update_one({"id": self.party_id}, {"$push": {"requests": new_request}})
-            await inter.response.send_message("✅ Send request to leader!", ephemeral=True)
-
-        role_select.callback = select_callback
-        select_view.add_item(role_select)
-        await interaction.response.send_message("Select your role preference:", view=select_view, ephemeral=True)
+    @discord.ui.button(label="Mở Lobby", style=discord.ButtonStyle.secondary)
+    async def open_lobby_trigger(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed, _ = await build_lobby_embed(page=1)
+        await interaction.response.send_message(embed=embed, view=LobbyView(page=1), ephemeral=True)
 
 
 class SearchDungeonModal(discord.ui.Modal):
@@ -363,7 +501,7 @@ class LobbyView(discord.ui.View):
     async def create_party_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_valid, ign, _ = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ **Auto reject:** Please update your gear profile (`/mygear`) before join or create party", ephemeral=True)
+            await interaction.response.send_message("❌ **Auto reject:** Please use `/mygear` to set up your profile before creating a Party..", ephemeral=True)
             return
         await interaction.response.send_modal(CreatePartyModal(ign))
 
@@ -372,18 +510,18 @@ class LobbyView(discord.ui.View):
         user_id = interaction.user.id
         party = await parties_col.find_one({"$or": [{"leader_id": user_id}, {"members.user_id": user_id}]})
         if not party:
-            await interaction.response.send_message("❌ You dont have any party to use this function right now.", ephemeral=True)
+            await interaction.response.send_message("❌ You dont have any active party right now.", ephemeral=True)
             return
         embed = build_manage_embed(party)
         await interaction.response.send_message(embed=embed, view=ManagePartyView(party["id"], user_id), ephemeral=True)
 
     @discord.ui.button(label="📝 Join Party", style=discord.ButtonStyle.primary, row=1, custom_id="lobby_join")
     async def direct_join_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        is_valid, ign, gear = await check_profile_validity(interaction.user.id)
+        is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ **Auto reject:** Please update your gear profile (`/mygear`) before join or create party.", ephemeral=True)
+            await interaction.response.send_message("❌ **Auto reject:** Hãy dùng `/mygear` cập nhật hồ sơ trước.", ephemeral=True)
             return
-        await interaction.response.send_modal(JoinByIdModal(ign, gear))
+        await interaction.response.send_modal(JoinByKeywordModal(ign, profile_data))
 
 
 # ==========================================
@@ -410,148 +548,54 @@ class ManagePartyView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, row=0)
-    async def approve_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        party = await parties_col.find_one({"id": self.party_id})
-        if party.get("leader_id") != interaction.user.id:
-            await interaction.response.send_message("❌ Only leader can approve.", ephemeral=True)
-            return
-
-        if not party.get("requests", []):
-            await interaction.response.send_message("⚠️ Empty.", ephemeral=True)
-            return
-
-        select_view = discord.ui.View(timeout=60)
-        options = [discord.SelectOption(label=f"{r['ign']} ({r['role']})", value=str(r['user_id'])) for r in party["requests"][:25]]
-        user_select = discord.ui.Select(placeholder="Select applicant to approve...", options=options)
-
-        async def approve_callback(inter: discord.Interaction):
-            target_id = int(user_select.values[0])
-            curr_party = await parties_col.find_one({"id": self.party_id})
-            
-            if len(curr_party.get("members", [])) >= curr_party.get("slots", 4):
-                await inter.response.send_message("❌ Cant accept, full slot!", ephemeral=True)
-                return
-
-            target_req = next((r for r in curr_party["requests"] if r["user_id"] == target_id), None)
-            if target_req:
-                await parties_col.update_one(
-                    {"id": self.party_id},
-                    {
-                        "$pull": {"requests": {"user_id": target_id}},
-                        "$push": {"members": {"user_id": target_id, "ign": target_req["ign"], "role": target_req["role"]}}
-                    }
-                )
-                
-                # Cấp quyền vào KÊNH KÍN
-                guild = inter.client.get_guild(curr_party.get("guild_id", 0))
-                if guild and curr_party.get("channel_id"):
-                    channel = guild.get_channel(curr_party["channel_id"])
-                    if channel:
-                        try:
-                            # Fetch user đảm bảo lấy được object Member ngay cả khi chưa cache
-                            target_member = guild.get_member(target_id) or await guild.fetch_member(target_id)
-                            if target_member:
-                                await channel.set_permissions(target_member, read_messages=True, send_messages=True)
-                                await channel.send(f"🎉Welcome <@{target_id}> to join our party!")
-                        except (discord.Forbidden, discord.NotFound):
-                            pass
-
-                # Gửi DM
-                user = inter.client.get_user(target_id) or await inter.client.fetch_user(target_id)
-                if user:
-                    try:
-                        await user.send(f"🎉 Congratz, your request **{curr_party['dungeon'].upper()}** has been accepted!")
-                    except discord.Forbidden:
-                        pass 
-
-            updated = await parties_col.find_one({"id": self.party_id})
-            await inter.response.edit_message(embed=build_manage_embed(updated), view=ManagePartyView(self.party_id, self.user_id))
-
-        user_select.callback = approve_callback
-        select_view.add_item(user_select)
-        await interaction.response.send_message("Select appove :", view=select_view, ephemeral=True)
-
-    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger, row=0)
-    async def reject_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        party = await parties_col.find_one({"id": self.party_id})
-        if party.get("leader_id") != interaction.user.id:
-            await interaction.response.send_message("❌ Only leader can use this function.", ephemeral=True)
-            return
-
-        if not party.get("requests", []):
-            await interaction.response.send_message("⚠️ There is no request right now", ephemeral=True)
-            return
-
-        select_view = discord.ui.View(timeout=60)
-        options = [discord.SelectOption(label=r["ign"], value=str(r["user_id"])) for r in party["requests"][:25]]
-        user_select = discord.ui.Select(placeholder="Select applicant to reject...", options=options)
-
-        async def reject_callback(inter: discord.Interaction):
-            target_id = int(user_select.values[0])
-            curr_party = await parties_col.find_one({"id": self.party_id})
-            
-            await parties_col.update_one({"id": self.party_id}, {"$pull": {"requests": {"user_id": target_id}}})
-            
-            user = inter.client.get_user(target_id) or await inter.client.fetch_user(target_id)
-            if user:
-                try:
-                    await user.send(f"💔 Unfotunaly, your request to join **{curr_party['dungeon'].upper()}** has been rejected, Maybe already full or no longer need your role.")
-                except discord.Forbidden:
-                    pass
-
-            updated = await parties_col.find_one({"id": self.party_id})
-            await inter.response.edit_message(embed=build_manage_embed(updated), view=ManagePartyView(self.party_id, self.user_id))
-
-        user_select.callback = reject_callback
-        select_view.add_item(user_select)
-        await interaction.response.send_message("Select people to kick:", view=select_view, ephemeral=True)
-
     @discord.ui.button(label="📝 Edit Needs", style=discord.ButtonStyle.secondary, row=0)
     async def edit_requirements(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = await parties_col.find_one({"id": self.party_id})
         if party.get("leader_id") != interaction.user.id:
-            await interaction.response.send_message("❌ Only leader can edit.", ephemeral=True)
+            await interaction.response.send_message("❌ Only the new Leader can edit the information..", ephemeral=True)
             return
         await interaction.response.send_modal(EditNeedModal(self.party_id))
 
-    @discord.ui.button(label="📢 Broadcast", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="📢 Broadcast Again", style=discord.ButtonStyle.primary, row=0)
     async def manual_broadcast(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = await parties_col.find_one({"id": self.party_id})
         if party.get("leader_id") != interaction.user.id:
-            await interaction.response.send_message("❌ Only Leader have permission to use Broadcast.", ephemeral=True)
+            await interaction.response.send_message("❌ Only Leaders are allowed to send Broadcasts..", ephemeral=True)
             return
             
         await interaction.response.defer(ephemeral=True)
         count = await perform_cross_server_broadcast(interaction.client, party)
-        await interaction.followup.send(f"✅ Already shout for recuiting **{count}** on server.", ephemeral=True)
+        await interaction.followup.send(f"✅ resubmitted the party recuit to the **{count}** server..", ephemeral=True)
 
-    @discord.ui.button(label="💥 Disband / Leave", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="💥 Disband / Leave", style=discord.ButtonStyle.danger, row=0)
     async def leave_or_disband(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = await parties_col.find_one({"id": self.party_id})
         
-        # Kết nối tới Kênh Kín (nếu có)
-        guild = interaction.client.get_guild(party.get("guild_id", 0))
-        channel = guild.get_channel(party.get("channel_id", 0)) if guild else None
-
+        # Nếu Leader bấm -> Giải tán Party và Xóa tất cả các kênh/thread đã tạo
         if party.get("leader_id") == interaction.user.id:
-            # === LEADER DISBAND (TỰ ĐỘNG XÓA GROUP CHAT) ===
-            if channel:
+            for node in party.get("connected_channels", []):
                 try:
-                    await channel.delete(reason="Party disbanded by Leader")
-                except discord.Forbidden:
+                    g = interaction.client.get_guild(node["guild_id"])
+                    if g:
+                        ch = g.get_channel(node["channel_id"]) or g.get_thread(node["channel_id"])
+                        if ch: await ch.delete(reason="Party disbanded by Leader")
+                except Exception:
                     pass
+            
             await parties_col.delete_one({"id": self.party_id})
-            await interaction.response.edit_message(content="💥 *Group chat has been disband or removed.*", embed=None, view=None)
+            await interaction.response.edit_message(content="💥 *The group has disbanded, and all chat threads have been deleted.*", embed=None, view=None)
         
+        # Nếu Member bấm -> Rời nhóm
         else:
-            # === MEMBER LEAVE (TỰ ĐỘNG KICK KHỎI GROUP CHAT) ===
+            guild = interaction.client.get_guild(party.get("guild_id", 0))
+            channel = guild.get_channel(party.get("channel_id", 0)) if guild else None
+
             if channel:
                 try:
                     member = guild.get_member(interaction.user.id) or await guild.fetch_member(interaction.user.id)
                     if member:
-                        await channel.set_permissions(member, overwrite=None) # Xóa quyền xem
-                        await channel.send(f"🏃 <@{interaction.user.id}> left the party.")
+                        await channel.set_permissions(member, overwrite=None) 
+                        await channel.send(f"🏃 <@{interaction.user.id}> has left the group.")
                 except (discord.Forbidden, discord.NotFound):
                     pass
             
@@ -568,7 +612,63 @@ class PartyFinder(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="party_lobby", description="Open the system dungeon matchmaking party hub interface panel")
+    async def get_or_create_webhook(self, channel: discord.TextChannel):
+        """Lấy webhook có sẵn của bot hoặc tạo mới nếu chưa có"""
+        webhooks = await channel.webhooks()
+        for wh in webhooks:
+            if wh.name == "Party_Relay_Bot" and wh.token:
+                return wh
+        return await channel.create_webhook(name="Party_Relay_Bot", reason="Serving Cross-server Parties")
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # Không tự relay tin nhắn của bot để tránh lặp vô hạn
+        if message.author.bot or not message.guild:
+            return
+
+        # Tìm xem kênh/thread hiện tại có đang nằm trong nhóm party nào không
+        party = await parties_col.find_one({"connected_channels.channel_id": message.channel.id})
+        if not party:
+            return
+
+        connected_nodes = party.get("connected_channels", [])
+        
+        for node in connected_nodes:
+            if node["channel_id"] == message.channel.id:
+                continue # Bỏ qua kênh gốc vừa chat
+
+            target_guild = self.bot.get_guild(node["guild_id"])
+            if not target_guild: continue
+
+            target_channel = target_guild.get_channel(node["channel_id"]) or target_guild.get_thread(node["channel_id"])
+            if not target_channel: continue
+
+            if isinstance(target_channel, discord.Thread):
+                parent_channel = target_channel.parent
+                webhook = await self.get_or_create_webhook(parent_channel)
+                thread_kwarg = {"thread": target_channel}
+            else:
+                webhook = await self.get_or_create_webhook(target_channel)
+                thread_kwarg = {}
+
+            try:
+                avatar_url = message.author.avatar.url if message.author.avatar else message.author.default_avatar.url
+                
+                files = []
+                for attachment in message.attachments:
+                    files.append(await attachment.to_file())
+
+                await webhook.send(
+                    content=message.content,
+                    username=f"{message.author.display_name} (Cross-server)",
+                    avatar_url=avatar_url,
+                    files=files,
+                    **thread_kwarg
+                )
+            except Exception as e:
+                print(f"[Webhook Relay Error]: {e}")
+
+    @app_commands.command(name="party_lobby", description="Open the lobby to search for teams.")
     async def party_lobby(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
@@ -581,13 +681,13 @@ class PartyFinder(commands.Cog):
             except discord.errors.NotFound:
                 pass
 
-    @app_commands.command(name="manage_party", description="Open your current active party group panel dashboard")
+    @app_commands.command(name="manage_party", description="Open your party manage panel.")
     async def manage_party(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         party = await parties_col.find_one({"$or": [{"leader_id": user_id}, {"members.user_id": user_id}]})
         
         if not party:
-            await interaction.response.send_message("❌ You dint join or make any party.", ephemeral=True)
+            await interaction.response.send_message("❌ You haven't joined or created any Parties yet..", ephemeral=True)
             return
             
         embed = build_manage_embed(party)
