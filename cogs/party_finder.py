@@ -31,16 +31,16 @@ async def update_broadcast_messages(bot, party_id: str):
             pass # Ignore if message was deleted
 
 def create_party_embed(party: dict) -> discord.Embed:
-    embed = discord.Embed(title=f"⚔️ Party: {party['dg_name']}", color=discord.Color.blue())
-    embed.add_field(name="👑 Leader", value=party['leader_ign'], inline=True)
-    embed.add_field(name="⏰ Start Time", value=party['start_time'], inline=True)
-    embed.add_field(name="📋 Requirements", value=party['requirements'] or "None", inline=False)
+    embed = discord.Embed(title=f"⚔️ Party: {party.get('dg_name', 'Unknown DG')}", color=discord.Color.blue())
+    embed.add_field(name="👑 Leader", value=party.get('leader_ign', 'Unknown'), inline=True)
+    embed.add_field(name="⏰ Start Time", value=party.get('start_time', 'N/A'), inline=True)
+    embed.add_field(name="📋 Requirements", value=party.get('requirements') or "None", inline=False)
     
     members_text = ""
-    for idx, member in enumerate(party['members']):
-        members_text += f"{idx+1}. **{member['ign']}** (Role: {member['role']})\n"
+    for idx, member in enumerate(party.get('members', [])):
+        members_text += f"{idx+1}. **{member.get('ign', 'Unknown')}** (Role: {member.get('role', 'Unknown')})\n"
     
-    embed.add_field(name=f"👥 Members ({len(party['members'])}/4)", value=members_text or "Empty", inline=False)
+    embed.add_field(name=f"👥 Members ({len(party.get('members', []))}/4)", value=members_text or "Empty", inline=False)
     return embed
 
 # --- UI VIEWS ---
@@ -60,7 +60,7 @@ class RequestJoinView(discord.ui.View):
         if not party or not applicant_profile:
             return await interaction.response.send_message("Party or player no longer exists.", ephemeral=True)
         
-        if len(party['members']) >= 4:
+        if len(party.get('members', [])) >= 4:
             return await interaction.response.send_message("Party is already full!", ephemeral=True)
 
         stats = applicant_profile.get("my_stats", {})
@@ -81,7 +81,7 @@ class RequestJoinView(discord.ui.View):
         await handle_cross_server_chat(self.bot, party, self.applicant_id, action="add")
         
         applicant = self.bot.get_user(self.applicant_id)
-        if applicant: await applicant.send(f"🎉 Leader {party['leader_ign']} has **ACCEPTED** your request to join {party['dg_name']}!")
+        if applicant: await applicant.send(f"🎉 Leader {party.get('leader_ign', 'Unknown')} has **ACCEPTED** your request to join {party.get('dg_name', 'Unknown DG')}!")
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, custom_id="reject_join")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -90,7 +90,7 @@ class RequestJoinView(discord.ui.View):
         await interaction.message.edit(content="❌ Request rejected.", view=self)
         
         applicant = self.bot.get_user(self.applicant_id)
-        if applicant and party: await applicant.send(f"💔 Your request to join {party['dg_name']} was rejected.")
+        if applicant and party: await applicant.send(f"💔 Your request to join {party.get('dg_name', 'Unknown DG')} was rejected.")
 
 
 class ManagePartyView(discord.ui.View):
@@ -101,13 +101,13 @@ class ManagePartyView(discord.ui.View):
 
     @discord.ui.button(label="Edit Requirements", style=discord.ButtonStyle.primary, row=0)
     async def edit_reqs(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.party['leader_id']:
+        if interaction.user.id != self.party.get('leader_id'):
             return await interaction.response.send_message("Only the leader can edit this!", ephemeral=True)
         await interaction.response.send_modal(EditReqModal(self.bot, self.party['_id']))
 
     @discord.ui.button(label="View Gear", style=discord.ButtonStyle.secondary, row=0)
     async def view_gear(self, interaction: discord.Interaction, button: discord.ui.Button):
-        options = [discord.SelectOption(label=m['ign'], value=str(m['user_id'])) for m in self.party['members']]
+        options = [discord.SelectOption(label=m.get('ign', 'Unknown'), value=str(m.get('user_id'))) for m in self.party.get('members', [])]
         select = discord.ui.Select(placeholder="Select member to view gear...", options=options)
         
         async def select_callback(inter: discord.Interaction):
@@ -127,7 +127,7 @@ class ManagePartyView(discord.ui.View):
 
     @discord.ui.button(label="Disband / Leave", style=discord.ButtonStyle.danger, row=0)
     async def disband_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.party['leader_id']:
+        if interaction.user.id == self.party.get('leader_id'):
             await parties_col.delete_one({"_id": self.party['_id']})
             await handle_cross_server_chat(self.bot, self.party, action="delete")
             
@@ -148,14 +148,14 @@ class ManagePartyView(discord.ui.View):
 
     @discord.ui.button(label="Broadcast Again", style=discord.ButtonStyle.success, row=1)
     async def broadcast(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.party['leader_id']:
+        if interaction.user.id != self.party.get('leader_id'):
             return await interaction.response.send_message("Only the leader can broadcast!", ephemeral=True)
         
-        dg_config = await get_dungeon_config(self.party['dg_name'])
-        ping_text = f"<@&{dg_config['ping_role']}>" if dg_config and "ping_role" in dg_config else ""
+        dg_config = await get_dungeon_config(self.party.get('dg_name', ''))
+        ping_text = f"<@&{dg_config['ping_role']}>" if dg_config and dg_config.get('ping_role') else ""
         
         embed = create_party_embed(self.party)
-        msg = await interaction.channel.send(content=f"📢 Recruiting for **{self.party['dg_name']}**! {ping_text}", embed=embed)
+        msg = await interaction.channel.send(content=f"📢 Recruiting for **{self.party.get('dg_name', 'Unknown DG')}**! {ping_text}", embed=embed)
         
         await parties_col.update_one({"_id": self.party['_id']}, {"$push": {"broadcasts": {"channel_id": interaction.channel.id, "message_id": msg.id}}})
         await interaction.response.send_message("Broadcast updated!", ephemeral=True)
@@ -173,7 +173,13 @@ class LobbyPaginationView(discord.ui.View):
         
         current_parties = self.parties[self.page * self.items_per_page : (self.page + 1) * self.items_per_page]
         if current_parties:
-            options = [discord.SelectOption(label=f"{p['dg_name']} (Ldr: {p['leader_ign']})", description=f"{len(p['members'])}/4 - {p['start_time']}", value=str(p['_id'])) for p in current_parties]
+            # Sửa lỗi KeyError bằng cách sử dụng .get() phòng khi tài liệu khuyết field
+            options = [discord.SelectOption(
+                label=f"{p.get('dg_name', 'Unknown DG')} (Ldr: {p.get('leader_ign', 'Unknown')})", 
+                description=f"{len(p.get('members', []))}/4 - {p.get('start_time', 'N/A')}", 
+                value=str(p['_id'])
+            ) for p in current_parties]
+            
             self.select = discord.ui.Select(placeholder="Select a party to join...", options=options, row=0)
             self.select.callback = self.send_request_callback
             self.add_item(self.select)
@@ -190,7 +196,7 @@ class LobbyPaginationView(discord.ui.View):
         if existing_party:
             return await interaction.response.send_message("❌ You are already in a party!", ephemeral=True)
 
-        leader = self.bot.get_user(party['leader_id'])
+        leader = self.bot.get_user(party.get('leader_id', 0))
         if leader:
             stats = applicant.get("my_stats", {})
             embed = discord.Embed(title="📩 Join Request Received!", color=discord.Color.green())
@@ -256,8 +262,8 @@ class LobbyPaginationView(discord.ui.View):
         
         embed = discord.Embed(title="🌐 Party Finder Lobby", description=f"Page {new_page+1}/{view.max_pages}", color=discord.Color.purple())
         for p in fresh_parties[new_page * view.items_per_page : (new_page + 1) * view.items_per_page]:
-            embed.add_field(name=f"🎮 {p['dg_name']} | Start: {p['start_time']}", 
-                            value=f"Leader: **{p['leader_ign']}** | Members: {len(p['members'])}/4", inline=False)
+            embed.add_field(name=f"🎮 {p.get('dg_name', 'Unknown DG')} | Start: {p.get('start_time', 'N/A')}", 
+                            value=f"Leader: **{p.get('leader_ign', 'Unknown')}** | Members: {len(p.get('members', []))}/4", inline=False)
             
         if not fresh_parties: embed.description = "No active parties found."
 
@@ -308,8 +314,17 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
 
         await handle_cross_server_chat(self.bot, party_doc, action="create", guild=interaction.guild)
 
+        # KIỂM TRA FIELD DATA DUNGEON: Nếu chưa có thì khởi tạo 1 data mới vào DB
         dg_config = await get_dungeon_config(self.dg_name.value)
-        ping_text = f"<@&{dg_config['ping_role']}>" if dg_config and "ping_role" in dg_config else ""
+        if not dg_config:
+            dg_config = {
+                "dg_name": self.dg_name.value,
+                "ping_role": None, # Chưa có role thì để None để admin setup sau
+                "description": "Automatically created config data."
+            }
+            await dungeon_configs_col.insert_one(dg_config)
+
+        ping_text = f"<@&{dg_config.get('ping_role')}>" if dg_config.get('ping_role') else ""
         
         embed = create_party_embed(party_doc)
         msg = await interaction.channel.send(content=f"📢 **{self.ign}** is looking for a group for **{self.dg_name.value}**! {ping_text}", embed=embed)
@@ -339,10 +354,10 @@ async def handle_cross_server_chat(bot, party, user_id=None, action="create", gu
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
             }
-            leader = guild.get_member(party['leader_id'])
+            leader = guild.get_member(party.get('leader_id', 0))
             if leader: overwrites[leader] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
-            chat_channel = await guild.create_text_channel(name=f"party-{party['leader_ign']}", overwrites=overwrites)
+            chat_channel = await guild.create_text_channel(name=f"party-{party.get('leader_ign', 'unknown')}", overwrites=overwrites)
             
             await parties_col.update_one({"_id": party['_id']}, {"$set": {"chat_channel_id": chat_channel.id}})
             webhook = await chat_channel.create_webhook(name="CrossServerRelay")
@@ -379,6 +394,9 @@ class PartyFinderCog(commands.Cog):
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
     async def party_lobby(self, interaction: discord.Interaction):
+        # Bảo vệ phản hồi bằng defer đề phòng hệ thống Render xử lý DB chậm quá 3 giây
+        await interaction.response.defer(ephemeral=True)
+        
         parties = await parties_col.find({}).to_list(length=100)
         
         embed = discord.Embed(title="🌐 Party Finder Lobby", description="Loading data...", color=discord.Color.purple())
@@ -389,10 +407,11 @@ class PartyFinderCog(commands.Cog):
         else:
             embed.description = f"Page 1/{view.max_pages}"
             for p in parties[:5]:
-                embed.add_field(name=f"🎮 {p['dg_name']} | Start: {p['start_time']}", 
-                                value=f"Leader: **{p['leader_ign']}** | Members: {len(p['members'])}/4", inline=False)
+                embed.add_field(name=f"🎮 {p.get('dg_name', 'Unknown DG')} | Start: {p.get('start_time', 'N/A')}", 
+                                value=f"Leader: **{p.get('leader_ign', 'Unknown')}** | Members: {len(p.get('members', []))}/4", inline=False)
 
-        await interaction.response.send_message(embed=embed, view=view)
+        # Sử dụng followup.send vì chúng ta đã dùng defer ở trên
+        await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(PartyFinderCog(bot))

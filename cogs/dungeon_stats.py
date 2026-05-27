@@ -179,10 +179,11 @@ class DungeonStats(commands.Cog):
 
     @app_commands.command(name="dglist", description="Check gear requirement of dg")
     async def dglist(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
         if not dungeons: 
             return await interaction.response.send_message("❌ Empty.", ephemeral=True)
-        await interaction.response.send_message("📍 Please select dungeon", view=DungeonListView(dungeons), ephemeral=True)
+        await interaction.followup.send("📍 Please select dungeon", view=DungeonListView(dungeons))
 
         
 async def setup(bot):
