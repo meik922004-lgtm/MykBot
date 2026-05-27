@@ -721,7 +721,7 @@ class PartyFinderCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         parties = await parties_col.find({}).to_list(length=100)
         
-        embed = discord.Embed(title="🌐 Party Finder Lobby", description="Loading...", color=discord.Color.purple())
+        embed = discord.Embed(title="🌐 Party Finder Lobby", color=discord.Color.purple())
         view = LobbyPaginationView(self.bot, parties, page=0)
         
         if not parties:
@@ -729,9 +729,20 @@ class PartyFinderCog(commands.Cog):
         else:
             embed.description = f"Page 1/{view.max_pages}"
             for p in parties[:5]:
-                embed.add_field(name=f"🎮 {p.get('dg_name', 'Unknown')} | Start: {p.get('start_time', 'N/A')}", 
-                                value=f"Leader: **{p.get('leader_ign', 'Unknown')}** | Members: {len(p.get('members', []))}/4", inline=False)
-
+                # Trích xuất dữ liệu
+                dg_name = p.get('dg_name', 'Unknown')
+                start_time = p.get('start_time', 'N/A')
+                leader = p.get('leader_ign', 'Unknown')
+                reqs = p.get('requirements', 'No requirements')
+                member_count = len(p.get('members', []))
+                
+                # Cập nhật hiển thị bao gồm Requirements
+                embed.add_field(
+                    name=f"🎮 {dg_name} | Start: {start_time}", 
+                    value=f"👤 Leader: **{leader}**\n👥 Members: `{member_count}/4`\n📝 Req: *{reqs}*", 
+                    inline=False
+                )
+        
         await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
