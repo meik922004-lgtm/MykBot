@@ -266,7 +266,7 @@ class ManagePartyView(discord.ui.View):
 
     @discord.ui.button(label="Edit Requirements", style=discord.ButtonStyle.secondary)
     async def edit_reqs(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditDungeonModal(self.party, interaction.client))
+        await interaction.response.send_modal(EditReqModal(self.party, interaction.client))
 
     @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=0)
     async def kick_member(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -405,7 +405,7 @@ class LobbyPaginationView(discord.ui.View):
         if await parties_col.find_one({"members.user_id": interaction.user.id}):
             return await interaction.followup.send("❌ You are already in a party!", ephemeral=True)
             
-        await interaction.response.send_modal(CreatePartyModal(self.bot, profile.get('ign', 'Unknown')))
+        await interaction.response.send_modal(CreatePartyModal(self.bot, profile.get('ign', 'Unknown'), self))
 
     @discord.ui.button(label="⚙️ Manage My Party", style=discord.ButtonStyle.primary, row=2)
     async def manage_party(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -509,10 +509,11 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g., 20:00 or ASAP', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
-    def __init__(self, bot, ign):
+    def __init__(self, bot, ign, lobby_view):
         super().__init__()
         self.bot = bot
         self.ign = ign
+        self.lobby_view = lobby_view
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -693,9 +694,18 @@ class PartyFinderCog(commands.Cog):
             view = LobbyPaginationView(self.bot, parties, page=0)
             
             embed = discord.Embed(title="🌐 Party Finder Lobby", description=f"Page 1/{view.max_pages}", color=discord.Color.purple())
-            for p in parties[:5]:
-                embed.add_field(name=f"🎮 {p.get('dg_name', 'Unknown')} | Start: {p.get('start_time', 'N/A')}", 
-                                value=f"Leader: **{p.get('leader_ign', 'Unknown')}** | Members: {len(p.get('members', []))}/4", inline=False)
+            for p in parties[:view.items_per_page]:
+                dg_name = p.get('dg_name', 'Unknown')
+                start_time = p.get('start_time', 'N/A')
+                leader = p.get('leader_ign', 'Unknown')
+                reqs = p.get('requirements', 'No specific requirements')
+                members_count = len(p.get('members', []))
+
+                embed.add_field(
+                    name=f"🎮 {dg_name} | Start: {start_time}", 
+                    value=f"👤 Leader: **{leader}**\n👥 Members: `{members_count}/4`\n📝 Req: *{reqs}*", 
+                    inline=False
+                )
             if not parties: embed.description = "No active parties found."
             
             await interaction.followup.send(embed=embed, view=view)
@@ -712,8 +722,8 @@ class PartyFinderCog(commands.Cog):
         if not parties:
             embed.description = "No active parties found."
         else:
-            embed.description = f"Page 1/{view.max_pages}"
-            for p in parties[:5]:
+            embed.description = f"Page 1/{max(1, view.max_pages)}"
+            for p in parties[:view.items_per_page]:
                 # Trích xuất dữ liệu
                 dg_name = p.get('dg_name', 'Unknown')
                 start_time = p.get('start_time', 'N/A')
