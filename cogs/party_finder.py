@@ -12,7 +12,16 @@ from Database import players_col, parties_col, dungeon_configs_col
 # ==========================================
 # CƠ CHẾ KIỂM TRA PROFILE & ĐIỀU KIỆN (GATEKEEPING)
 # ==========================================
-
+async def create_party_embed(party: dict):
+    # Trả về một object Embed dựa trên dữ liệu party
+    return discord.Embed(
+        title=f"📢 RECRUITMENT: {party['dungeon'].upper()}",
+        description=f"**Leader:** <@{party['leader_id']}>\n"
+                    f"**Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}`\n"
+                    f"**Start:** ⏰ `{party.get('start_time', 'ASAP')}`\n"
+                    f"**Reqs:** {party.get('requirements', 'None')}",
+        color=discord.Color.gold()
+    )
 async def check_profile_validity(user_id: int):
     """Check Profile based on new DB structure"i"""
     player = await players_col.find_one({"user_id": user_id})
@@ -73,38 +82,20 @@ async def get_dg_ping_role(dungeon_name: str) -> str:
 
 async def perform_cross_server_broadcast(client: discord.Client, party: dict):
     ping_tag = await get_dg_ping_role(party['dungeon'])
+    embed = await create_party_embed(party) # Giả sử bạn đã có hàm create_party_embed như đã thảo luận
     
-    embed = discord.Embed(
-        title=f"📢 RECRUITMENT: {party['dungeon'].upper()}",
-        description=f"**Leader:** <@{party['leader_id']}>\n"
-                    f"**Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}`\n"
-                    f"**Start:** ⏰ `{party.get('start_time', 'ASAP')}`\n"
-                    f"**Reqs:** {party.get('requirements', 'None')}",
-        color=discord.Color.gold()
-    )
-    
-    # Check trạng thái gatekeeping để hiển thị footer
-    is_gatekeep = party.get("gatekeeping_enabled", True)
-    if not is_gatekeep:
-        embed.set_footer(text="Cross-server Network | No Min Req")
-    else:
-        embed.set_footer(text=f"Keyword: {party['dungeon']} • Cross-server Network")
-
-    count = 0
+    broadcast_refs = []
     for guild in client.guilds:
         chan = discord.utils.get(guild.text_channels, name="party-board")
         if chan:
-            # SỬA Ở ĐÂY: Truyền thêm tham số gatekeeping_enabled vào View
-            view = BroadcastJoinView(
-                party['id'], 
-                party['dungeon'], 
-                is_gatekeep
-            )
+            view = BroadcastJoinView(party['id'], party['dungeon'], party.get("gatekeeping_enabled", True))
             try:
-                await chan.send(content=ping_tag if ping_tag else None, embed=embed, view=view)
-                count += 1
-            except discord.Forbidden: pass
-    return count
+                msg = await chan.send(content=ping_tag if ping_tag else None, embed=embed, view=view)
+                broadcast_refs.append({"guild_id": guild.id, "channel_id": chan.id, "message_id": msg.id})
+            except: pass
+    
+    await parties_col.update_one({"id": party['id']}, {"$set": {"broadcast_messages": broadcast_refs}})
+    return len(broadcast_refs)
 
 # ==========================================
 # CONSTANTS & HELPER FUNCTIONS
@@ -129,9 +120,8 @@ async def build_lobby_embed(page: int = 1, search_query: str = None):
     embed.set_footer(text=f"Page {page}/{max_pages} • Total Parties: {total_parties}")
 
     for party in active_parties:
-        status = "✅ Gatekeep" if party.get("gatekeeping_enabled", True) else "⚠️ Open"
         embed.add_field(
-            name=f"🏰 {party['dungeon'].upper()} [{status}]",
+            name=f"🏰 {party['dungeon'].upper()}",
             value=f"• **Leader:** <@{party.get('leader_id')}>\n"
                   f"• **Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}` | ⏰ `{party.get('start_time', 'ASAP')}`",
             inline=False
@@ -215,6 +205,7 @@ class CreatePartyModal(discord.ui.Modal):
         # Broadcast ra các channel đã kết nối (nếu có)
         await perform_cross_server_broadcast(interaction.client, new_party)
         
+        
         await interaction.response.send_message(
             f"✅ Party created for **{dg_name}**! (Gatekeep: {'ON' if gatekeeping else 'OFF'})", 
             ephemeral=True
@@ -245,6 +236,7 @@ class JoinByKeywordModal(discord.ui.Modal):
         await handle_join_request(interaction, target_party, self.ign, self.profile_data)
 
 
+
 class EditNeedModal(discord.ui.Modal):
     recruitment = discord.ui.TextInput(label="New requirements", max_length=100)
     def __init__(self, party_id: str):
@@ -254,6 +246,7 @@ class EditNeedModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         new_req = self.recruitment.value.strip() or "None"
         await parties_col.update_one({"id": self.party_id}, {"$set": {"requirements": new_req}})
+        await update_all_party_broadcasts(interaction.client, self.party_id)
         party = await parties_col.find_one({"id": self.party_id})
         embed = build_manage_embed(party)
         await interaction.response.edit_message(embed=embed, view=ManagePartyView(self.party_id, interaction.user.id))
@@ -305,7 +298,7 @@ async def handle_join_request(interaction: discord.Interaction, party: dict, ign
 
 class DMApprovalView(discord.ui.View):
     def __init__(self, party_id: str, applicant_id: int, applicant_ign: str, role: str):
-        super().__init__(timeout=None) 
+        super().__init__(timeout=None)
         self.party_id = party_id
         self.applicant_id = applicant_id
         self.applicant_ign = applicant_ign
@@ -313,121 +306,90 @@ class DMApprovalView(discord.ui.View):
 
     @discord.ui.button(label="✅Accept", style=discord.ButtonStyle.success)
     async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        curr_party = await parties_col.find_one({"id": self.party_id})
-        if not curr_party:
-            await interaction.response.send_message("❌ This party has disbanded..", ephemeral=True)
-            return
-
-        if len(curr_party.get("members", [])) >= curr_party.get("slots", 4):
-            await interaction.response.send_message("❌ Unacceptable, the party is already full.!", ephemeral=True)
-            return
-
-        applicant = interaction.client.get_user(self.applicant_id) or await interaction.client.fetch_user(self.applicant_id)
+        await interaction.response.defer()
         
-        # Kiểm tra xem Applicant có ở chung Server với Leader không
-        leader_guild_id = curr_party.get("guild_id")
-        leader_guild = interaction.client.get_guild(leader_guild_id) if leader_guild_id else None
-        applicant_in_leader_guild = False
-        member_in_leader_guild = None
+        # 1. ATOMIC UPDATE: Đảm bảo không quá slot
+        result = await parties_col.find_one_and_update(
+            {"id": self.party_id, "$expr": {"$lt": [{"$size": {"$ifNull": ["$members", []]}}, "$slots"]}},
+            {"$push": {"members": {"user_id": self.applicant_id, "ign": self.applicant_ign, "role": self.role}}},
+            return_document=True
+        )
 
-        if leader_guild:
-            try:
-                member_in_leader_guild = leader_guild.get_member(self.applicant_id) or await leader_guild.fetch_member(self.applicant_id)
-                if member_in_leader_guild: applicant_in_leader_guild = True
-            except:
-                pass
+        if not result:
+            await interaction.followup.send("❌ Party đã đầy hoặc không tồn tại!", ephemeral=True)
+            return
 
+        curr_party = result
         new_connected_node = None
-        instruction_msg = "Check out the Party channel.!"
 
-        # NẾU CÙNG SERVER: Cấp quyền trực tiếp vào kênh chính
-        if applicant_in_leader_guild and curr_party.get("channel_id"):
-            main_chan = leader_guild.get_channel(curr_party["channel_id"])
-            if main_chan:
-                try:
-                    await main_chan.set_permissions(member_in_leader_guild, read_messages=True, send_messages=True)
-                    instruction_msg = f"Please go to channel <#{main_chan.id}> on the server.**{leader_guild.name}**."
-                except Exception as e:
-                    print(f"Lỗi phân quyền: {e}")
-
-        # NẾU KHÁC SERVER (CROSS-SERVER): Tạo Private Thread
-        else:
-            applicant_guild = None
-            base_channel = None
-            for g in interaction.client.guilds:
-                if g.id == leader_guild_id: continue # Bỏ qua server của Leader
-                if g.get_member(self.applicant_id):
-                    ch = discord.utils.get(g.text_channels, name="party-board")
-                    if ch:
-                        applicant_guild = g
-                        base_channel = ch
-                        break
-            
-            if applicant_guild and base_channel:
-                try:
-                    thread = await base_channel.create_thread(
-                        name=f"pt-{curr_party['dungeon'].lower()}-{self.party_id}",
-                        type=discord.ChannelType.private_thread,
-                        invitable=False
-                    )
-                    applicant_member = applicant_guild.get_member(self.applicant_id)
-                    await thread.add_user(applicant_member)
-                    await thread.send(f"🎉 <@{self.applicant_id}>Welcome! Messages in this thread will be synchronized to the Leader's group via Webhook.")
-                    
-                    new_connected_node = {"guild_id": applicant_guild.id, "channel_id": thread.id}
-                    instruction_msg = f"Connected! Please chat in the thread **{thread.name}** on the Server.**{applicant_guild.name}**."
-                except Exception as e:
-                    print(f"Thread creation error: {e}")
-
-        # Cập nhật Database
-        update_query = {"$push": {"members": {"user_id": self.applicant_id, "ign": self.applicant_ign, "role": self.role}}}
+        # 2. TẠO THREAD (Nếu là Cross-server)
+        # (Chèn logic tạo thread của bạn tại đây, sau khi tạo xong thì gán vào new_connected_node)
+        # Ví dụ: new_connected_node = {"guild_id": ..., "channel_id": thread.id}
+        
         if new_connected_node:
-            update_query["$push"]["connected_channels"] = new_connected_node
+            await parties_col.update_one({"id": self.party_id}, {"$push": {"connected_channels": new_connected_node}})
 
-        await parties_col.update_one({"id": self.party_id}, update_query)
+        # 3. CẬP NHẬT BROADCAST TRÊN TOÀN SERVER
+        await update_all_party_broadcasts(interaction.client, self.party_id)
 
-        # Thông báo cho Leader
-        if leader_guild and curr_party.get("channel_id"):
-            channel = leader_guild.get_channel(curr_party["channel_id"])
-            if channel:
-                msg = "same server" if applicant_in_leader_guild else "another server (Cross-server Webhook)"
-                await channel.send(f"🎉 <@{self.applicant_id}> (`{self.applicant_ign}` - {self.role}) đã tham gia Party từ {msg}!")
-
-        # Gửi DM cho người xin
-        if applicant:
-            try:
-                await applicant.send(f"🎉Congratulations, your request to join **{curr_party['dungeon'].upper()}** has been accepted.!\n🔗 **{instruction_msg}**")
-            except discord.Forbidden:
-                pass 
-
+        # 4. HOÀN TẤT
         button.disabled = True
         self.children[1].disabled = True
-        await interaction.response.edit_message(content="✅ **ACCEPTED**", view=self)
-
-    @discord.ui.button(label="❌ reject", style=discord.ButtonStyle.danger)
-    async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        curr_party = await parties_col.find_one({"id": self.party_id})
-        dg_name = curr_party['dungeon'].upper() if curr_party else "a Party"
+        await interaction.followup.edit_message(message_id=interaction.message.id, content="✅ **ACCEPTED**", view=self)
         
+        # Gửi DM thông báo
         applicant = interaction.client.get_user(self.applicant_id) or await interaction.client.fetch_user(self.applicant_id)
         if applicant:
-            try:
-                await applicant.send(f"💔 Unfortunately, your request to join **{dg_name}** has been denied (Slot is full or does not fit the team)..")
-            except discord.Forbidden:
-                pass
+            try: await applicant.send(f"🎉 Bạn đã tham gia party **{curr_party['dungeon'].upper()}** thành công!")
+            except: pass
 
+    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
+    async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         button.disabled = True
         self.children[0].disabled = True
-        await interaction.response.edit_message(content="❌ **REJECTED**", view=self)
-
+        await interaction.followup.edit_message(message_id=interaction.message.id, content="❌ **REJECTED**", view=self)
 
 # ==========================================
 # PUBLIC VIEWS (BROADCAST & LOBBY)
 # ==========================================
+async def update_all_party_broadcasts(client: discord.Client, party_id: str):
+    party = await parties_col.find_one({"id": party_id})
+    if not party or "broadcast_messages" not in party:
+        return
+    embed = await create_party_embed(party)
+    valid_refs = []
+    # Tạo lại Embed mới nhất từ dữ liệu party
+    embed = discord.Embed(
+        title=f"📢 RECRUITMENT: {party['dungeon'].upper()}",
+        description=f"**Leader:** <@{party['leader_id']}>\n"
+                    f"**Slots:** `{len(party.get('members', []))}/{party.get('slots', 4)}`\n"
+                    f"**Start:** ⏰ `{party.get('start_time', 'ASAP')}`\n"
+                    f"**Reqs:** {party.get('requirements', 'None')}",
+        color=discord.Color.gold()
+    )
+
+    for msg_ref in party.get("broadcast_messages", []):
+        try:
+            guild = client.get_guild(msg_ref["guild_id"])
+            if not guild: continue
+            channel = guild.get_channel(msg_ref["channel_id"])
+            if not channel: continue
+            
+            msg = await channel.fetch_message(msg_ref["message_id"])
+            await msg.edit(
+                embed=embed, 
+                view=BroadcastJoinView(party['id'], party['dungeon'], party.get("gatekeeping_enabled", True))
+            )
+            valid_refs.append(msg_ref)
+        except (discord.NotFound, discord.Forbidden):
+            continue # Tự động dọn dẹp các tin nhắn đã bị xóa
+            
+    await parties_col.update_one({"id": party_id}, {"$set": {"broadcast_messages": valid_refs}})
 class PartySelect(discord.ui.Select):
     def __init__(self, options):
         super().__init__(
-            placeholder="👥 Chọn phòng muốn tham gia...",
+            placeholder="👥 Select party to join...",
             min_values=1,
             max_values=1,
             options=options,
@@ -465,6 +427,17 @@ class BroadcastJoinView(discord.ui.View):
         self.party_id = party_id
         self.dungeon_name = dungeon_name
         self.gatekeeping_enabled = gatekeeping_enabled
+    @discord.ui.button(label="Open Lobby UI", style=discord.ButtonStyle.primary)
+    async def open_lobby(self, interaction: discord.Interaction, button: discord.ui.Button):
+    # Lấy thông tin party từ DB
+        party = await parties_col.find_one({"id": self.party_id})
+        if not party:
+            await interaction.response.send_message("Party không tồn tại!", ephemeral=True)
+            return
+    
+    # Hiển thị UI chi tiết (có thể dùng Embed)
+        embed = discord.Embed(title=f"Lobby: {party['dungeon']}", description="Detail info...")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Join Request", style=discord.ButtonStyle.primary, custom_id="join_req")
     async def join_req_trigger(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -577,7 +550,7 @@ class LobbyView(discord.ui.View):
 
 class ManagePartyView(discord.ui.View):
     def __init__(self, party_id: str, user_id: int):
-        super().__init__(timeout=600)
+        super().__init__(timeout=None)
         self.party_id = party_id
         self.user_id = user_id
 
@@ -595,7 +568,7 @@ class ManagePartyView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="📝 Edit Needs", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="📝 Edit Requirements", style=discord.ButtonStyle.secondary, row=0)
     async def edit_requirements(self, interaction: discord.Interaction, button: discord.ui.Button):
         party = await parties_col.find_one({"id": self.party_id})
         if party.get("leader_id") != interaction.user.id:
@@ -715,6 +688,34 @@ class PartyFinder(commands.Cog):
                 )
             except Exception as e:
                 print(f"[Webhook Relay Error]: {e}")
+    async def update_all_party_broadcasts(client: discord.Client, party_id: str):
+        party = await parties_col.find_one({"id": party_id})
+        if not party or "broadcast_messages" not in party:
+            return
+
+        embed = await create_party_embed(party)
+        
+        # Dùng danh sách mới để lọc các kênh không còn tồn tại (Auto-cleanup)
+        valid_refs = []
+        
+        for msg_ref in party.get("broadcast_messages", []):
+            try:
+                guild = client.get_guild(msg_ref["guild_id"])
+                if not guild: continue
+                channel = guild.get_channel(msg_ref["channel_id"])
+                if not channel: continue
+                
+                msg = await channel.fetch_message(msg_ref["message_id"])
+                await msg.edit(
+                    embed=embed, 
+                    view=BroadcastJoinView(party['id'], party['dungeon'], party.get("gatekeeping_enabled", True))
+                )
+                valid_refs.append(msg_ref)
+            except (discord.NotFound, discord.Forbidden):
+                continue # Bỏ qua tin nhắn đã xóa
+                
+        # Cập nhật lại danh sách valid vào DB
+        await parties_col.update_one({"id": party_id}, {"$set": {"broadcast_messages": valid_refs}})
 
     @app_commands.command(name="party_lobby", description="Open the lobby to search for teams.")
     async def party_lobby(self, interaction: discord.Interaction):
