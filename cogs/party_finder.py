@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from bson.objectid import ObjectId
 from typing import List, Optional
+import asyncio # Hãy chắc chắn dòng này có ở đầu file party_finder.py của bạn
 
 # Import direct collections from your Database.py
 from Database import players_col, parties_col, dungeon_configs_col
@@ -15,23 +16,36 @@ async def get_player_profile(user_id: int):
 async def get_dungeon_config(dg_name: str):
     return await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dg_name}$", "$options": "i"}})
 
+
+
+# 1. Tạo 1 hàm trợ giúp xử lý riêng lẻ cho từng tin nhắn để tránh lỗi của server này ảnh hưởng server khác
+async def _do_single_edit(channel, message_id, embed):
+    try:
+        msg = await channel.fetch_message(message_id)
+        await msg.edit(embed=embed)
+    except Exception:
+        pass # Bỏ qua nếu bài viết bị xóa hoặc channel không còn quyền hạn
+
+# 2. Hàm chính được cập nhật chạy song song
 async def update_broadcast_messages(bot, party_id: str):
     party = await parties_col.find_one({"_id": ObjectId(party_id)})
-    if not party: return
+    if not party: 
+        return
 
     embed = create_party_embed(party)
     # Lấy config để xem có cần ping lại khi update không (tùy chọn)
     dg_config = await get_dungeon_config(party.get('dg_name', ''))
     
+    tasks = []
     for msg_data in party.get("broadcasts", []):
-        try:
-            channel = bot.get_channel(msg_data["channel_id"])
-            if channel:
-                msg = await channel.fetch_message(msg_data["message_id"])
-                # Khi edit chỉ update embed và giữ nguyên view, không tạo ping mới tránh làm phiền phiền
-                await msg.edit(embed=embed)
-        except Exception:
-            pass 
+        channel = bot.get_channel(msg_data["channel_id"])
+        if channel:
+            # Gom các hành động fetch và edit vào danh sách hàng chờ
+            tasks.append(_do_single_edit(channel, msg_data["message_id"], embed))
+            
+    # Kích hoạt toàn bộ danh sách chạy SONG SONG cùng một thời điểm
+    if tasks:
+        await asyncio.gather(*tasks)
 
 def create_party_embed(party: dict) -> discord.Embed:
     embed = discord.Embed(title=f"⚔️ Party: {party.get('dg_name', 'Unknown DG')}", color=discord.Color.blue())
@@ -610,7 +624,7 @@ class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"dg_name": self.new_name.value}})
-        await update_broadcast_messages(self.bot, str(self.party['_id']))
+        asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))
         await interaction.followup.send("✅ Dungeon name updated!", ephemeral=True)
 
 class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
@@ -625,7 +639,7 @@ class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"requirements": self.new_req.value}})
-        await update_broadcast_messages(self.bot, str(self.party['_id']))
+        asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))
         await interaction.followup.send("✅ Requirements updated!", ephemeral=True)
 
 
