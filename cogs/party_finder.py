@@ -424,28 +424,40 @@ class DMApprovalView(discord.ui.View):
 # ==========================================
 # PUBLIC VIEWS (BROADCAST & LOBBY)
 # ==========================================
-class DungeonSelect(discord.ui.Select):
+class PartySelect(discord.ui.Select):
     def __init__(self, options):
         super().__init__(
-            placeholder="🔍 Chọn Dungeon để tham gia...",
+            placeholder="👥 Chọn phòng muốn tham gia...",
             min_values=1,
             max_values=1,
-            options=options # Danh sách các Dungeon lấy từ DB
+            options=options
         )
 
     async def callback(self, interaction: discord.Interaction):
-        selected_dg = self.values[0]
+        # Lấy ID của party mà người dùng vừa chọn từ dropdown
+        party_id = self.values[0]
         
-        # Kiểm tra gear trước khi tiếp tục
+        # 1. Lấy dữ liệu party từ DB
+        party = await parties_col.find_one({"id": party_id})
+        if not party:
+            await interaction.response.send_message("❌ Phòng này không còn tồn tại.", ephemeral=True)
+            return
+
+        # 2. Kiểm tra profile người dùng
         is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
         if not is_valid:
-            await interaction.response.send_message("❌ Hãy dùng `/mygear` cập nhật hồ sơ trước.", ephemeral=True)
+            await interaction.response.send_message("❌ Hãy dùng `/mygear` trước.", ephemeral=True)
             return
             
-        # Tại đây bạn có thể mở tiếp 1 modal hoặc tìm party trực tiếp dựa trên selected_dg
-        # Ví dụ: Mở một Modal nhỏ để xác nhận hoặc tìm party từ DB
-        await interaction.response.send_message(f"Bạn đã chọn: **{selected_dg}**. Đang tìm phòng...", ephemeral=True)
-        # TODO: Thêm logic tìm phòng hoặc join party theo selected_dg ở đây
+        # 3. Kiểm tra gatekeep (dựa trên logic cũ của bạn)
+        if party.get("gatekeeping_enabled", True):
+            meets_req = await check_gear_requirement(profile_data, party['dungeon'])
+            if not meets_req:
+                await interaction.response.send_message("🛑 Gear của bạn không đủ yêu cầu cho phòng này.", ephemeral=True)
+                return
+
+        # 4. Thực hiện hàm join (Sử dụng lại hàm handle_join_request bạn đã có)
+        await handle_join_request(interaction, party, ign, profile_data)
 class BroadcastJoinView(discord.ui.View):
     def __init__(self, party_id: str, dungeon_name: str, gatekeeping_enabled: bool):
         super().__init__(timeout=None)
@@ -485,20 +497,19 @@ class LobbyView(discord.ui.View):
         super().__init__(timeout=None)
         self.page = page
         self.search_query = search_query
-
-    async def update_select(self):
-        options = await self.get_dungeon_options()
-        if options:
-            self.add_item(DungeonSelect(options))
-
-    async def get_dungeon_options(self):
-        cursor = dungeon_configs_col.find({})
+    async def get_party_options(self):
+        # Lấy các phòng đang mở (ví dụ: lấy 25 phòng mới nhất)
+        cursor = parties_col.find({}).sort("created_at", -1).limit(25)
         options = []
-        async for dg in cursor:
-            # Discord giới hạn label tối đa 100 ký tự
-            label = dg["dg_name"][:100]
-            options.append(discord.SelectOption(label=label, value=label, description="Tham gia phòng này"))
-            if len(options) >= 25: break # Discord chỉ cho tối đa 25 items trong 1 dropdown
+        
+        async for party in cursor:
+            # Format: Tên Dungeon + Slots trống
+            label = f"{party['dungeon']} ({len(party.get('members', []))}/{party.get('slots', 4)})"
+            
+            # Lưu party['id'] vào value để callback biết chọn phòng nào
+            description = f"Leader: {party.get('leader_id')}" # Có thể lấy tên nếu cần
+            options.append(discord.SelectOption(label=label, value=party['id'], description=description))
+            
         return options
 
     
@@ -710,8 +721,15 @@ class PartyFinder(commands.Cog):
         try:
             embed, _ = await build_lobby_embed(page=1)
             view = LobbyView(page=1)
-            await view.update_select()
+            options = await view.get_party_options()
+        
+            if options:
+                view.add_item(PartySelect(options))
+            else:
+                await interaction.followup.send("Hiện tại không có phòng nào đang mở.", ephemeral=True)
+                return
             await interaction.followup.send(embed=embed, view=view)
+
         except Exception as e:
             try:
                 await interaction.followup.send(f"❌ System error: {e}", ephemeral=True)
