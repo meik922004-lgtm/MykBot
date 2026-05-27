@@ -563,13 +563,6 @@ class LobbyView(discord.ui.View):
         embed = build_manage_embed(party)
         await interaction.response.send_message(embed=embed, view=ManagePartyView(party["id"], user_id), ephemeral=True)
 
-    @discord.ui.button(label="📝 Join Party", style=discord.ButtonStyle.primary, row=1, custom_id="lobby_join")
-    async def direct_join_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        is_valid, ign, profile_data = await check_profile_validity(interaction.user.id)
-        if not is_valid:
-            await interaction.response.send_message("❌ *Auto reject:** Please use `/mygear` to set up your profile before creating a Party...", ephemeral=True)
-            return
-        await interaction.response.send_modal(JoinByKeywordModal(ign, profile_data))
 
     @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, emoji="🔄", custom_id="lobby_refresh")
     async def refresh_lobby(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -733,6 +726,12 @@ class PartyFinder(commands.Cog):
             print(f"DEBUG: Số lượng party tìm thấy: {len(options)}") # Xem terminal bot
             if options:
                 view.add_item(PartySelect(options))
+            else:
+                view.add_item(discord.ui.Select(
+                    placeholder="Hiện chưa có party nào...",
+                    disabled=True,
+                    options=[discord.SelectOption(label="Trống", value="none")]
+                    ))
             await interaction.followup.send(embed=embed, view=view)
         except Exception as e:
             try:
