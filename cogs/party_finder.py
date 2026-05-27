@@ -82,40 +82,55 @@ async def check_gear_requirements(role_name: str, role_gear_data: dict, dg_confi
 
     return True, "Passed"
 # --- 2. CẢI TIẾN: BROADCAST + PING LIÊN SERVER THEO TÊN ROLE ---
+def find_flexible_role(guild, dg_name):
+    """
+    Tự động tìm role có tên chứa từ khóa của Dungeon.
+    Ví dụ: Dg_name là 'MDG' hoặc 'Marine Dragon' -> tìm role có chữ 'MDG' hoặc 'Marine'.
+    """
+    # Lấy các từ khóa chính từ tên dungeon (loại bỏ các từ nối nếu cần)
+    keywords = dg_name.lower().split() 
+    
+    for role in guild.roles:
+        role_name_lower = role.name.lower()
+        # Nếu bất kỳ từ khóa nào của Dungeon xuất hiện trong tên Role
+        if any(keyword in role_name_lower for keyword in keywords):
+            return role.mention
+            
+    return None # Không tìm thấy role nào phù hợp
 async def broadcast_to_all_servers(bot, embed, party_id_str, dg_config: dict, origin_guild: discord.Guild = None):
     broadcasts = []
     view = BroadcastView(party_id=party_id_str)
     
-    # Lấy chuỗi ID từ field 'ping_role' trong database của bạn
-    ping_role_id_str = dg_config.get("ping_role")
-    target_role_name = None
-
-    # Lấy tên của Role từ Server gốc để làm căn cứ tìm kiếm ở các server khác
-    if ping_role_id_str and origin_guild:
-        origin_role = origin_guild.get_role(int(ping_role_id_str))
-        if origin_role:
-            target_role_name = origin_role.name
+    # Lấy tên dungeon từ config để làm từ khóa tìm kiếm role
+    dg_name = dg_config.get("dg_name", "")
 
     for guild in bot.guilds:
-        # Quét đúng kênh mang tên 'party-finder' ở từng server
+        # Quét kênh 'party-board' ở từng server
         channel = discord.utils.get(guild.text_channels, name="party-board")
         if channel:
             try:
                 content_ping = ""
-                if ping_role_id_str:
-                    # 1. Thử tìm bằng ID trực tiếp (sẽ trúng nếu đây là server gốc)
-                    role = guild.get_role(int(ping_role_id_str))
-                    
-                    # 2. Nếu không tìm thấy ID (server khác), thử tìm theo Tên Role trùng lặp
-                    if not role and target_role_name:
-                        role = discord.utils.get(guild.roles, name=target_role_name)
-                    
-                    if role:
-                        content_ping = f"{role.mention}"
                 
-                # Tiến hành gửi thông báo kèm theo Ping Role tương ứng
+                # LOGIC MỚI: Tự động tìm role có chứa từ khóa của Dungeon
+                # Ví dụ: dg_name là "Marine Dragon Domain", sẽ tìm role có chữ "Marine" hoặc "Dragon"
+                if dg_name:
+                    keywords = dg_name.lower().split()
+                    # Lọc các từ quá ngắn để tránh ping nhầm (ví dụ: "of", "a")
+                    keywords = [k for k in keywords if len(k) > 2]
+                    
+                    for role in guild.roles:
+                        role_name_lower = role.name.lower()
+                        # Nếu role chứa bất kỳ từ khóa nào của dungeon thì ping
+                        if any(keyword in role_name_lower for keyword in keywords):
+                            content_ping = role.mention
+                            break # Tìm thấy role phù hợp đầu tiên là dừng
+                
+                # Tiến hành gửi thông báo
+                # Lưu ý: channel.send là gửi tin nhắn mới, không phải response interaction 
+                # nên sẽ không bị lỗi 404 Unknown Interaction
                 msg = await channel.send(content=content_ping, embed=embed, view=view)
                 broadcasts.append({"channel_id": channel.id, "message_id": msg.id})
+                
             except Exception as e:
                 print(f"Cannot broadcast to guild {guild.name}: {e}")
                 
@@ -216,6 +231,7 @@ class ManagePartyView(discord.ui.View):
 
     @discord.ui.button(label="Disband / Leave", style=discord.ButtonStyle.secondary, row=1)
     async def disband_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)        
         if interaction.user.id == self.party.get('leader_id'):
             await parties_col.delete_one({"_id": self.party['_id']})
             await handle_cross_server_chat(self.bot, self.party, action="delete")
@@ -352,7 +368,6 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         stats = profile.get("my_stats", {})
         dg_config = await get_dungeon_config(party.get('dg_name'))
         
-        # 1. HỆ THỐNG TỰ ĐỘNG CHUYỂN ĐỔI (ALIAS MAPPING)
         ROLE_ALIASES = {
             "dps": ["aa", "sk"],
             "ufm": ["aa", "sk"],
@@ -362,7 +377,6 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
             "future mode": ["aa", "sk"]
         }
         
-        # Nếu role nhập vào nằm trong danh sách bí danh, lấy mảng check ["aa", "sk"]. Nếu không, check đúng từ khóa họ nhập.
         search_keys = ROLE_ALIASES.get(role_entered.lower(), [role_entered.lower()])
         available_roles = [k for k, v in stats.items() if isinstance(v, dict)]
         
@@ -370,13 +384,13 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         passed_actual_role = None
         error_msgs = []
 
-        # 2. KIỂM TRA LẦN LƯỢT CÁC ROLE
+        # 1. KIỂM TRA ĐIỀU KIỆN
         for key in search_keys:
             gear_data = next((v for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), None)
             actual_db_key = next((k for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), key.upper())
             
             if not gear_data:
-                error_msgs.append(f"- `{actual_db_key}`: No gear setup found in /mygear.")
+                error_msgs.append(f"- `{actual_db_key}`: No gear setup found.")
                 continue
                 
             if dg_config:
@@ -384,7 +398,7 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
                 if is_valid:
                     passed_gear_data = gear_data
                     passed_actual_role = actual_db_key
-                    break # Pass điều kiện phát là dừng vòng lặp luôn
+                    break 
                 else:
                     error_msgs.append(f"- `{actual_db_key}`: {reason}")
             else:
@@ -392,39 +406,38 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
                 passed_actual_role = actual_db_key
                 break
 
-        # 3. NẾU KHÔNG CÓ ROLE NÀO PASS
         if not passed_gear_data:
-            roles_str = ", ".join(available_roles) if available_roles else "None"
-            errors = "\n".join(error_msgs)
-            return await interaction.response.send_message(f"❌ **Validation failed for `{role_entered}`:**\n{errors}\n💡 **Your available roles are:** `{roles_str}`", ephemeral=True)
+            return await interaction.response.send_message(f"❌ **Validation failed for `{role_entered}`:**\n" + "\n".join(error_msgs), ephemeral=True)
 
+        # 2. LOGIC HIỂN THỊ DYNAMIC (Đây là phần bạn cần)
         gear_details = []
-        for role_key in ["aa", "sk"]:
-            data = stats.get(role_key.upper()) # Lấy từ DB (AA hoặc SK)
+        # Nếu người dùng chọn DPS (nhóm alias), hiển thị cả AA & SK
+        if role_entered.lower() in ROLE_ALIASES:
+            for r_key in ["AA", "SK"]:
+                data = stats.get(r_key)
+                if isinstance(data, dict):
+                    gear_details.append(f"**{r_key}**: {data.get('gear', 'N/A')}")
+            header_name = "Verified Gear Profiles (AA & SK)"
+        else:
+            # Nếu chọn TANK (hoặc role khác), chỉ hiển thị role đó
+            data = stats.get(passed_actual_role.upper())
             if isinstance(data, dict):
-                gear_details.append(
-                    f"**{role_key.upper()}**: Gear: {data.get('gear', 'N/A')} | "
-                    f"Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}"
-                )
+                gear_details.append(f"**{passed_actual_role}**: {data.get('gear', 'N/A')} | Vice: {data.get('vice', 'N/A')} | Deck: {data.get('deck', 'N/A')}")
+            header_name = f"Verified Gear Profile ({passed_actual_role})"
         
-        gear_summary = "\n".join(gear_details) if gear_details else "No gear data available."
+        gear_summary = "\n".join(gear_details)
 
+        # 3. GỬI CHO LEADER
         leader = self.bot.get_user(party.get('leader_id', 0))
         if leader:
             embed = discord.Embed(title="📩 Join Request Received!", color=discord.Color.green())
             embed.add_field(name="Applicant", value=self.ign.value, inline=True)
-            embed.add_field(name="Discord", value=interaction.user.mention, inline=True)
             embed.add_field(name="Role Selected", value=role_entered.upper(), inline=True)
-            
-            # Hiển thị thông tin kiểm tra cả 2 role
-            embed.add_field(name="Verified Gear Profiles (AA & SK)", 
-                            value=gear_summary, 
-                            inline=False)
+            embed.add_field(name=header_name, value=gear_summary, inline=False)
             
             try:
-                # Gửi cho leader xem luôn cả 2 role
                 await leader.send(embed=embed, view=RequestJoinView(self.bot, self.party_id, interaction.user.id, self.ign.value, role_entered))
-                await interaction.response.send_message(f"✅ Request sent! Leader can see both your AA & SK profiles.", ephemeral=True)
+                await interaction.response.send_message("✅ Request sent!", ephemeral=True)
             except discord.Forbidden:
                 await interaction.response.send_message("❌ Cannot DM the leader.", ephemeral=True)
 
