@@ -585,12 +585,18 @@ class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
         await interaction.followup.send("✅ Requirements updated!", ephemeral=True)
 
 
-class OwnerBroadcastModal(discord.ui.Modal, title='Global Bot Update Announcement'):
-    b_title = discord.ui.TextInput(label="Notification Title", placeholder="", required=True)
-    b_content = discord.ui.TextInput(
-        label="Update details", 
-        style=discord.TextStyle.paragraph, 
-        placeholder="Enter your long message here...", 
+class NewOwnerBroadcastModal(discord.ui.Modal, title='Global Update Announcement'):
+    announcement_title = discord.ui.TextInput(
+        label="Announcement Title",
+        placeholder="Example: New feature update v2.0....",
+        required=True,
+        max_length=256
+    )
+    
+    announcement_content = discord.ui.TextInput(
+        label="Detail content",
+        style=discord.TextStyle.paragraph,
+        placeholder="Enter the details of your update or announcement here..",
         required=True,
         max_length=4000
     )
@@ -600,40 +606,51 @@ class OwnerBroadcastModal(discord.ui.Modal, title='Global Bot Update Announcemen
         self.bot = bot
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Trì hoãn phản hồi để bot có thời gian gửi tin nhắn đến nhiều server
         await interaction.response.defer(ephemeral=True)
         
+        # Thiết kế giao diện tin nhắn
         embed = discord.Embed(
-            title=f"📢 {self.b_title.value}",
-            description=self.b_content.value,
-            color=discord.Color.gold(),
+            title=f"📢 {self.announcement_title.value}",
+            description=self.announcement_content.value,
+            color=discord.Color.brand_green(),
             timestamp=discord.utils.utcnow()
         )
-        embed.set_footer(text="Global Developer Announcement ")
+        embed.set_footer(text="Global System Announcement")
         
-        success = 0
-        failed = 0
+        success_count = 0
+        failed_count = 0
         
-        async for config in server_configs_col.find({"party_channel_id": {"$exists": True}}):
-            g_id = config.get("guild_id")
-            c_id = config.get("party_channel_id")
-            
-            guild = self.bot.get_guild(g_id)
-            if guild:
-                channel = guild.get_channel(c_id)
-                if not channel:
-                    try: channel = await self.bot.fetch_channel(c_id)
-                    except: pass
+        # Quét database để tìm các channel đã được setup bằng lệnh setup_news_channel
+        async for config in server_configs_col.find({"news_channel_id": {"$exists": True}}):
+            channel_id = config.get("news_channel_id")
+            if not channel_id:
+                continue
                 
-                if channel:
-                    try:
-                        await channel.send(embed=embed)
-                        success += 1
-                        continue
-                    except:
-                        pass
-            failed += 1
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                try: 
+                    channel = await self.bot.fetch_channel(channel_id)
+                except Exception: 
+                    pass
             
-        await interaction.followup.send(f"✅ Gửi thông báo hoàn tất!\n• Thành công: **{success}** server.\n• Thất bại/Chưa setup: **{failed}** server.", ephemeral=True)
+            if channel:
+                try:
+                    await channel.send(embed=embed)
+                    success_count += 1
+                    continue
+                except Exception:
+                    pass # Bỏ qua nếu bot bị kick khỏi server hoặc bị tước quyền gửi tin nhắn
+            
+            failed_count += 1
+            
+        # Báo cáo kết quả lại cho bạn
+        await interaction.followup.send(
+            f"✅ **Phát sóng hoàn tất!**\n"
+            f"• Thành công: **{success_count}** server.\n"
+            f"• Thất bại (Không có quyền/Mất kênh): **{failed_count}** server.", 
+            ephemeral=True
+        )
 
 # --- CHAT SYSTEM ---
 async def handle_cross_server_chat(bot, party, user_id=None, action="create", guild=None):
@@ -691,6 +708,7 @@ async def handle_cross_server_chat(bot, party, user_id=None, action="create", gu
                         
     except Exception as e: 
         print(f"Chat Relay error: {e}")
+
 
 # --- COG SETUP ---
 
@@ -812,13 +830,7 @@ class PartyFinderCog(commands.Cog):
         )
         await interaction.response.send_message(f"✅ The News/Update channel has been set up at: {channel.mention}", ephemeral=True)
 
-    class OwnerBroadcastModal(discord.ui.Modal, title='Global Bot Update Announcement'):
-        b_title = discord.ui.TextInput(label="Announcement Title", required=True)
-        b_content = discord.ui.TextInput(label="Detailed content", style=discord.TextStyle.paragraph, required=True)
-
-        def __init__(self, bot):
-            super().__init__()
-            self.bot = bot
+  
 
         async def on_submit(self, interaction: discord.Interaction):
             await interaction.response.defer(ephemeral=True)
@@ -835,6 +847,15 @@ class PartyFinderCog(commands.Cog):
                     except: continue
             
             await interaction.followup.send(f"✅ Notification has been sent to the News/Update channel's **{count}**.", ephemeral=True)
+
+    @app_commands.command(name="ownerbroadcast", description="Send bot update notifications to all News channels (Owner only)")
+    async def ownerbroadcast(self, interaction: discord.Interaction):
+        # Lớp bảo mật: Đảm bảo chỉ chính bạn (người tạo Bot) mới dùng được lệnh này
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("❌ You do not have permission to use Developer commands.!", ephemeral=True)
+        
+        # Mở giao diện nhập thông báo
+        await interaction.response.send_modal(NewOwnerBroadcastModal(self.bot))
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
     async def party_lobby(self, interaction: discord.Interaction):
