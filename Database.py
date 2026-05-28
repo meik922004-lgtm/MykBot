@@ -19,3 +19,4 @@ db = client.database0
 players_col = db.players
 parties_col = db.parties
 dungeon_configs_col = db["dungeon_configs"]
+invite_roles_col = db["invite_roles_config"]
