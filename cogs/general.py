@@ -22,7 +22,7 @@ class HelpTranslationView(discord.ui.View):
                 "🔹 `/addrole`, `/removerole`, `/roles_menu`\n"
                 "🔹 `/set_invite_role`, `/setbless`, `/setboss`\n"
                 "🔹 `/setup_party_channel`: Set channel for Party Finder notifications.\n"
-                "🔹 `/setup_News_channel`: Set channel for News/Update of bot."
+                "🔹 `/setup_news_channel`: Set channel for News/Update of bot."
             ),
             inline=False
         )
@@ -82,7 +82,7 @@ class General(commands.Cog, name="Basic command"):
         embed.description = (
             "**Step 1:** You need to set up your profile first using `/mygear`.\n\n"
             "**Step 2:** Make a new channel (or choose an existing one) to receive party finder notifications using `/setup_party_channel`.\n\n"
-            "**Step 3:** Make a new channel (or choose an existing one) to receive new notifications about updates, etc., from the bot, use /setup_News_channel"
+            "**Step 3:** Make a new channel (or choose an existing one) to receive new notifications about updates, etc., from the bot, use /setup_news_channel"
         )
         await interaction.response.send_message(embed=embed)
     

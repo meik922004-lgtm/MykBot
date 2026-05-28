@@ -800,7 +800,7 @@ class PartyFinderCog(commands.Cog):
         )
         await interaction.response.send_message(f"✅ {channel.mention} will receive party notification", ephemeral=True)
 
-    @app_commands.command(name="setup_News_channel", description="Select channel to receive update/bot annoucement")
+    @app_commands.command(name="setup_news_channel", description="Select channel to receive update/bot annoucement")
     async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ You need administrator privileges.!", ephemeral=True)
