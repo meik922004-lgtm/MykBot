@@ -415,9 +415,9 @@ class LobbyPaginationView(discord.ui.View):
     async def create_party(self, interaction: discord.Interaction, button: discord.ui.Button):
         profile = await get_player_profile(interaction.user.id)
         if not profile:
-            return await interaction.followup.send("⚠️ Please set up `/mygear` first!", ephemeral=True)
+            return interaction.response.send_message("⚠️ Please set up `/mygear` first!", ephemeral=True)
         if await parties_col.find_one({"members.user_id": interaction.user.id}):
-            return await interaction.followup.send("❌ You are already in a party!", ephemeral=True)
+            return interaction.response.send_message("❌ You are already in a party!", ephemeral=True)
             
         await interaction.response.send_modal(CreatePartyModal(self.bot, profile.get('ign', 'Unknown'), self))
 
@@ -518,15 +518,18 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
 
 
 class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
+    ign_input = discord.ui.TextInput(label='Your In-game Name', placeholder='Type your IGN here...', required=True)
     dg_name = discord.ui.TextInput(label='Dungeon Name', placeholder='E.g., Stage of Clown(PIED)', required=True)
     role = discord.ui.TextInput(label='Your Role as Leader (e.g., DPS, TANK)', required=True)
     start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g., 20:00 or ASAP', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
-    def __init__(self, bot, ign, lobby_view):
+    def __init__(self, bot, ign, lobby_view, current_ign):
         super().__init__()
         self.bot = bot
         self.ign = ign
+        self.lobby_view = lobby_view
+        self.ign_input.default = current_ign 
         self.lobby_view = lobby_view
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -534,7 +537,8 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         profile = await get_player_profile(interaction.user.id)
         role_entered = self.role.value.strip()
         stats = profile.get("my_stats", {})
-        
+        leader_ign = self.ign_input.value.strip()
+
         # Khởi tạo config mặc định nếu DB chưa có Dungeon này
         dg_config = await get_dungeon_config(self.dg_name.value)
         if not dg_config:
@@ -589,6 +593,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
 
         party_doc = {
             "leader_id": interaction.user.id,
+            "leader_id": interaction.user.id,
             "leader_ign": self.ign,
             "dg_name": self.dg_name.value,
             "start_time": self.start_time.value,
@@ -639,7 +644,7 @@ class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"requirements": self.new_req.value}})
-        asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))
+        asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))    
         await interaction.followup.send("✅ Requirements updated!", ephemeral=True)
 
 
