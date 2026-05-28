@@ -6,11 +6,30 @@ from typing import List, Optional
 import asyncio
 import re  # Thêm thư viện Regex để xử lý chuỗi Ping không phân biệt hoa thường
 
+
 # Import direct collections from your Database.py
 from Database import players_col, parties_col, dungeon_configs_col
 
 # --- DATABASE HELPER FUNCTIONS ---
+from datetime import datetime, timedelta
 
+def get_discord_timestamp(time_str: str):
+    """Chuyển chuỗi HH:MM thành <t:TIMESTAMP:t>"""
+    try:
+        now = datetime.now()
+        # Parse giờ:phút
+        target_time = datetime.strptime(time_str, "%H:%M").time()
+        # Tạo đối tượng datetime cho ngày hôm nay vào giờ đó
+        dt = datetime.combine(now.date(), target_time)
+        
+        # Nếu giờ đã qua, lấy ngày mai
+        if dt < now:
+            dt += timedelta(days=1)
+            
+        unix_ts = int(dt.timestamp())
+        return f"<t:{unix_ts}:t>" # :t hiển thị giờ phút (ví dụ: 20:00)
+    except:
+        return time_str # Trả về text gốc nếu lỗi
 async def get_player_profile(user_id: int):
     return await players_col.find_one({"user_id": user_id})
 
@@ -519,7 +538,10 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
-        
+        time_val = self.start_time.value.strip()
+   
+
+        formatted_time = get_discord_timestamp(time_val)
         # Chỉ kiểm tra xem user đã có profile chưa
         if not profile:
             return await interaction.followup.send("⚠️ Please setup your gear profile first(/mygear) before use this function!.", ephemeral=True)
@@ -532,7 +554,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             "leader_id": interaction.user.id,
             "leader_ign": leader_ign, 
             "dg_name": self.dg_name.value,
-            "start_time": self.start_time.value,
+            "start_time": formatted_time,
             "requirements": self.requirements.value,
             "members": [{"user_id": interaction.user.id, "ign": leader_ign, "role": role_entered}], 
             "broadcasts": [],
