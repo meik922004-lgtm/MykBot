@@ -4,11 +4,13 @@ from discord import app_commands
 from bson.objectid import ObjectId
 from typing import List, Optional
 import asyncio
-import re  # Thêm thư viện Regex để xử lý chuỗi Ping không phân biệt hoa thường
+import re  # Xử lý chuỗi và tách từ khóa Ping không phân biệt hoa thường
 
-
-# Import direct collections from your Database.py
+# Import direct collections từ Database.py của bạn
 from Database import players_col, parties_col, dungeon_configs_col
+
+# Khởi tạo động server_configs từ database sẵn có để lưu cấu hình channel
+server_configs_col = players_col.database["server_configs"]
 
 # --- DATABASE HELPER FUNCTIONS ---
 from datetime import datetime, timedelta
@@ -17,19 +19,17 @@ def get_discord_timestamp(time_str: str):
     """Chuyển chuỗi HH:MM thành <t:TIMESTAMP:R>"""
     try:
         now = datetime.now()
-        # Parse giờ:phút
         target_time = datetime.strptime(time_str, "%H:%M").time()
-        # Tạo đối tượng datetime cho ngày hôm nay vào giờ đó
         dt = datetime.combine(now.date(), target_time)
         
-        # Nếu giờ đã qua, lấy ngày mai
         if dt < now:
             dt += timedelta(days=1)
             
         unix_ts = int(dt.timestamp())
-        return f"<t:{unix_ts}:R>" # :t hiển thị giờ phút (ví dụ: 20:00)
+        return f"<t:{unix_ts}:R>"
     except:
-        return time_str # Trả về text gốc nếu lỗi
+        return time_str
+
 async def get_player_profile(user_id: int):
     return await players_col.find_one({"user_id": user_id})
 
@@ -49,11 +49,16 @@ async def update_broadcast_messages(bot, party_id: str):
         return
 
     embed = create_party_embed(party)
-    dg_config = await get_dungeon_config(party.get('dg_name', ''))
+    dg_config = await get_dungeon_config(party.get('dg_name', '')) or {"dg_name": party.get('dg_name', '')}
     
     tasks = []
     for msg_data in party.get("broadcasts", []):
         channel = bot.get_channel(msg_data["channel_id"])
+        if not channel:
+            try:
+                channel = await bot.fetch_channel(msg_data["channel_id"])
+            except:
+                pass
         if channel:
             tasks.append(_do_single_edit(channel, msg_data["message_id"], embed))
             
@@ -102,7 +107,8 @@ async def check_gear_requirements(role_name: str, role_gear_data: dict, dg_confi
     return True, "Passed"
 
 def find_flexible_role(guild, dg_name):
-    keywords = dg_name.lower().split() 
+    raw_words = re.findall(r'\b\w+\b', dg_name.lower())
+    keywords = [w for w in raw_words if len(w) >= 3 and w not in ['dungeon', 'dg']]
     for role in guild.roles:
         role_name_lower = role.name.lower()
         if any(keyword in role_name_lower for keyword in keywords):
@@ -115,19 +121,37 @@ async def broadcast_to_all_servers(bot, embed, party_id_str, dg_config: dict, or
     dg_name = dg_config.get("dg_name", "")
 
     for guild in bot.guilds:
-        channel = discord.utils.get(guild.text_channels, name="party-board")
+        channel = None
+        # Quét cấu hình lưu theo Channel ID trong Database trước
+        config = await server_configs_col.find_one({"guild_id": guild.id})
+        if config and config.get("party_channel_id"):
+            channel = guild.get_channel(config["party_channel_id"])
+            if not channel:
+                try:
+                    channel = await bot.fetch_channel(config["party_channel_id"])
+                except:
+                    pass
+        
+        # Nếu chưa được setup bằng ID, tự động fallback tìm theo tên "party-board" cũ
+        if not channel:
+            channel = discord.utils.get(guild.text_channels, name="party-board")
+            
         if channel:
             try:
                 content_ping = ""
                 if dg_name:
-                    keywords = dg_name.lower().split()
-                    keywords = [k for k in keywords if len(k) > 2]
+                    # Tách các từ, lọc độ dài từ >= 3 ký tự và loại bỏ hoàn toàn chữ 'dungeon', 'dg'
+                    raw_words = re.findall(r'\b\w+\b', dg_name.lower())
+                    keywords = [k for k in raw_words if len(k) >= 3 and k not in ['dungeon', 'dg']]
                     
+                    matched_roles = []
                     for role in guild.roles:
                         role_name_lower = role.name.lower()
                         if any(keyword in role_name_lower for keyword in keywords):
-                            content_ping = role.mention
-                            break 
+                            matched_roles.append(role.mention)
+                    
+                    if matched_roles:
+                        content_ping = " ".join(matched_roles)
                 
                 msg = await channel.send(content=content_ping, embed=embed, view=view)
                 broadcasts.append({"channel_id": channel.id, "message_id": msg.id})
@@ -287,10 +311,8 @@ class ManagePartyView(discord.ui.View):
             
             user = self.bot.get_user(target_id)
             if not user:
-                try:
-                    user = await self.bot.fetch_user(target_id)
-                except Exception:
-                    user = None
+                try: user = await self.bot.fetch_user(target_id)
+                except Exception: user = None
 
             if user:
                 try:
@@ -310,7 +332,6 @@ class ManagePartyView(discord.ui.View):
             )
 
         select.callback = kick_callback
-
         kick_view = discord.ui.View()
         kick_view.add_item(select)
         
@@ -333,6 +354,9 @@ class ManagePartyView(discord.ui.View):
             embed = discord.Embed(title="❌ Party Disbanded", color=discord.Color.red())
             for msg_data in self.party.get("broadcasts", []):
                 channel = self.bot.get_channel(msg_data["channel_id"])
+                if not channel:
+                    try: channel = await self.bot.fetch_channel(msg_data["channel_id"])
+                    except: pass
                 if channel:
                     try:
                         msg = await channel.fetch_message(msg_data["message_id"])
@@ -349,15 +373,11 @@ class ManagePartyView(discord.ui.View):
                 if m_id and m_id != interaction.user.id:
                     user = self.bot.get_user(m_id)
                     if not user:
-                        try:
-                            user = await self.bot.fetch_user(m_id)
-                        except:
-                            user = None
+                        try: user = await self.bot.fetch_user(m_id)
+                        except: user = None
                     if user:
-                        try:
-                            await user.send(embed=disband_embed)
-                        except discord.Forbidden:
-                            pass
+                        try: await user.send(embed=disband_embed)
+                        except discord.Forbidden: pass
 
             await interaction.followup.send("Party has been disbanded!", ephemeral=True)
         else:
@@ -373,14 +393,14 @@ class ManagePartyView(discord.ui.View):
         
         await interaction.response.defer(ephemeral=True)
         embed = create_party_embed(self.party)
-        dg_config = await get_dungeon_config(self.party.get('dg_name', '')) or {}
+        dg_config = {"dg_name": self.party.get('dg_name', '')}
         
         new_broadcasts = await broadcast_to_all_servers(self.bot, embed, str(self.party['_id']), dg_config)
         if new_broadcasts:
             await parties_col.update_one({"_id": self.party['_id']}, {"$push": {"broadcasts": {"$each": new_broadcasts}}})
             await interaction.followup.send("Broadcast sent to all servers!", ephemeral=True)
         else:
-            await interaction.followup.send("No 'party-board' channels found to broadcast.", ephemeral=True)
+            await interaction.followup.send("No party channels found to broadcast.", ephemeral=True)
 
 
 class LobbyPaginationView(discord.ui.View):
@@ -410,7 +430,6 @@ class LobbyPaginationView(discord.ui.View):
             return await interaction.response.send_message("⚠️ Please set your gear profile (/mygear) before use this function.", ephemeral=True)
         
         party_id = self.select.values[0]
-        # Check xem đã ở trong party nào chưa
         existing_party = await parties_col.find_one({"members.user_id": interaction.user.id})
         if existing_party:
             return await interaction.response.send_message("❌ You already in party", ephemeral=True)
@@ -502,7 +521,6 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
 
         role_entered = self.role.value.strip()
         stats = profile.get("my_stats", {})
-        
         gear_summary = await get_formatted_gear_summary(stats, role_entered)
 
         leader = self.bot.get_user(party.get('leader_id', 0)) or await self.bot.fetch_user(party.get('leader_id', 0))
@@ -525,7 +543,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     ign_input = discord.ui.TextInput(label='Your In-game Name', placeholder='Type your IGN here...', required=True)
     dg_name = discord.ui.TextInput(label='Dungeon Name', placeholder='E.g., Stage of Clown(PIED)', required=True)
     role = discord.ui.TextInput(label='Your Role as Leader (e.g., DPS, TANK)', required=True)
-    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g: 20:00, 15:30, HH:MM, time dislay on your timezone', required=True)
+    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g: 20:00, 15:30, HH:MM', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
     def __init__(self, bot, current_ign, lobby_view, parent_interaction: discord.Interaction):
@@ -539,17 +557,15 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         time_val = self.start_time.value.strip()
-   
 
         formatted_time = get_discord_timestamp(time_val)
-        # Chỉ kiểm tra xem user đã có profile chưa
         if not profile:
             return await interaction.followup.send("⚠️ Please setup your gear profile first(/mygear) before use this function!.", ephemeral=True)
             
         leader_ign = self.ign_input.value.strip()
         role_entered = self.role.value.strip()
 
-        # Tạo party trực tiếp, không cần check gear requirements nữa
+        # Tạo party trực tiếp và lưu thông tin
         party_doc = {
             "leader_id": interaction.user.id,
             "leader_ign": leader_ign, 
@@ -567,8 +583,8 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         await handle_cross_server_chat(self.bot, party_doc, action="create", guild=interaction.guild)
 
         embed = create_party_embed(party_doc)
-        # Nếu chưa có config dungeon, vẫn tạo party bình thường
-        dg_config = await get_dungeon_config(self.dg_name.value) or {"dg_name": self.dg_name.value}
+        # Không lưu thông tin config dungeon vào DB nữa, truyền trực tiếp tên DG của form nhập để scan ping role
+        dg_config = {"dg_name": self.dg_name.value}
         broadcast_records = await broadcast_to_all_servers(self.bot, embed, str(result.inserted_id), dg_config, interaction.guild)
         
         if broadcast_records:
@@ -576,6 +592,8 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             
         await interaction.followup.send("✅ Created party!", ephemeral=True)
         await self.lobby_view.update_lobby(self.parent_interaction, self.lobby_view.page)
+
+
 class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
 
@@ -591,6 +609,7 @@ class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
         asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))
         await interaction.followup.send("✅ Dungeon name updated!", ephemeral=True)
 
+
 class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
     new_req = discord.ui.TextInput(label='New Requirements', style=discord.TextStyle.paragraph, required=True)
 
@@ -605,6 +624,59 @@ class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
         await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"requirements": self.new_req.value}})
         asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))    
         await interaction.followup.send("✅ Requirements updated!", ephemeral=True)
+
+
+class OwnerBroadcastModal(discord.ui.Modal, title='Global Bot Update Announcement'):
+    """Bot Owner's interface for submitting long notification forms."""
+    b_title = discord.ui.TextInput(label="Notification Title", placeholder="", required=True)
+    b_content = discord.ui.TextInput(
+        label="Update details", 
+        style=discord.TextStyle.paragraph, 
+        placeholder="NEnter your long message here...", 
+        required=True,
+        max_length=4000
+    )
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        embed = discord.Embed(
+            title=f"📢 {self.b_title.value}",
+            description=self.b_content.value,
+            color=discord.Color.gold(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_footer(text="Global Developer Announcement ")
+        
+        success = 0
+        failed = 0
+        
+        # Quét qua toàn bộ server đã thiết lập ID channel nhận tin
+        async for config in server_configs_col.find({"party_channel_id": {"$exists": True}}):
+            g_id = config.get("guild_id")
+            c_id = config.get("party_channel_id")
+            
+            guild = self.bot.get_guild(g_id)
+            if guild:
+                channel = guild.get_channel(c_id)
+                if not channel:
+                    try: channel = await self.bot.fetch_channel(c_id)
+                    except: pass
+                
+                if channel:
+                    try:
+                        await channel.send(embed=embed)
+                        success += 1
+                        continue
+                    except:
+                        pass
+            failed += 1
+            
+        await interaction.followup.send(f"✅ Gửi thông báo hoàn tất!\n• Thành công: **{success}** server.\n• Thất bại/Chưa setup: **{failed}** server.", ephemeral=True)
 
 # --- CHAT SYSTEM ---
 async def handle_cross_server_chat(bot, party, user_id=None, action="create", guild=None):
@@ -629,10 +701,7 @@ async def handle_cross_server_chat(bot, party, user_id=None, action="create", gu
             if member:
                 await member.send(f"👋 **Party Chat Joined!** You are now in the party for **{dg_name}**.\n💬 *Tips: Any message you send to me here will be forwarded to your party members.*")
             
-            # Cập nhật thông báo lấy đúng IGN của người mới vào
             new_member_ign = "A new member"
-            # Lưu ý ở bước add, dữ liệu party truyền vào có thể chưa được cập nhật DB kịp, 
-            # nên nếu member có tên Discord thì ta lấy tạm, hoặc người đó sẽ hiện A new member.
             for m in party.get('members', []):
                 if m['user_id'] == user_id:
                     new_member_ign = m.get('ign', 'A new member')
@@ -648,7 +717,6 @@ async def handle_cross_server_chat(bot, party, user_id=None, action="create", gu
                         await other.send(f"📥 **{new_member_ign if new_member_ign != 'A new member' else (member.name if member else 'Someone')}** has joined the party chat!")
 
         elif action == "remove" and user_id:
-            # Lấy tên IGN của người vừa rời đi/bị kick từ dữ liệu party cũ
             left_ign = "A member"
             for m in party.get('members', []):
                 if m.get('user_id') == user_id:
@@ -689,7 +757,6 @@ class PartyFinderCog(commands.Cog):
                 sender_ign = m.get('ign', message.author.name)
                 break
 
-        # --- XỬ LÝ PING (PING CÁ NHÂN VÀ PING ALL) ---
         msg_content = message.content
         
         if "@everyone" in msg_content or "@all" in msg_content:
@@ -699,11 +766,8 @@ class PartyFinderCog(commands.Cog):
             for m in party.get('members', []):
                 m_ign = m.get('ign')
                 if m_ign:
-                    # Dùng Regex để tìm đúng @IGN đã nhập, không phân biệt hoa/thường.
-                    # Ký hiệu (?!\w) đảm bảo chỉ bắt đúng tên (ví dụ: gõ @MK2 sẽ không bị nhầm thành @MK25)
                     pattern = re.compile(rf"@{re.escape(m_ign)}(?!\w)", re.IGNORECASE)
                     msg_content = pattern.sub(f"<@{m['user_id']}>", msg_content)
-        # ---------------------------------------------
 
         dg_name = party.get('dg_name', 'Unknown DG')
         chat_content = f"**[{dg_name}] {sender_ign}**: {msg_content}"
@@ -716,18 +780,14 @@ class PartyFinderCog(commands.Cog):
             if m['user_id'] != message.author.id:
                 target_user = self.bot.get_user(m['user_id'])
                 if not target_user:
-                    try:
-                        target_user = await self.bot.fetch_user(m['user_id'])
-                    except Exception:
-                        continue 
+                    try: target_user = await self.bot.fetch_user(m['user_id'])
+                    except Exception: continue 
                 
                 if target_user:
-                    try:
-                        await target_user.send(content=chat_content)
-                    except discord.Forbidden:
-                        pass
+                    try: await target_user.send(content=chat_content)
+                    except discord.Forbidden: pass
 
-    # --- CÁC TƯƠNG TÁC GIAO DIỆN CŨ ---
+    # --- CÁC TƯƠNG TÁC GIAO DIỆN ---
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if not interaction.data: return
@@ -748,7 +808,6 @@ class PartyFinderCog(commands.Cog):
             
         elif custom_id == "bcast_lobby":
             await interaction.response.defer(ephemeral=True)
-            
             profile = await get_player_profile(interaction.user.id)
             if not profile:
                 return await interaction.followup.send("⚠️ Pls set up your gear profile(/mygear) first before use this function", ephemeral=True)
@@ -773,11 +832,32 @@ class PartyFinderCog(commands.Cog):
             
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
+    # --- LỆNH SLASH CONFIG CHANNEL (Dành cho Server Admin) ---
+    @app_commands.command(name="setup_party_channel", description="CConfigure Channel ID to receive Party Board notifications for this server..")
+    @app_commands.describe(channel="Select a text channel to receive public party-seeking posts")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+        await server_configs_col.update_one(
+            {"guild_id": interaction.guild_id},
+            {"$set": {"party_channel_id": channel.id}},
+            upsert=True
+        )
+        await interaction.followup.send(f"✅ Party Finder notification channel has been successfully configured.{channel.mention} (ID: `{channel.id}`)", ephemeral=True)
+
+    # --- LỆNH GLOBAL BROADCAST (Dành riêng cho Bot Owner) ---
+    @app_commands.command(name="owner_broadcast", description="[Owner Bot Only] Send system-wide update notifications/long messages..")
+    async def owner_broadcast(self, interaction: discord.Interaction):
+        # Kiểm tra xem user thực hiện có phải Owner của Application không
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("❌ This command is only available to Developers (Bot Owners)!", ephemeral=True)
+        
+        # Mở form điền văn bản cập nhật hệ thống rộng
+        await interaction.response.send_modal(OwnerBroadcastModal(self.bot))
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
     async def party_lobby(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        
         profile = await get_player_profile(interaction.user.id)
         if not profile:
             return await interaction.followup.send("⚠️ Pls set up your gear profile(/mygear) first before use this function", ephemeral=True)
