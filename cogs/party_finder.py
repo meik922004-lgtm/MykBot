@@ -632,7 +632,7 @@ class OwnerBroadcastModal(discord.ui.Modal, title='Global Bot Update Announcemen
     b_content = discord.ui.TextInput(
         label="Update details", 
         style=discord.TextStyle.paragraph, 
-        placeholder="NEnter your long message here...", 
+        placeholder="Enter your long message here...", 
         required=True,
         max_length=4000
     )
@@ -833,17 +833,28 @@ class PartyFinderCog(commands.Cog):
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     # --- LỆNH SLASH CONFIG CHANNEL (Dành cho Server Admin) ---
-    @app_commands.command(name="setup_party_channel", description="CConfigure Channel ID to receive Party Board notifications for this server..")
+    @app_commands.command(name="setup_party_channel", description="Configure Channel ID to receive Party Board notifications for this server.")
     @app_commands.describe(channel="Select a text channel to receive public party-seeking posts")
-    @app_commands.checks.has_permissions(administrator=True)
     async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        # Kiểm tra quyền: Phải là Admin HOẶC là Owner có ID chỉ định
+        is_admin = interaction.user.guild_permissions.administrator
+        is_owner = (interaction.user.id == 1283689737567211581)
+
+        if not (is_admin or is_owner):
+            return await interaction.response.send_message(
+                "❌ You dont have permission to use this command!", ephemeral=True
+            )
+
         await interaction.response.defer(ephemeral=True)
         await server_configs_col.update_one(
             {"guild_id": interaction.guild_id},
             {"$set": {"party_channel_id": channel.id}},
             upsert=True
         )
-        await interaction.followup.send(f"✅ Party Finder notification channel has been successfully configured.{channel.mention} (ID: `{channel.id}`)", ephemeral=True)
+        await interaction.followup.send(
+            f"✅ Party Finder notification channel has been successfully configured: {channel.mention} (ID: `{channel.id}`)", 
+            ephemeral=True
+        )
 
     # --- LỆNH GLOBAL BROADCAST (Dành riêng cho Bot Owner) ---
     @app_commands.command(name="owner_broadcast", description="[Owner Bot Only] Send system-wide update notifications/long messages..")
