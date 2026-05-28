@@ -240,26 +240,38 @@ class ManagePartyView(discord.ui.View):
         await interaction.response.send_modal(EditReqModal(self.party, interaction.client))
 
     @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=0)
     async def kick_member(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.party.get('leader_id'):
             return await interaction.response.send_message("Only the leader can kick members!", ephemeral=True)
             
-        kickable_members = [m for m in self.party.get('members', []) if m.get('user_id') != interaction.user.id]
+        # Tải lại dữ liệu nhóm mới nhất từ database để tránh danh sách thành viên bị cũ
+        party_data = await parties_col.find_one({"_id": self.party['_id']})
+        if not party_data:
+            return await interaction.response.send_message("Party no longer exists.", ephemeral=True)
+            
+        kickable_members = [m for m in party_data.get('members', []) if m.get('user_id') != interaction.user.id]
         if not kickable_members:
             return await interaction.response.send_message("No members to kick.", ephemeral=True)
             
-        options = [discord.SelectOption(label=m.get('ign', 'Unknown'), description=f"Role: {m.get('role')}", value=str(m.get('user_id'))) for m in kickable_members]
+        options = [
+            discord.SelectOption(
+                label=m.get('ign', 'Unknown'), 
+                description=f"Role: {m.get('role')}", 
+                value=str(m.get('user_id'))
+            ) for m in kickable_members
+        ]
         select = discord.ui.Select(placeholder="Select member to kick...", options=options)
         
         async def kick_callback(inter: discord.Interaction):
             await inter.response.defer(ephemeral=True)
             target_id = int(select.values[0])
             
+            # Tiến hành xóa thành viên khỏi database
             await parties_col.update_one({"_id": self.party['_id']}, {"$pull": {"members": {"user_id": target_id}}})
             await handle_cross_server_chat(self.bot, self.party, target_id, action="remove")
             await update_broadcast_messages(self.bot, str(self.party['_id']))
             
-            # GIẢI PHÁP SỬA LỖI 1: Fetch user toàn server để gửi DM thông báo kick
             user = self.bot.get_user(target_id)
             if not user:
                 try:
@@ -278,9 +290,24 @@ class ManagePartyView(discord.ui.View):
                 except discord.Forbidden:
                     pass 
 
-            await inter.followup.send(f"✅ Successfully kicked {user.name if user else 'user'} and notified them.", ephemeral=True)
+            # Làm vô hiệu hóa menu sau khi đã kick thành công để tránh bấm lại
+            select.disabled = True
+            await inter.edit_original_response(
+                content=f"✅ Successfully kicked **{user.name if user else 'user'}** and notified them.", 
+                view=kick_view
+            )
 
         select.callback = kick_callback
+
+        # SỬA LỖI TẠI ĐÂY: Tạo một View phụ tạm thời chứa thanh Select và gửi nó đi
+        kick_view = discord.ui.View()
+        kick_view.add_item(select)
+        
+        await interaction.response.send_message(
+            content="Vui lòng chọn thành viên bạn muốn trục xuất khỏi nhóm:", 
+            view=kick_view, 
+            ephemeral=True
+        )
 
     @discord.ui.button(label="Disband / Leave", style=discord.ButtonStyle.secondary, row=1)
     async def disband_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -666,31 +693,43 @@ class PartyFinderCog(commands.Cog):
     # --- HỆ THỐNG LẮNG NGHE VÀ CHUYỂN TIẾP TIN NHẮN (DM RELAY) ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        # 1. Bỏ qua nếu tin nhắn là của bot hoặc gửi trên kênh của server (chỉ nhận tin nhắn DM)
         if message.author.bot or message.guild is not None:
             return
 
-        # 2. Kiểm tra xem người dùng này có đang trong party nào không
         party = await parties_col.find_one({"members.user_id": message.author.id})
         if not party:
-            return # Không ở trong party thì bot bỏ qua tin nhắn này
+            return 
 
-        # 3. Lấy tên IGN in-game của người gửi
         sender_ign = "Unknown"
         for m in party.get('members', []):
             if m['user_id'] == message.author.id:
                 sender_ign = m.get('ign', message.author.name)
                 break
 
-        # 4. Định dạng tin nhắn gửi đi bằng Embed
-        chat_content = f"**{sender_ign}**: {message.content}"
+        # --- XỬ LÝ PING (PING CÁ NHÂN VÀ PING ALL) ---
+        msg_content = message.content
         
-        # Xử lý nếu người dùng gửi kèm hình ảnh hoặc file
+        # 1. Ping cả nhóm nếu gõ @everyone hoặc @all
+        if "@everyone" in msg_content or "@all" in msg_content:
+            # Tạo danh sách các mention: <@ID1> <@ID2> ...
+            mentions = " ".join([f"<@{m['user_id']}>" for m in party.get('members', [])])
+            msg_content = msg_content.replace("@everyone", mentions).replace("@all", mentions)
+        
+        # 2. Ping cá nhân nếu gõ @Tên_IGN
+        else:
+            for m in party.get('members', []):
+                m_ign = m.get('ign')
+                if m_ign and f"@{m_ign}" in msg_content:
+                    msg_content = msg_content.replace(f"@{m_ign}", f"<@{m['user_id']}>")
+        # ---------------------------------------------
+
+        dg_name = party.get('dg_name', 'Unknown DG')
+        chat_content = f"**[{dg_name}] {sender_ign}**: {msg_content}"
+        
         if message.attachments:
             attachment_urls = "\n".join([att.url for att in message.attachments])
             chat_content += f"\n{attachment_urls}"
 
-        # 5. Chuyển tiếp tin nhắn cho các thành viên CÒN LẠI trong party
         for m in party.get('members', []):
             if m['user_id'] != message.author.id:
                 target_user = self.bot.get_user(m['user_id'])
@@ -702,11 +741,9 @@ class PartyFinderCog(commands.Cog):
                 
                 if target_user:
                     try:
-                        # Gửi dưới dạng content text thay vì embed
                         await target_user.send(content=chat_content)
                     except discord.Forbidden:
                         pass
-
     # --- CÁC TƯƠNG TÁC GIAO DIỆN CŨ CỦA BẠN ---
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
