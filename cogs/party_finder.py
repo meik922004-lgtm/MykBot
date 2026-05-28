@@ -14,7 +14,7 @@ from Database import players_col, parties_col, dungeon_configs_col
 from datetime import datetime, timedelta
 
 def get_discord_timestamp(time_str: str):
-    """Chuyển chuỗi HH:MM thành <t:TIMESTAMP:t>"""
+    """Chuyển chuỗi HH:MM thành <t:TIMESTAMP:R>"""
     try:
         now = datetime.now()
         # Parse giờ:phút
@@ -27,7 +27,7 @@ def get_discord_timestamp(time_str: str):
             dt += timedelta(days=1)
             
         unix_ts = int(dt.timestamp())
-        return f"<t:{unix_ts}:t>" # :t hiển thị giờ phút (ví dụ: 20:00)
+        return f"<t:{unix_ts}:R>" # :t hiển thị giờ phút (ví dụ: 20:00)
     except:
         return time_str # Trả về text gốc nếu lỗi
 async def get_player_profile(user_id: int):
@@ -525,7 +525,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     ign_input = discord.ui.TextInput(label='Your In-game Name', placeholder='Type your IGN here...', required=True)
     dg_name = discord.ui.TextInput(label='Dungeon Name', placeholder='E.g., Stage of Clown(PIED)', required=True)
     role = discord.ui.TextInput(label='Your Role as Leader (e.g., DPS, TANK)', required=True)
-    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g., 20:00 or ASAP', required=True)
+    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g: 20:00, 15:30, HH:MM, time dislay on your timezone', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
     def __init__(self, bot, current_ign, lobby_view, parent_interaction: discord.Interaction):
