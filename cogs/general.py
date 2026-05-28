@@ -12,54 +12,46 @@ class HelpTranslationView(discord.ui.View):
         super().__init__(timeout=None)
         
     def get_translated_embed(self, user_name: str) -> discord.Embed:
-        embed = discord.Embed(color=discord.Color.green())
-        
-        embed.title = "📖 MyK Bot - Command Directory"
-        embed.description = (
-            "Welcome to MyK Bot! Please ensure you set your profile gear first using "
-            "**/mygear** to fully utilize dungeon information and party features.\n\n"
-            "⚠️ **Important:** Setting up your gear profile is required for party matchmaking and stats verification."
+        embed = discord.Embed(title="📖 MyK Bot - Command Directory", color=discord.Color.green())
+        embed.description = "⚠️ **You need to setup profile first before using some functions.**\nSetting up your gear profile is required for party matchmaking and stats verification."
+
+        # 1. Admin Commands
+        embed.add_field(
+            name="🛠️ Setup Commands (Admin Only)",
+            value=(
+                "🔹 `/addrole`, `/removerole`, `/roles_menu`\n"
+                "🔹 `/set_invite_role`, `/setbless`, `/setboss`\n"
+                "🔹 `/setup_party_channel`: Set channel for Party Finder notifications."
+            ),
+            inline=False
         )
 
-        # 1. General Commands
+        # 2. Profile Commands
+        embed.add_field(
+            name="👤 Profile Commands",
+            value=(
+                "🔹 `/mygear`: Setup/Update your character gear profile.\n"
+                "🔹 `/showmygear`: View your gear profile."
+            ),
+            inline=False
+        )
+
+        # 3. General Commands
         embed.add_field(
             name="📁 General Commands",
             value=(
-                "🔹 `/hello`: Say hi to the bot.\n"
-                "🔹 `/help`: Open this command menu.\n"
-                "🔹 `/schedule`: View spawn times for Raids/Bosses.\n"
-                "🔹 `/mygear`: Setup/Update your character gear profile (REQUIRED).\n"
-                "🔹 `/showmygear`:Show your gear profile(everyone can see).\n"
+                "🔹 `/party_lobby`: Create or manage party.\n"
                 "🔹 `/dglist`: View list of supported dungeons.\n"
-                "🔹 `/party_lobby`: Create or manage your party lobby."
+                "🔹 `/hello`: Say hi to the bot.\n"
+                "🔹 `/help`: Open this menu.\n"
+                "🔹 `/setupguide`: View bot setup guide."
             ),
-            inline=False
-        )
-
-        # 2. Admin Only
-        embed.add_field(
-            name="📁 Admin Only",
-            value=(
-                "🔹 `/setbless [min] [maps]`: Set bless raid timer.""\n"
-                "🔹 `/setboss [boss] [map] [HH:MM]`: Set digital tour timer.""\n"
-                "🔹 `/setup_role_panel`: Deploy the server role assignment menu.""\n"
-                "🔹 `/add_role`: Add role to menu panel.""\n"
-                "🔹 `/remove_role`: Remove role to menu panel."
-            ),
-            inline=False
-        )
-
-        # 3. Owner Only
-        embed.add_field(
-            name="📁 Owner Only",
-            value="🔹 `/sync`: Sync slash commands with Discord API.",
             inline=False
         )
 
         embed.set_footer(text=f"Requested by {user_name} | MyK Bot")
         return embed
 
-    # Nút bấm vẫn giữ nguyên để người dùng có thể gọi lại menu nếu cần
     @discord.ui.button(label="Refresh Menu", style=discord.ButtonStyle.primary, custom_id="help_refresh")
     async def refresh_btn(self, inter: discord.Interaction, btn: discord.ui.Button):
         await inter.response.edit_message(embed=self.get_translated_embed(inter.user.display_name), view=self)
@@ -77,11 +69,21 @@ class General(commands.Cog, name="Basic command"):
     async def hello(self, interaction: discord.Interaction):
         await interaction.response.send_message(f"👋 Hello {interaction.user.mention}! Im MyK bot- customed bot for DMW/DMO Wish you have an awesome day gaming! 🦖")
 
-    @app_commands.command(name="help", description="open helper for commands")
+    @app_commands.command(name="help", description="Open helper for commands")
     async def help(self, interaction: discord.Interaction):
         view = HelpTranslationView()
         embed = view.get_translated_embed(interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name="setupguide", description="View the step-by-step setup guide for the bot")
+    async def setupguide(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="📋 Bot Setup Guide", color=discord.Color.gold())
+        embed.description = (
+            "**Step 1:** You need to set up your profile first using `/mygear`.\n\n"
+            "**Step 2:** Make a new channel (or choose an existing one) to receive party finder notifications using `/setup_party_channel`.\n\n"
+            "**Step 3:** Make a new channel (or choose an existing one) to receive new notifications about updates, etc., from the bot."
+        )
+        await interaction.response.send_message(embed=embed)
     
     @app_commands.command(name="schedule", description="To see scheule spawn time of raid")
     async def schedule(self, interaction: discord.Interaction):

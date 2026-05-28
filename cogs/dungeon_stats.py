@@ -17,15 +17,45 @@ DECK_OPTIONS = {
     "SK": ["Celesfracture", "Latent Power", "RoyalKnight X/ DemonLord X", "Legendary Core", "Other"], 
     "TANK": ["Fortis Magna", "Crown", "Royal Crown", "Eternal Dominion", "Other"]
 }
+BRACELET_OPTIONS = ["Bracelet 5 stats", "Ygg Bracelet", "Pied Bracelet"]
 
 # ==========================================
-# WIZARD: CẬP NHẬT GEAR
+# MODAL NHẬP IGN
+# ==========================================
+class MyGearIGNModal(discord.ui.Modal, title="Setup Profile - IGN"):
+    ign = discord.ui.TextInput(label="In-Game Name (IGN)", placeholder="Enter your character name...", required=True, max_length=30)
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        ign_value = self.ign.value.strip()
+        
+        # Lưu IGN vào gốc document của user
+        await db.players.update_one(
+            {"user_id": interaction.user.id},
+            {"$set": {"ign": ign_value}},
+            upsert=True
+        )
+        
+        # Gọi tiếp menu Wizard cấu hình Gear
+        embed = discord.Embed(
+            title="⚙️ Setup MyGear", 
+            description=f"Your IGN has been set to: **{ign_value}**\nPlease select the following Role indicators below:", 
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed, view=MyGearWizard(interaction.user.id), ephemeral=True)
+
+# ==========================================
+# WIZARD: CẬP NHẬT GEAR (Đã tích hợp thêm Bracelet)
 # ==========================================
 class MyGearWizard(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=180)
         self.user_id = user_id
-        self.data = {"role": None, "gear": None, "vice": None, "deck": None}
+        self.data = {"role": None, "gear": None, "vice": None, "deck": None, "bracelet": None}
         self.step = 0
         self.refresh_menu()
 
@@ -63,12 +93,27 @@ class MyGearWizard(discord.ui.View):
                 await self.next_step(interaction)
             select.callback = deck_callback
             self.add_item(select)
+        elif self.step == 4:
+            select = discord.ui.Select(placeholder="Select bracelet", options=[discord.SelectOption(label=b) for b in BRACELET_OPTIONS])
+            async def bracelet_callback(interaction: discord.Interaction):
+                self.data["bracelet"] = interaction.data["values"][0]
+                self.step = 5
+                await self.next_step(interaction)
+            select.callback = bracelet_callback
+            self.add_item(select)
 
     async def next_step(self, interaction: discord.Interaction):
-        if self.step < 4:
+        if self.step < 5:
             self.refresh_menu()
             embed = discord.Embed(title="⚙️ Setup MyGear", color=discord.Color.blue())
-            embed.add_field(name="Current", value=f"Role: {self.data['role'] or '...'}\nGear: {self.data['gear'] or '...'}\nVice: {self.data['vice'] or '...'}\nDeck: {self.data['deck'] or '...'}")
+            embed.add_field(
+                name="Current", 
+                value=f"Role: {self.data['role'] or '...'}\n"
+                      f"Gear: {self.data['gear'] or '...'}\n"
+                      f"Vice: {self.data['vice'] or '...'}\n"
+                      f"Deck: {self.data['deck'] or '...'}\n"
+                      f"Bracelet: {self.data['bracelet'] or '...'}"
+            )
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             role = self.data["role"]
@@ -108,21 +153,18 @@ class DungeonStats(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         player = await db.players.find_one({"user_id": interaction.user.id})
         
-        # Lấy thông tin Dungeon từ DB
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
         if not cfg:
             return await interaction.followup.send(f"❌ Error: Cant find data of `{dg_name}` in DB.", ephemeral=True)
 
-        # Kiểm tra xem người dùng đã setup gear chưa
         if not player or "my_stats" not in player or not player["my_stats"]:
             return await interaction.followup.send("❌ Please use `/mygear` first!", ephemeral=True)
 
         req = cfg.get("reqs", {})
-        has_any_passed = False # Biến cờ để theo dõi xem có role nào pass không
+        has_any_passed = False 
         
         embed = discord.Embed(title=f"Check: {dg_name.upper()}")
         
-        # Duyệt qua toàn bộ các role mà user đã lưu
         for role_name, stats in player["my_stats"].items():
             if not isinstance(stats, dict): 
                 continue
@@ -130,8 +172,7 @@ class DungeonStats(commands.Cog):
             results = []
             is_role_ok = True
             
-            # Kiểm tra từng hạng mục của role này với yêu cầu của Dungeon
-            for cat in ["gear", "vice", "deck"]:
+            for cat in ["gear", "vice", "deck", "bracelet"]:
                 u_val = stats.get(cat)
                 allowed = req.get(cat, [])
                 
@@ -142,14 +183,12 @@ class DungeonStats(commands.Cog):
                     results.append(f"❌ {cat.upper()}: {u_val} (Req: {allowed_str})")
                     is_role_ok = False
             
-            # Nếu role này đạt đủ mọi chỉ tiêu, đánh dấu là user đã pass
             if is_role_ok:
                 has_any_passed = True
                 
             status_text = "✅ PASS" if is_role_ok else "❌ FAIL"
             embed.add_field(name=f"Role: {role_name} [{status_text}]", value="\n".join(results), inline=False)
 
-        # Đổi màu embed dựa trên việc có ít nhất 1 role pass hay không
         embed.color = discord.Color.green() if has_any_passed else discord.Color.red()
         
         if not embed.fields:
@@ -157,9 +196,10 @@ class DungeonStats(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="mygear", description="Update your profile")
+    @app_commands.command(name="mygear", description="Update your profile and set your IGN")
     async def mygear(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=discord.Embed(title="⚙️ Setup MyGear", description="Select your role to start setup:", color=discord.Color.blue()), view=MyGearWizard(interaction.user.id), ephemeral=True)
+        # Mở Modal điền IGN trước khi tiến hành wizard chọn Role
+        await interaction.response.send_modal(MyGearIGNModal(self.bot))
 
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
@@ -168,11 +208,12 @@ class DungeonStats(commands.Cog):
         if not p or "my_stats" not in p or not p["my_stats"]: 
             return await interaction.response.send_message("❌ Your gear information is empty!", ephemeral=True)
         
-        embed = discord.Embed(title=f"🛡️ {interaction.user.name}'s Profile", color=discord.Color.gold())
+        player_ign = p.get('ign', interaction.user.name)
+        embed = discord.Embed(title=f"🛡️ {player_ign}'s Profile", color=discord.Color.gold())
         
         for role_name, stats in p["my_stats"].items():
             if isinstance(stats, dict):
-                value_str = f"Gear: {stats.get('gear', 'N/A')}\nVice: {stats.get('vice', 'N/A')}\nDeck: {stats.get('deck', 'N/A')}"
+                value_str = f"Gear: {stats.get('gear', 'N/A')}\nVice: {stats.get('vice', 'N/A')}\nDeck: {stats.get('deck', 'N/A')}\nBracelet: {stats.get('bracelet', 'N/A')}"
                 embed.add_field(name=f"Role: {role_name}", value=value_str, inline=False)
         
         await interaction.response.send_message(embed=embed)
@@ -187,6 +228,6 @@ class DungeonStats(commands.Cog):
 
         
 async def setup(bot):
-    print("DEBUG: Đang load Cog DungeonStats...") # Dòng này sẽ hiện trong Logs của Render
+    print("DEBUG: Đang load Cog DungeonStats...") 
     await bot.add_cog(DungeonStats(bot))
     print("DEBUG: Đã load thành công!")
