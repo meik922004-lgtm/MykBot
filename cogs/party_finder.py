@@ -785,6 +785,6 @@ class PartyFinderCog(commands.Cog):
                     inline=False
                 )
         
-        await interaction.followup.send(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view, emphemeral = True)
 async def setup(bot):
     await bot.add_cog(PartyFinderCog(bot))
