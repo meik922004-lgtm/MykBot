@@ -790,26 +790,51 @@ class PartyFinderCog(commands.Cog):
     @app_commands.command(name="setup_party_channel", description="Configure Channel ID to receive Party Board notifications for this server.")
     @app_commands.describe(channel="Select a text channel to receive public party-seeking posts")
     async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        is_admin = interaction.user.guild_permissions.administrator
-        is_owner = (interaction.user.id == 1283689737567211581)
-
-        if not (is_admin or is_owner):
-            return await interaction.response.send_message("❌ You dont have permission to use this command!", ephemeral=True)
-
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ YYou need administrator privileges.!", ephemeral=True)
+        
         await server_configs_col.update_one(
             {"guild_id": interaction.guild_id},
             {"$set": {"party_channel_id": channel.id}},
             upsert=True
         )
-        await interaction.followup.send(f"✅ Party Finder notification channel has been successfully configured: {channel.mention} (ID: `{channel.id}`)", ephemeral=True)
+        await interaction.response.send_message(f"✅ {channel.mention} will receive party notification", ephemeral=True)
 
-    @app_commands.command(name="owner_broadcast", description="[Owner Bot Only] Send system-wide update notifications/long messages..")
-    async def owner_broadcast(self, interaction: discord.Interaction):
-        if interaction.user.id != 1283689737567211581:
-            return await interaction.response.send_message("❌ This command is only available to the Bot Owner!", ephemeral=True)
+    @app_commands.command(name="setup_News_channel", description="Select channel to receive update/bot annoucement")
+    async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ You need administrator privileges.!", ephemeral=True)
         
-        await interaction.response.send_modal(OwnerBroadcastModal(self.bot))
+        await server_configs_col.update_one(
+            {"guild_id": interaction.guild_id},
+            {"$set": {"news_channel_id": channel.id}},
+            upsert=True
+        )
+        await interaction.response.send_message(f"✅ The News/Update channel has been set up at: {channel.mention}", ephemeral=True)
+
+    class OwnerBroadcastModal(discord.ui.Modal, title='Global Bot Update Announcement'):
+        b_title = discord.ui.TextInput(label="Announcement Title", required=True)
+        b_content = discord.ui.TextInput(label="Detailed content", style=discord.TextStyle.paragraph, required=True)
+
+        def __init__(self, bot):
+            super().__init__()
+            self.bot = bot
+
+        async def on_submit(self, interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+            embed = discord.Embed(title=f"📢 {self.b_title.value}", description=self.b_content.value, color=discord.Color.gold())
+            
+            count = 0
+            # Gửi vào tất cả các kênh đã setup làm news_channel_id
+            async for config in server_configs_col.find({"news_channel_id": {"$exists": True}}):
+                channel = self.bot.get_channel(config["news_channel_id"])
+                if channel:
+                    try:
+                        await channel.send(embed=embed)
+                        count += 1
+                    except: continue
+            
+            await interaction.followup.send(f"✅ Notification has been sent to the News/Update channel's **{count}**.", ephemeral=True)
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
     async def party_lobby(self, interaction: discord.Interaction):
