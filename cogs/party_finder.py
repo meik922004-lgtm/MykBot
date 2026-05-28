@@ -388,12 +388,13 @@ class LobbyPaginationView(discord.ui.View):
     async def send_request_callback(self, interaction: discord.Interaction):
         profile = await get_player_profile(interaction.user.id)
         if not profile:
-            return await interaction.response.send_message("⚠️ Pls set up your gear profile(/mygear) first before use this function", ephemeral=True)
+            return await interaction.response.send_message("⚠️ Please set your gear profile (/mygear) before use this function.", ephemeral=True)
         
         party_id = self.select.values[0]
+        # Check xem đã ở trong party nào chưa
         existing_party = await parties_col.find_one({"members.user_id": interaction.user.id})
         if existing_party:
-            return await interaction.response.send_message("❌ You are already in a party!", ephemeral=True)
+            return await interaction.response.send_message("❌ You already in party", ephemeral=True)
             
         await interaction.response.send_modal(JoinPartyModal(self.bot, party_id, profile.get('ign', 'Unknown')))
 
@@ -518,62 +519,22 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
-        role_entered = self.role.value.strip()
-        stats = profile.get("my_stats", {}) if profile else {}
         
-        leader_ign = self.ign_input.value.strip()
-
-        dg_config = await get_dungeon_config(self.dg_name.value)
-        if not dg_config:
-            dg_config = {
-                "dg_name": self.dg_name.value,
-                "ping_role": None,  
-                "reqs": {"gear": [], "vice": [], "deck": []} 
-            }
-            await dungeon_configs_col.insert_one(dg_config)
-
-        ROLE_ALIASES = {
-            "dps": ["aa", "sk"], "ufm": ["aa", "sk"], "fm": ["aa", "sk"],
-            "future": ["aa", "sk"], "ulforce": ["aa", "sk"], "future mode": ["aa", "sk"]
-        }
-        
-        search_keys = ROLE_ALIASES.get(role_entered.lower(), [role_entered.lower()])
-        available_roles = [k for k, v in stats.items() if isinstance(v, dict)]
-        
-        passed_gear_data = None
-        passed_actual_role = None
-        error_msgs = []
-
-        for key in search_keys:
-            gear_data = next((v for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), None)
-            actual_db_key = next((k for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), key.upper())
+        # Chỉ kiểm tra xem user đã có profile chưa
+        if not profile:
+            return await interaction.followup.send("⚠️ Please setup your gear profile first(/mygear) before use this function!.", ephemeral=True)
             
-            if not gear_data:
-                error_msgs.append(f"- `{actual_db_key}`: No gear setup found in /mygear.")
-                continue
-                
-            is_valid, reason = await check_gear_requirements(actual_db_key, gear_data, dg_config)
-            if is_valid:
-                passed_gear_data = gear_data
-                passed_actual_role = actual_db_key
-                break
-            else:
-                error_msgs.append(f"- `{actual_db_key}`: {reason}")
+        leader_ign = self.ign_input.value.strip()
+        role_entered = self.role.value.strip()
 
-        if not passed_gear_data:
-            roles_str = ", ".join(available_roles) if available_roles else "None"
-            errors = "\n".join(error_msgs)
-            return await interaction.followup.send(f"⛔ **You don't meet requirements to create this party as `{role_entered}`:**\n{errors}\n💡 **Your available roles are:** `{roles_str}`", ephemeral=True)
-
-        display_role = f"{role_entered} ({passed_actual_role})" if role_entered.lower() != passed_actual_role.lower() else passed_actual_role
-
+        # Tạo party trực tiếp, không cần check gear requirements nữa
         party_doc = {
             "leader_id": interaction.user.id,
             "leader_ign": leader_ign, 
             "dg_name": self.dg_name.value,
             "start_time": self.start_time.value,
             "requirements": self.requirements.value,
-            "members": [{"user_id": interaction.user.id, "ign": leader_ign, "role": display_role}], 
+            "members": [{"user_id": interaction.user.id, "ign": leader_ign, "role": role_entered}], 
             "broadcasts": [],
             "chat_channel_id": None
         }
@@ -584,15 +545,15 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         await handle_cross_server_chat(self.bot, party_doc, action="create", guild=interaction.guild)
 
         embed = create_party_embed(party_doc)
+        # Nếu chưa có config dungeon, vẫn tạo party bình thường
+        dg_config = await get_dungeon_config(self.dg_name.value) or {"dg_name": self.dg_name.value}
         broadcast_records = await broadcast_to_all_servers(self.bot, embed, str(result.inserted_id), dg_config, interaction.guild)
         
         if broadcast_records:
             await parties_col.update_one({"_id": result.inserted_id}, {"$set": {"broadcasts": broadcast_records}})
             
-        await interaction.followup.send(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
-        
+        await interaction.followup.send("✅ Created party!", ephemeral=True)
         await self.lobby_view.update_lobby(self.parent_interaction, self.lobby_view.page)
-            
 class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
 
