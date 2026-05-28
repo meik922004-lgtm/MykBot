@@ -524,10 +524,9 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g., 20:00 or ASAP', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
-    def __init__(self, bot, ign, lobby_view, current_ign):
+    def __init__(self, bot, lobby_view, current_ign):
         super().__init__()
         self.bot = bot
-        self.ign = ign
         self.lobby_view = lobby_view
         self.ign_input.default = current_ign 
         self.lobby_view = lobby_view
