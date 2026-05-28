@@ -21,6 +21,7 @@ threading.Thread(target=run_health_check_server, daemon=True).start()
 # 2. Cấu hình Bot
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
+
 if not TOKEN:
     raise ValueError("❌ Không tìm thấy BOT_TOKEN!")
 
