@@ -196,7 +196,7 @@ class DungeonStats(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="mygear", description="Thiết lập hồ sơ nhân vật và trang bị")
+    @app_commands.command(name="mygear", description="Set your character profile")
     async def mygear(self, interaction: discord.Interaction):
         # 1. Kiểm tra xem người dùng đã có profile và đã có IGN chưa
         p = await db.players.find_one({"user_id": interaction.user.id})
@@ -211,12 +211,12 @@ class DungeonStats(commands.Cog):
             ign_value = p.get("ign")
             embed = discord.Embed(
                 title="⚙️ Setup MyGear", 
-                description=f"Hồ sơ hiện tại: **{ign_value}**\nVui lòng chọn Role để cập nhật trang bị:", 
+                description=f"Current profile: **{ign_value}**\nPlease select role to setup gears:", 
                 color=discord.Color.blue()
             )
             # Truyền thẳng view MyGearWizard
             await interaction.response.send_message(embed=embed, view=MyGearWizard(interaction.user.id), ephemeral=True)
-            
+
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
         p = await db.players.find_one({"user_id": interaction.user.id})
