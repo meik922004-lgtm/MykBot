@@ -683,31 +683,29 @@ class PartyFinderCog(commands.Cog):
                 break
 
         # 4. Định dạng tin nhắn gửi đi bằng Embed
-        embed = discord.Embed(description=message.content, color=discord.Color.green())
-        embed.set_author(name=f"{sender_ign}", icon_url=message.author.display_avatar.url)
-        embed.set_footer(text=f"Party: {party.get('dg_name')}")
-
-        # Xử lý nếu người dùng gửi kèm hình ảnh
+        chat_content = f"**{sender_ign}**: {message.content}"
+        
+        # Xử lý nếu người dùng gửi kèm hình ảnh hoặc file
         if message.attachments:
-            embed.set_image(url=message.attachments[0].url)
+            attachment_urls = "\n".join([att.url for att in message.attachments])
+            chat_content += f"\n{attachment_urls}"
 
         # 5. Chuyển tiếp tin nhắn cho các thành viên CÒN LẠI trong party
         for m in party.get('members', []):
             if m['user_id'] != message.author.id:
-                # Tìm user trên toàn bộ hệ thống bot
                 target_user = self.bot.get_user(m['user_id'])
                 if not target_user:
                     try:
                         target_user = await self.bot.fetch_user(m['user_id'])
                     except Exception:
-                        continue # Nếu lỗi không tìm thấy user thì bỏ qua người này
+                        continue 
                 
-                # Gửi DM cho user
                 if target_user:
                     try:
-                        await target_user.send(embed=embed)
+                        # Gửi dưới dạng content text thay vì embed
+                        await target_user.send(content=chat_content)
                     except discord.Forbidden:
-                        pass # Bỏ qua nếu người đó đã block DM của bot
+                        pass
 
     # --- CÁC TƯƠNG TÁC GIAO DIỆN CŨ CỦA BẠN ---
     @commands.Cog.listener()
@@ -754,7 +752,7 @@ class PartyFinderCog(commands.Cog):
                 )
             if not parties: embed.description = "No active parties found."
             
-            await interaction.followup.send(embed=embed, view=view)
+            await interaction.followup.send(embed=embed, view=view, emphemeral = True)
 
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
