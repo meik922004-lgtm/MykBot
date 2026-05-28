@@ -208,7 +208,13 @@ class DungeonStats(commands.Cog):
         if not p or "my_stats" not in p or not p["my_stats"]: 
             return await interaction.response.send_message("❌ Your gear information is empty!", ephemeral=True)
         
-        player_ign = p.get('ign', interaction.user.name)
+        # 1. Kiểm tra trực tiếp xem có IGN chưa, nếu chưa hiện rõ chữ cảnh báo
+        ign_in_db = p.get('ign')
+        if not ign_in_db or ign_in_db == "Not Set":
+            player_ign = f"⚠️ {interaction.user.name} (Missing IGN)"
+        else:
+            player_ign = ign_in_db
+            
         embed = discord.Embed(title=f"🛡️ {player_ign}'s Profile", color=discord.Color.gold())
         
         for role_name, stats in p["my_stats"].items():
@@ -217,6 +223,7 @@ class DungeonStats(commands.Cog):
                 embed.add_field(name=f"Role: {role_name}", value=value_str, inline=False)
         
         await interaction.response.send_message(embed=embed)
+        
 
     @app_commands.command(name="dglist", description="Check gear requirement of dg")
     async def dglist(self, interaction: discord.Interaction):

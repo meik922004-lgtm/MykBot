@@ -840,9 +840,24 @@ class PartyFinderCog(commands.Cog):
     async def party_lobby(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
-        if not profile or not profile.get('ign'):
-            return await interaction.followup.send("⚠️ Pls set up your gear profile and IGN (/mygear) first before use this function", ephemeral=True)
+        
+        # 1. Kiểm tra nếu người chơi CHƯA TỪNG tạo profile (Database rỗng)
+        if not profile:
+            return await interaction.followup.send(
+                "❌ **Access Denied!** You haven't set up your gear profile.\n"
+                "👉 Please use `/mygear` to create your profile before entering the Lobby.", 
+                ephemeral=True
+            )
 
+        # 2. Kiểm tra nếu đã có profile NHƯNG thiếu IGN (Tên nhân vật)
+        if not profile.get('ign') or profile.get('ign') == "Not Set":
+            return await interaction.followup.send(
+                "❌ **Missing Information!** You haven't set your In-Game Name (IGN).\n"
+                "👉 Please run `/mygear` again and make sure to complete the IGN setup step.", 
+                ephemeral=True
+            )
+
+        # ==================== PHẦN CODE CHÍNH ====================
         parties = await parties_col.find({}).to_list(length=100)
         embed = discord.Embed(title="🌐 Party Finder Lobby", color=discord.Color.purple())
         view = LobbyPaginationView(self.bot, parties, page=0)
