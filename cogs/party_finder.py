@@ -752,7 +752,7 @@ class PartyFinderCog(commands.Cog):
                 )
             if not parties: embed.description = "No active parties found."
             
-            await interaction.followup.send(embed=embed, view=view, emphemeral = True)
+            await interaction.followup.send(embed=embed, view=view, ephemeral = True)
 
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
@@ -785,6 +785,6 @@ class PartyFinderCog(commands.Cog):
                     inline=False
                 )
         
-        await interaction.followup.send(embed=embed, view=view, emphemeral = True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral = True)
 async def setup(bot):
     await bot.add_cog(PartyFinderCog(bot))
