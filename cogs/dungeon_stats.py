@@ -196,11 +196,27 @@ class DungeonStats(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="mygear", description="Update your profile and set your IGN")
+    @app_commands.command(name="mygear", description="Thiết lập hồ sơ nhân vật và trang bị")
     async def mygear(self, interaction: discord.Interaction):
-        # Mở Modal điền IGN trước khi tiến hành wizard chọn Role
-        await interaction.response.send_modal(MyGearIGNModal(self.bot))
-
+        # 1. Kiểm tra xem người dùng đã có profile và đã có IGN chưa
+        p = await db.players.find_one({"user_id": interaction.user.id})
+        
+        # 2. Phân nhánh xử lý:
+        if not p or not p.get("ign") or p.get("ign") == "Not Set":
+            # TRƯỜNG HỢP A: Chưa có IGN -> Bắt buộc phải nhập IGN trước
+            # (Gửi Modal như bạn đã làm)
+            await interaction.response.send_modal(MyGearIGNModal(self.bot))
+        else:
+            # TRƯỜNG HỢP B: Đã có IGN rồi -> Bỏ qua bước nhập tên, nhảy thẳng vào chọn Gear
+            ign_value = p.get("ign")
+            embed = discord.Embed(
+                title="⚙️ Setup MyGear", 
+                description=f"Hồ sơ hiện tại: **{ign_value}**\nVui lòng chọn Role để cập nhật trang bị:", 
+                color=discord.Color.blue()
+            )
+            # Truyền thẳng view MyGearWizard
+            await interaction.response.send_message(embed=embed, view=MyGearWizard(interaction.user.id), ephemeral=True)
+            
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
         p = await db.players.find_one({"user_id": interaction.user.id})
