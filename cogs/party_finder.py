@@ -524,18 +524,20 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g., 20:00 or ASAP', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
-    def __init__(self, bot, lobby_view, current_ign):
+    # 1. ĐÃ SỬA: Đổi vị trí current_ign lên trước để khớp với nút bấm ngoài Lobby
+    def __init__(self, bot, current_ign, lobby_view):
         super().__init__()
         self.bot = bot
         self.lobby_view = lobby_view
-        self.ign_input.default = current_ign 
-        self.lobby_view = lobby_view
+        self.ign_input.default = str(current_ign) if current_ign else "Unknown" 
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         role_entered = self.role.value.strip()
         stats = profile.get("my_stats", {})
+        
+        # 2. Lấy tên In-game do Leader tự gõ trên Modal
         leader_ign = self.ign_input.value.strip()
 
         # Khởi tạo config mặc định nếu DB chưa có Dungeon này
@@ -548,7 +550,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             }
             await dungeon_configs_col.insert_one(dg_config)
 
-        # 1. HỆ THỐNG TỰ ĐỘNG CHUYỂN ĐỔI (ALIAS MAPPING)
+        # HỆ THỐNG TỰ ĐỘNG CHUYỂN ĐỔI (ALIAS MAPPING)
         ROLE_ALIASES = {
             "dps": ["aa", "sk"],
             "ufm": ["aa", "sk"],
@@ -565,7 +567,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         passed_actual_role = None
         error_msgs = []
 
-        # 2. KIỂM TRA LẦN LƯỢT CÁC ROLE
+        # KIỂM TRA LẦN LƯỢT CÁC ROLE
         for key in search_keys:
             gear_data = next((v for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), None)
             actual_db_key = next((k for k, v in stats.items() if isinstance(v, dict) and k.lower() == key), key.upper())
@@ -582,7 +584,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             else:
                 error_msgs.append(f"- `{actual_db_key}`: {reason}")
 
-        # 3. NẾU KHÔNG CÓ ROLE NÀO PASS
+        # NẾU KHÔNG CÓ ROLE NÀO PASS
         if not passed_gear_data:
             roles_str = ", ".join(available_roles) if available_roles else "None"
             errors = "\n".join(error_msgs)
@@ -590,14 +592,14 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
 
         display_role = f"{role_entered} ({passed_actual_role})" if role_entered.lower() != passed_actual_role.lower() else passed_actual_role
 
+        # 3. ĐÃ SỬA: Xóa dòng leader_id bị lặp và thay self.ign thành leader_ign
         party_doc = {
             "leader_id": interaction.user.id,
-            "leader_id": interaction.user.id,
-            "leader_ign": self.ign,
+            "leader_ign": leader_ign, 
             "dg_name": self.dg_name.value,
             "start_time": self.start_time.value,
             "requirements": self.requirements.value,
-            "members": [{"user_id": interaction.user.id, "ign": self.ign, "role": display_role}],
+            "members": [{"user_id": interaction.user.id, "ign": leader_ign, "role": display_role}], 
             "broadcasts": [],
             "chat_channel_id": None
         }
@@ -616,6 +618,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         await interaction.followup.send(f"Party created successfully! Verified via your **{passed_actual_role}** profile.", ephemeral=True)
         if interaction.message:
             await self.lobby_view.update_lobby(interaction.message, self.lobby_view.page)
+            
 class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
     new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
 
