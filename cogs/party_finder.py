@@ -507,7 +507,7 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
 class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     dg_name = discord.ui.TextInput(label='Dungeon Name', placeholder='E.g., Stage of Clown(PIED)', required=True)
     role = discord.ui.TextInput(label='Your Role as Leader (e.g., DPS, TANK)', required=True)
-    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g: 20:00, 15:30', required=True)
+    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='Please use HH:MM in your timezone, if you not set profile its will standart use UTC+0', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
     def __init__(self, bot, lobby_view, parent_interaction: discord.Interaction):
