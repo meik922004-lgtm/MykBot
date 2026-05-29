@@ -5,6 +5,7 @@ from bson.objectid import ObjectId
 from typing import List, Optional
 import asyncio
 import re 
+from datetime import datetime, timedelta, timezone
 
 # Import direct collections từ Database.py
 from Database import players_col, parties_col, dungeon_configs_col
@@ -13,21 +14,22 @@ from Database import players_col, parties_col, dungeon_configs_col
 server_configs_col = players_col.database["server_configs"]
 
 # --- DATABASE HELPER FUNCTIONS ---
-from datetime import datetime, timedelta
-
-def get_discord_timestamp(time_str: str):
-    """Chuyển chuỗi HH:MM thành <t:TIMESTAMP:R>"""
+def get_discord_timestamp(time_str: str, tz_offset: float = 7.0):
+    """Chuyển chuỗi HH:MM thành định dạng chuẩn của Discord dựa trên múi giờ của User."""
     try:
-        now = datetime.now()
-        target_time = datetime.strptime(time_str, "%H:%M").time()
-        dt = datetime.combine(now.date(), target_time)
+        user_tz = timezone(timedelta(hours=float(tz_offset)))
+        now = datetime.now(user_tz)
+        
+        target_time = datetime.strptime(time_str.strip(), "%H:%M").time()
+        dt = datetime.combine(now.date(), target_time, tzinfo=user_tz)
         
         if dt < now:
             dt += timedelta(days=1)
             
         unix_ts = int(dt.timestamp())
-        return f"<t:{unix_ts}:R>"
-    except:
+        return f"<t:{unix_ts}:t> (<t:{unix_ts}:R>)"
+    except Exception as e:
+        print(f"Lỗi parse time: {e}")
         return time_str
 
 async def get_player_profile(user_id: int):
@@ -505,7 +507,7 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
 class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     dg_name = discord.ui.TextInput(label='Dungeon Name', placeholder='E.g., Stage of Clown(PIED)', required=True)
     role = discord.ui.TextInput(label='Your Role as Leader (e.g., DPS, TANK)', required=True)
-    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g: 20:00, 15:30, HH:MM', required=True)
+    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='E.g: 20:00, 15:30', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
     def __init__(self, bot, lobby_view, parent_interaction: discord.Interaction):
@@ -521,7 +523,8 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
             return await interaction.followup.send("⚠️ Please setup your profile and IGN first using `/mygear`.", ephemeral=True)
             
         time_val = self.start_time.value.strip()
-        formatted_time = get_discord_timestamp(time_val)
+        tz_offset = float(profile.get('tz_offset', 7.0))
+        formatted_time = get_discord_timestamp(time_val, tz_offset)
         
         leader_ign = profile.get('ign')
         role_entered = self.role.value.strip()
@@ -606,10 +609,8 @@ class NewOwnerBroadcastModal(discord.ui.Modal, title='Global Update Announcement
         self.bot = bot
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Trì hoãn phản hồi để bot có thời gian gửi tin nhắn đến nhiều server
         await interaction.response.defer(ephemeral=True)
         
-        # Thiết kế giao diện tin nhắn
         embed = discord.Embed(
             title=f"📢 {self.announcement_title.value}",
             description=self.announcement_content.value,
@@ -621,7 +622,6 @@ class NewOwnerBroadcastModal(discord.ui.Modal, title='Global Update Announcement
         success_count = 0
         failed_count = 0
         
-        # Quét database để tìm các channel đã được setup bằng lệnh setup_news_channel
         async for config in server_configs_col.find({"news_channel_id": {"$exists": True}}):
             channel_id = config.get("news_channel_id")
             if not channel_id:
@@ -640,11 +640,10 @@ class NewOwnerBroadcastModal(discord.ui.Modal, title='Global Update Announcement
                     success_count += 1
                     continue
                 except Exception:
-                    pass # Bỏ qua nếu bot bị kick khỏi server hoặc bị tước quyền gửi tin nhắn
+                    pass 
             
             failed_count += 1
             
-        # Báo cáo kết quả lại cho bạn
         await interaction.followup.send(
             f"✅ **Phát sóng hoàn tất!**\n"
             f"• Thành công: **{success_count}** server.\n"
@@ -830,31 +829,11 @@ class PartyFinderCog(commands.Cog):
         )
         await interaction.response.send_message(f"✅ The News/Update channel has been set up at: {channel.mention}", ephemeral=True)
 
-  
-
-        async def on_submit(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
-            embed = discord.Embed(title=f"📢 {self.b_title.value}", description=self.b_content.value, color=discord.Color.gold())
-            
-            count = 0
-            # Gửi vào tất cả các kênh đã setup làm news_channel_id
-            async for config in server_configs_col.find({"news_channel_id": {"$exists": True}}):
-                channel = self.bot.get_channel(config["news_channel_id"])
-                if channel:
-                    try:
-                        await channel.send(embed=embed)
-                        count += 1
-                    except: continue
-            
-            await interaction.followup.send(f"✅ Notification has been sent to the News/Update channel's **{count}**.", ephemeral=True)
-
     @app_commands.command(name="ownerbroadcast", description="Send bot update notifications to all News channels (Owner only)")
     async def ownerbroadcast(self, interaction: discord.Interaction):
-        # Lớp bảo mật: Đảm bảo chỉ chính bạn (người tạo Bot) mới dùng được lệnh này
         if not await self.bot.is_owner(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission to use Developer commands.!", ephemeral=True)
         
-        # Mở giao diện nhập thông báo
         await interaction.response.send_modal(NewOwnerBroadcastModal(self.bot))
 
     @app_commands.command(name="party_lobby", description="Open the Party Finder Lobby UI")
@@ -862,7 +841,6 @@ class PartyFinderCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         
-        # 1. Kiểm tra nếu người chơi CHƯA TỪNG tạo profile (Database rỗng)
         if not profile:
             return await interaction.followup.send(
                 "❌ **Access Denied!** You haven't set up your gear profile.\n"
@@ -870,7 +848,6 @@ class PartyFinderCog(commands.Cog):
                 ephemeral=True
             )
 
-        # 2. Kiểm tra nếu đã có profile NHƯNG thiếu IGN (Tên nhân vật)
         if not profile.get('ign') or profile.get('ign') == "Not Set":
             return await interaction.followup.send(
                 "❌ **Missing Information!** You haven't set your In-Game Name (IGN).\n"
@@ -878,7 +855,6 @@ class PartyFinderCog(commands.Cog):
                 ephemeral=True
             )
 
-        # ==================== PHẦN CODE CHÍNH ====================
         parties = await parties_col.find({}).to_list(length=100)
         embed = discord.Embed(title="🌐 Party Finder Lobby", color=discord.Color.purple())
         view = LobbyPaginationView(self.bot, parties, page=0)

@@ -46,83 +46,125 @@ class MyGearIGNModal(discord.ui.Modal, title="Setup Profile - IGN"):
             description=f"Your IGN has been set to: **{ign_value}**\nPlease select the following Role indicators below:", 
             color=discord.Color.blue()
         )
-        await interaction.followup.send(embed=embed, view=MyGearWizard(interaction.user.id), ephemeral=True)
+        await interaction.followup.send(embed=embed, view=MyGearWizard(interaction.user.id, {}), ephemeral=True)
 
 # ==========================================
-# WIZARD: CẬP NHẬT GEAR (Đã tích hợp thêm Bracelet)
+# WIZARD: CẬP NHẬT GEAR (Đã tích hợp Timezone)
 # ==========================================
 class MyGearWizard(discord.ui.View):
-    def __init__(self, user_id):
+    def __init__(self, user_id, player_data=None):
         super().__init__(timeout=180)
         self.user_id = user_id
-        self.data = {"role": None, "gear": None, "vice": None, "deck": None, "bracelet": None}
-        self.step = 0
+        self.player_data = player_data or {}
+        self.data = {"tz_offset": 7.0, "role": None, "gear": None, "vice": None, "deck": None, "bracelet": None}
+        
+        # Nếu người chơi ĐÃ CÓ múi giờ trong DB, bỏ qua bước 0 (chọn Timezone) và nhảy thẳng sang bước 1 (chọn Role)
+        if "tz_offset" in self.player_data:
+            self.data["tz_offset"] = self.player_data["tz_offset"]
+            self.step = 1
+        else:
+            self.step = 0
+            
         self.refresh_menu()
 
     def refresh_menu(self):
         self.clear_items()
+        
         if self.step == 0:
+            options = [
+                discord.SelectOption(label="🇺🇸 Pacific Time (US/Canada)", description="Múi giờ: UTC-8", value="-8"),
+                discord.SelectOption(label="🇺🇸 Eastern Time (US/Canada)", description="Múi giờ: UTC-5", value="-5"),
+                discord.SelectOption(label="🇧🇷 South America (Brazil/Argentina)", description="Múi giờ: UTC-3", value="-3"),
+                discord.SelectOption(label="🇬🇧 United Kingdom / Ireland / GMT", description="Múi giờ: UTC+0", value="0"),
+                discord.SelectOption(label="🇩🇪 Germany / 🇫🇷 France / 🇮🇹 Italy / 🇪🇸 Spain", description="Múi giờ: UTC+1", value="1"),
+                discord.SelectOption(label="🇻🇳 Vietnam / 🇹🇭 Thailand / 🇮🇩 Indonesia (WIB)", description="Múi giờ: UTC+7", value="7"),
+                discord.SelectOption(label="🇸🇬 Singapore / 🇲🇾 Malaysia / 🇵🇭 Philippines", description="Múi giờ: UTC+8", value="8"),
+                discord.SelectOption(label="🇰🇷 Korea / 🇯🇵 Japan", description="Múi giờ: UTC+9", value="9"),
+                discord.SelectOption(label="🇦🇺 Eastern Australia (Sydney/Melbourne)", description="Múi giờ: UTC+10", value="10")
+            ]
+            select = discord.ui.Select(placeholder="🌍 Select your Timezone (Chọn khu vực của bạn)", options=options)
+            async def tz_callback(interaction: discord.Interaction):
+                self.data["tz_offset"] = float(interaction.data["values"][0])
+                self.step = 1
+                await self.next_step(interaction)
+            select.callback = tz_callback
+            self.add_item(select)
+            
+        elif self.step == 1:
             select = discord.ui.Select(placeholder="Select role", options=[discord.SelectOption(label=r) for r in ["AA", "SK", "TANK"]])
             async def role_callback(interaction: discord.Interaction):
                 self.data["role"] = interaction.data["values"][0]
-                self.step = 1
+                self.step = 2
                 await self.next_step(interaction)
             select.callback = role_callback
             self.add_item(select)
-        elif self.step == 1:
+            
+        elif self.step == 2:
             select = discord.ui.Select(placeholder="Select gear", options=[discord.SelectOption(label=g) for g in GEAR_OPTIONS])
             async def gear_callback(interaction: discord.Interaction):
                 self.data["gear"] = interaction.data["values"][0]
-                self.step = 2
+                self.step = 3
                 await self.next_step(interaction)
             select.callback = gear_callback
             self.add_item(select)
-        elif self.step == 2:
+            
+        elif self.step == 3:
             select = discord.ui.Select(placeholder="Select vice", options=[discord.SelectOption(label=v) for v in VICE_OPTIONS[self.data["role"]]])
             async def vice_callback(interaction: discord.Interaction):
                 self.data["vice"] = interaction.data["values"][0]
-                self.step = 3
+                self.step = 4
                 await self.next_step(interaction)
             select.callback = vice_callback
             self.add_item(select)
-        elif self.step == 3:
+            
+        elif self.step == 4:
             select = discord.ui.Select(placeholder="Select deck", options=[discord.SelectOption(label=d) for d in DECK_OPTIONS[self.data["role"]]])
             async def deck_callback(interaction: discord.Interaction):
                 self.data["deck"] = interaction.data["values"][0]
-                self.step = 4
+                self.step = 5
                 await self.next_step(interaction)
             select.callback = deck_callback
             self.add_item(select)
-        elif self.step == 4:
+            
+        elif self.step == 5:
             select = discord.ui.Select(placeholder="Select bracelet", options=[discord.SelectOption(label=b) for b in BRACELET_OPTIONS])
             async def bracelet_callback(interaction: discord.Interaction):
                 self.data["bracelet"] = interaction.data["values"][0]
-                self.step = 5
+                self.step = 6 
                 await self.next_step(interaction)
             select.callback = bracelet_callback
             self.add_item(select)
 
     async def next_step(self, interaction: discord.Interaction):
-        if self.step < 5:
+        if self.step < 6:
             self.refresh_menu()
             embed = discord.Embed(title="⚙️ Setup MyGear", color=discord.Color.blue())
+            
+            tz = self.data["tz_offset"]
+            tz_str = f"+{tz}" if tz > 0 else str(tz)
+            
             embed.add_field(
                 name="Current", 
-                value=f"Role: {self.data['role'] or '...'}\n"
-                      f"Gear: {self.data['gear'] or '...'}\n"
-                      f"Vice: {self.data['vice'] or '...'}\n"
-                      f"Deck: {self.data['deck'] or '...'}\n"
-                      f"Bracelet: {self.data['bracelet'] or '...'}"
+                value=f"🌍 Timezone: UTC{tz_str.replace('.0', '')}\n"
+                      f"Role: {self.data.get('role') or '...'}\n"
+                      f"Gear: {self.data.get('gear') or '...'}\n"
+                      f"Vice: {self.data.get('vice') or '...'}\n"
+                      f"Deck: {self.data.get('deck') or '...'}\n"
+                      f"Bracelet: {self.data.get('bracelet') or '...'}"
             )
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             role = self.data["role"]
+            stats_data = {k: v for k, v in self.data.items() if k != "tz_offset"}
             await db.players.update_one(
                 {"user_id": self.user_id}, 
-                {"$set": {f"my_stats.{role}": self.data}}, 
+                {"$set": {
+                    "tz_offset": self.data["tz_offset"],
+                    f"my_stats.{role}": stats_data
+                }}, 
                 upsert=True
             )
-            await interaction.response.edit_message(content=f"✅ Saved config for **{role}**!", embed=None, view=None)
+            await interaction.response.edit_message(content=f"✅ Saved config for **{role}** successfully!", embed=None, view=None)
 
 # ==========================================
 # VIEW: DANH SÁCH DUNGEON
@@ -198,24 +240,46 @@ class DungeonStats(commands.Cog):
 
     @app_commands.command(name="mygear", description="Set your character profile")
     async def mygear(self, interaction: discord.Interaction):
-        # 1. Kiểm tra xem người dùng đã có profile và đã có IGN chưa
         p = await db.players.find_one({"user_id": interaction.user.id})
         
-        # 2. Phân nhánh xử lý:
         if not p or not p.get("ign") or p.get("ign") == "Not Set":
-            # TRƯỜNG HỢP A: Chưa có IGN -> Bắt buộc phải nhập IGN trước
-            # (Gửi Modal như bạn đã làm)
             await interaction.response.send_modal(MyGearIGNModal(self.bot))
         else:
-            # TRƯỜNG HỢP B: Đã có IGN rồi -> Bỏ qua bước nhập tên, nhảy thẳng vào chọn Gear
             ign_value = p.get("ign")
             embed = discord.Embed(
                 title="⚙️ Setup MyGear", 
                 description=f"Current profile: **{ign_value}**\nPlease select role to setup gears:", 
                 color=discord.Color.blue()
             )
-            # Truyền thẳng view MyGearWizard
-            await interaction.response.send_message(embed=embed, view=MyGearWizard(interaction.user.id), ephemeral=True)
+            await interaction.response.send_message(embed=embed, view=MyGearWizard(interaction.user.id, p), ephemeral=True)
+
+    @app_commands.command(name="set_timezone", description="🌍 Setting your timezone")
+    async def set_timezone(self, interaction: discord.Interaction):
+        options = [
+            discord.SelectOption(label="🇺🇸 Pacific Time (US/Canada)", description="UTC-8", value="-8"),
+            discord.SelectOption(label="🇺🇸 Eastern Time (US/Canada)", description="UTC-5", value="-5"),
+            discord.SelectOption(label="🇧🇷 South America (Brazil/Argentina)", description="UTC-3", value="-3"),
+            discord.SelectOption(label="🇬🇧 United Kingdom / Ireland / GMT", description="UTC+0", value="0"),
+            discord.SelectOption(label="🇩🇪 Germany / 🇫🇷 France / 🇮🇹 Italy / 🇪🇸 Spain", description="UTC+1", value="1"),
+            discord.SelectOption(label="🇻🇳 Vietnam / 🇹🇭 Thailand / 🇮🇩 Indonesia (WIB)", description="UTC+7", value="7"),
+            discord.SelectOption(label="🇸🇬 Singapore / 🇲🇾 Malaysia / 🇵🇭 Philippines", description="UTC+8", value="8"),
+            discord.SelectOption(label="🇰🇷 Korea / 🇯🇵 Japan", description="UTC+9", value="9"),
+            discord.SelectOption(label="🇦🇺 Eastern Australia (Sydney/Melbourne)", description="UTC+10", value="10")
+        ]
+        select = discord.ui.Select(placeholder="🌍 Chọn khu vực / múi giờ của bạn...", options=options)
+        
+        async def tz_callback(inter: discord.Interaction):
+            offset = float(select.values[0])
+            await db.players.update_one({"user_id": inter.user.id}, {"$set": {"tz_offset": offset}}, upsert=True)
+            sign = "+" if offset > 0 else ""
+            await inter.response.edit_message(content=f"✅ Your region has been saved! The system will use the **UTC time zone.{sign}{str(offset).replace('.0', '')}**.", view=None, embed=None)
+            
+        select.callback = tz_callback
+        view = discord.ui.View()
+        view.add_item(select)
+        
+        embed = discord.Embed(title="🌍Config your timezone", description="Choose your location so the bot can synchronize Party times accurately with you.", color=discord.Color.blue())
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="showmygear", description="Flex Gear")
     async def showmygear(self, interaction: discord.Interaction):
@@ -224,7 +288,6 @@ class DungeonStats(commands.Cog):
         if not p or "my_stats" not in p or not p["my_stats"]: 
             return await interaction.response.send_message("❌ Your gear information is empty!", ephemeral=True)
         
-        # 1. Kiểm tra trực tiếp xem có IGN chưa, nếu chưa hiện rõ chữ cảnh báo
         ign_in_db = p.get('ign')
         if not ign_in_db or ign_in_db == "Not Set":
             player_ign = f"⚠️ {interaction.user.name} (Missing IGN)"
@@ -240,7 +303,6 @@ class DungeonStats(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
         
-
     @app_commands.command(name="dglist", description="Check gear requirement of dg")
     async def dglist(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -249,7 +311,6 @@ class DungeonStats(commands.Cog):
             return await interaction.response.send_message("❌ Empty.", ephemeral=True)
         await interaction.followup.send("📍 Please select dungeon", view=DungeonListView(dungeons))
 
-        
 async def setup(bot):
     print("DEBUG: Đang load Cog DungeonStats...") 
     await bot.add_cog(DungeonStats(bot))
