@@ -264,7 +264,7 @@ class DungeonStats(commands.Cog):
             discord.SelectOption(label="🇻🇳 Vietnam / 🇹🇭 Thailand / 🇮🇩 Indonesia (WIB)", description="UTC+7", value="7"),
             discord.SelectOption(label="🇸🇬 Singapore / 🇲🇾 Malaysia / 🇵🇭 Philippines", description="UTC+8", value="8"),
             discord.SelectOption(label="🇰🇷 Korea / 🇯🇵 Japan", description="UTC+9", value="9"),
-            discord.SelectOption(label="🇩🇪 Germany", description="UTC+2", value="2")
+            discord.SelectOption(label="🇩🇪 Germany", description="UTC+2", value="2"),
             discord.SelectOption(label="🇦🇺 Eastern Australia (Sydney/Melbourne)", description="UTC+10", value="10")
         ]
         select = discord.ui.Select(placeholder="🌍 Chọn khu vực / múi giờ của bạn...", options=options)
