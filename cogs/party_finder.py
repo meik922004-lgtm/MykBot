@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from bson.objectid import ObjectId
-from typing import List, Optional
+from typing import List, Optional, Union
 import asyncio
 import re 
 from datetime import datetime, timedelta, timezone
@@ -253,15 +253,13 @@ class ManagePartyView(discord.ui.View):
             
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Edit Dungeon Name", style=discord.ButtonStyle.secondary)
-    async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditDungeonModal(self.party, interaction.client))
+    @discord.ui.button(label="✏️ Edit Party Info", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_party_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.party.get('leader_id'):
+            return await interaction.response.send_message("Only the leader can edit party details!", ephemeral=True)
+        await interaction.response.send_modal(EditPartyInfoModal(self.party, self.bot))
 
-    @discord.ui.button(label="Edit Requirements", style=discord.ButtonStyle.secondary)
-    async def edit_reqs(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditReqModal(self.party, interaction.client))
-
-    @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Kick Member", style=discord.ButtonStyle.danger, row=1)
     async def kick_member(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.party.get('leader_id'):
             return await interaction.response.send_message("Only the leader can kick members!", ephemeral=True)
@@ -578,36 +576,47 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         await self.lobby_view.update_lobby(self.parent_interaction, self.lobby_view.page)
 
 
-class EditDungeonModal(discord.ui.Modal, title='Edit Dungeon Name'):
-    new_name = discord.ui.TextInput(label='New Dungeon Name', required=True)
+class EditPartyInfoModal(discord.ui.Modal, title='Edit Party Information'):
+    new_name = discord.ui.TextInput(
+        label='Dungeon Name', 
+        required=True
+    )
+    new_time = discord.ui.TextInput(
+        label='Start Time (HH:MM) - Leave blank to keep', 
+        placeholder='E.g., 21:30 (Để trống nếu không muốn đổi giờ)', 
+        required=False
+    )
+    new_req = discord.ui.TextInput(
+        label='Requirements', 
+        style=discord.TextStyle.paragraph, 
+        required=False
+    )
 
     def __init__(self, party, bot):
         super().__init__()
         self.party = party
         self.bot = bot
-        self.new_name.default = party.get('dg_name')
+        self.new_name.default = party.get('dg_name', '')
+        self.new_req.default = party.get('requirements', '')
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"dg_name": self.new_name.value}})
+        
+        update_data = {
+            "dg_name": self.new_name.value.strip(),
+            "requirements": self.new_req.value.strip()
+        }
+        
+        time_val = self.new_time.value.strip()
+        if time_val:
+            profile = await get_player_profile(interaction.user.id)
+            tz_offset = float(profile.get('tz_offset', 7.0)) if profile else 7.0
+            formatted_time = get_discord_timestamp(time_val, tz_offset)
+            update_data["start_time"] = formatted_time
+            
+        await parties_col.update_one({"_id": self.party['_id']}, {"$set": update_data})
         asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))
-        await interaction.followup.send("✅ Dungeon name updated!", ephemeral=True)
-
-
-class EditReqModal(discord.ui.Modal, title='Edit Requirements'):
-    new_req = discord.ui.TextInput(label='New Requirements', style=discord.TextStyle.paragraph, required=True)
-
-    def __init__(self, party, bot):
-        super().__init__()
-        self.party = party
-        self.bot = bot
-        self.new_req.default = party.get('requirements')
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        await parties_col.update_one({"_id": self.party['_id']}, {"$set": {"requirements": self.new_req.value}})
-        asyncio.create_task(update_broadcast_messages(self.bot, str(self.party['_id'])))    
-        await interaction.followup.send("✅ Requirements updated!", ephemeral=True)
+        await interaction.followup.send("✅ Party information updated successfully!", ephemeral=True)
 
 
 class NewOwnerBroadcastModal(discord.ui.Modal, title='Global Update Announcement'):
@@ -837,28 +846,58 @@ class PartyFinderCog(commands.Cog):
 
     @app_commands.command(name="setup_party_channel", description="Configure Channel ID to receive Party Board notifications for this server.")
     @app_commands.describe(channel="Select a text channel to receive public party-seeking posts")
-    async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ YYou need administrator privileges.!", ephemeral=True)
-        
-        await server_configs_col.update_one(
-            {"guild_id": interaction.guild_id},
-            {"$set": {"party_channel_id": channel.id}},
-            upsert=True
-        )
-        await interaction.response.send_message(f"✅ {channel.mention} will receive party notification", ephemeral=True)
+    async def setup_party_channel(self, interaction: discord.Interaction, channel: Union[discord.TextChannel, discord.AnnouncementChannel]):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            if not interaction.user.guild_permissions.administrator:
+                return await interaction.followup.send("❌ You need administrator privileges!", ephemeral=True)
+            
+            await server_configs_col.update_one(
+                {"guild_id": interaction.guild_id},
+                {"$set": {"party_channel_id": channel.id}},
+                upsert=True
+            )
+            await interaction.followup.send(f"✅ {channel.mention} will receive party notifications.", ephemeral=True)
+        except Exception as e:
+            print(f"Error setup_party_channel: {e}")
+            await interaction.followup.send("❌ An error occurred during setup. Please check if the bot has View/Send permissions in that channel.", ephemeral=True)
 
     @app_commands.command(name="setup_news_channel", description="Select channel to receive update/bot annoucement")
-    async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ You need administrator privileges.!", ephemeral=True)
+    @app_commands.describe(channel="Select a text channel to receive bot updates")
+    async def setup_news_channel(self, interaction: discord.Interaction, channel: Union[discord.TextChannel, discord.AnnouncementChannel]):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            if not interaction.user.guild_permissions.administrator:
+                return await interaction.followup.send("❌ You need administrator privileges!", ephemeral=True)
+            
+            await server_configs_col.update_one(
+                {"guild_id": interaction.guild_id},
+                {"$set": {"news_channel_id": channel.id}},
+                upsert=True
+            )
+            await interaction.followup.send(f"✅ The News/Update channel has been set up at: {channel.mention}", ephemeral=True)
+        except Exception as e:
+            print(f"Error setup_news_channel: {e}")
+            await interaction.followup.send("❌ An error occurred during setup. Please check if the bot has View/Send permissions in that channel.", ephemeral=True)
+
+    @app_commands.command(name="set_timezone", description="Set or update your Timezone offset (UTC)")
+    @app_commands.describe(offset="Enter your UTC offset (e.g., 7 for Vietnam, -5 for EST, 0 for GMT)")
+    async def set_timezone(self, interaction: discord.Interaction, offset: float):
+        await interaction.response.defer(ephemeral=True)
         
-        await server_configs_col.update_one(
-            {"guild_id": interaction.guild_id},
-            {"$set": {"news_channel_id": channel.id}},
+        if offset < -12.0 or offset > 14.0:
+            return await interaction.followup.send("❌ Invalid timezone offset. Please enter a value between -12 and 14.", ephemeral=True)
+            
+        await players_col.update_one(
+            {"user_id": interaction.user.id},
+            {"$set": {"tz_offset": offset}},
             upsert=True
         )
-        await interaction.response.send_message(f"✅ The News/Update channel has been set up at: {channel.mention}", ephemeral=True)
+        
+        formatted_offset = f"+{offset}" if offset > 0 else str(offset)
+        formatted_offset = formatted_offset.replace('.0', '')
+        
+        await interaction.followup.send(f"✅ Your timezone has been successfully set to **UTC{formatted_offset}**!", ephemeral=True)
 
     @app_commands.command(name="ownerbroadcast", description="Send bot update notifications to all News channels (Owner only)")
     async def ownerbroadcast(self, interaction: discord.Interaction):
