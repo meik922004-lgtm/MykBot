@@ -846,7 +846,7 @@ class PartyFinderCog(commands.Cog):
 
     @app_commands.command(name="setup_party_channel", description="Configure Channel ID to receive Party Board notifications for this server.")
     @app_commands.describe(channel="Select a text channel to receive public party-seeking posts")
-    async def setup_party_channel(self, interaction: discord.Interaction, channel: Union[discord.TextChannel, discord.AnnouncementChannel]):
+    async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
         try:
             await interaction.response.defer(ephemeral=True)
             if not interaction.user.guild_permissions.administrator:
@@ -864,7 +864,7 @@ class PartyFinderCog(commands.Cog):
 
     @app_commands.command(name="setup_news_channel", description="Select channel to receive update/bot annoucement")
     @app_commands.describe(channel="Select a text channel to receive bot updates")
-    async def setup_news_channel(self, interaction: discord.Interaction, channel: Union[discord.TextChannel, discord.AnnouncementChannel]):
+    async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
         try:
             await interaction.response.defer(ephemeral=True)
             if not interaction.user.guild_permissions.administrator:
