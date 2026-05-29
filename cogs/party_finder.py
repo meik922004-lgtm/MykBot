@@ -35,6 +35,18 @@ def get_discord_timestamp(time_str: str, tz_offset: float = 7.0):
 async def get_player_profile(user_id: int):
     return await players_col.find_one({"user_id": user_id})
 
+def is_profile_complete(profile: dict) -> bool:
+    """Hàm kiểm tra người chơi đã setup đủ IGN, Timezone và Gears chưa."""
+    if not profile: 
+        return False
+    if not profile.get('ign') or profile.get('ign') == "Not Set": 
+        return False
+    if 'tz_offset' not in profile: 
+        return False
+    if not profile.get('my_stats') or len(profile.get('my_stats')) == 0: 
+        return False
+    return True
+
 async def get_dungeon_config(dg_name: str):
     return await dungeon_configs_col.find_one({"dg_name": {"$regex": f"^{dg_name}$", "$options": "i"}})
 
@@ -392,13 +404,17 @@ class LobbyPaginationView(discord.ui.View):
 
     async def send_request_callback(self, interaction: discord.Interaction):
         profile = await get_player_profile(interaction.user.id)
-        if not profile or not profile.get('ign'):
-            return await interaction.response.send_message("⚠️ Please setup your profile and IGN (/mygear) first before using this function.", ephemeral=True)
+        if not is_profile_complete(profile):
+            return await interaction.response.send_message(
+                "❌ **Access Denied!** Your profile is incomplete.\n"
+                "👉 Please use `/mygear` to set up your **IGN, Timezone, and Gears** before using this function.", 
+                ephemeral=True
+            )
         
         party_id = self.select.values[0]
         existing_party = await parties_col.find_one({"members.user_id": interaction.user.id})
         if existing_party:
-            return await interaction.response.send_message("❌ You already in party", ephemeral=True)
+            return await interaction.response.send_message("❌ You are already in a party", ephemeral=True)
             
         await interaction.response.send_modal(JoinPartyModal(self.bot, party_id))
 
@@ -417,8 +433,13 @@ class LobbyPaginationView(discord.ui.View):
     @discord.ui.button(label="➕ Create Party", style=discord.ButtonStyle.success, row=2)
     async def create_party(self, interaction: discord.Interaction, button: discord.ui.Button):
         profile = await get_player_profile(interaction.user.id)
-        if not profile or not profile.get('ign'):
-            return await interaction.response.send_message("⚠️ Please setup your profile and IGN (/mygear) first before using this function.", ephemeral=True)
+        if not is_profile_complete(profile):
+            return await interaction.response.send_message(
+                "❌ **Access Denied!** Your profile is incomplete.\n"
+                "👉 Please use `/mygear` to set up your **IGN, Timezone, and Gears** before creating a party.", 
+                ephemeral=True
+            )
+            
         if await parties_col.find_one({"members.user_id": interaction.user.id}):
             return await interaction.response.send_message("❌ You are already in a party!", ephemeral=True)
             
@@ -480,8 +501,8 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
         party = await parties_col.find_one({"_id": ObjectId(self.party_id)})
         profile = await get_player_profile(interaction.user.id)
         
-        if not party or not profile or not profile.get('ign'):
-            return await interaction.followup.send("Party or Profile not found. Please setup your IGN using `/mygear`.", ephemeral=True)
+        if not party or not is_profile_complete(profile):
+            return await interaction.followup.send("Party or Profile not found. Please setup your profile completely using `/mygear`.", ephemeral=True)
 
         applicant_ign = profile.get('ign')
         role_entered = self.role.value.strip()
@@ -507,7 +528,7 @@ class JoinPartyModal(discord.ui.Modal, title='Role Selection'):
 class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     dg_name = discord.ui.TextInput(label='Dungeon Name', placeholder='E.g., Stage of Clown(PIED)', required=True)
     role = discord.ui.TextInput(label='Your Role as Leader (e.g., DPS, TANK)', required=True)
-    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='Please use HH:MM in your timezone, if you not set profile its will standart use UTC+0', required=True)
+    start_time = discord.ui.TextInput(label='Expected Start Time', placeholder='Please use HH:MM in your timezone', required=True)
     requirements = discord.ui.TextInput(label='Requirements', style=discord.TextStyle.paragraph, required=False)
 
     def __init__(self, bot, lobby_view, parent_interaction: discord.Interaction):
@@ -519,8 +540,9 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
-        if not profile or not profile.get('ign'):
-            return await interaction.followup.send("⚠️ Please setup your profile and IGN first using `/mygear`.", ephemeral=True)
+        
+        if not is_profile_complete(profile):
+            return await interaction.followup.send("⚠️ Please setup your profile completely using `/mygear` first.", ephemeral=True)
             
         time_val = self.start_time.value.strip()
         tz_offset = float(profile.get('tz_offset', 7.0))
@@ -769,8 +791,12 @@ class PartyFinderCog(commands.Cog):
             party_id_str = custom_id.replace("bcast_join_", "")
             profile = await get_player_profile(interaction.user.id)
             
-            if not profile or not profile.get('ign'):
-                return await interaction.response.send_message("⚠️ Pls set up your gear profile and IGN (/mygear) first before use this function", ephemeral=True)
+            if not is_profile_complete(profile):
+                return await interaction.response.send_message(
+                    "❌ **Access Denied!** Your profile is incomplete.\n"
+                    "👉 Please use `/mygear` to set up your **IGN, Timezone, and Gears** before using this function.", 
+                    ephemeral=True
+                )
                 
             existing_party = await parties_col.find_one({"members.user_id": interaction.user.id})
             if existing_party:
@@ -781,8 +807,13 @@ class PartyFinderCog(commands.Cog):
         elif custom_id == "bcast_lobby":
             await interaction.response.defer(ephemeral=True)
             profile = await get_player_profile(interaction.user.id)
-            if not profile or not profile.get('ign'):
-                return await interaction.followup.send("⚠️ Pls set up your gear profile and IGN (/mygear) first before use this function", ephemeral=True)
+            
+            if not is_profile_complete(profile):
+                return await interaction.followup.send(
+                    "❌ **Access Denied!** Your profile is incomplete.\n"
+                    "👉 Please use `/mygear` to set up your **IGN, Timezone, and Gears** before using this function.", 
+                    ephemeral=True
+                )
 
             parties = await parties_col.find({}).to_list(length=100)
             view = LobbyPaginationView(self.bot, parties, page=0)
@@ -841,17 +872,10 @@ class PartyFinderCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         profile = await get_player_profile(interaction.user.id)
         
-        if not profile:
+        if not is_profile_complete(profile):
             return await interaction.followup.send(
-                "❌ **Access Denied!** You haven't set up your gear profile.\n"
-                "👉 Please use `/mygear` to create your profile before entering the Lobby.", 
-                ephemeral=True
-            )
-
-        if not profile.get('ign') or profile.get('ign') == "Not Set":
-            return await interaction.followup.send(
-                "❌ **Missing Information!** You haven't set your In-Game Name (IGN).\n"
-                "👉 Please run `/mygear` again and make sure to complete the IGN setup step.", 
+                "❌ **Access Denied!** Your profile is incomplete.\n"
+                "👉 Please use `/mygear` to fully set up your **IGN, Timezone, and Gears** before entering the Lobby.", 
                 ephemeral=True
             )
 
