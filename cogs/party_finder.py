@@ -880,24 +880,7 @@ class PartyFinderCog(commands.Cog):
             print(f"Error setup_news_channel: {e}")
             await interaction.followup.send("❌ An error occurred during setup. Please check if the bot has View/Send permissions in that channel.", ephemeral=True)
 
-    @app_commands.command(name="set_timezone", description="Set or update your Timezone offset (UTC)")
-    @app_commands.describe(offset="Enter your UTC offset (e.g., 7 for Vietnam, -5 for EST, 0 for GMT)")
-    async def set_timezone(self, interaction: discord.Interaction, offset: float):
-        await interaction.response.defer(ephemeral=True)
-        
-        if offset < -12.0 or offset > 14.0:
-            return await interaction.followup.send("❌ Invalid timezone offset. Please enter a value between -12 and 14.", ephemeral=True)
-            
-        await players_col.update_one(
-            {"user_id": interaction.user.id},
-            {"$set": {"tz_offset": offset}},
-            upsert=True
-        )
-        
-        formatted_offset = f"+{offset}" if offset > 0 else str(offset)
-        formatted_offset = formatted_offset.replace('.0', '')
-        
-        await interaction.followup.send(f"✅ Your timezone has been successfully set to **UTC{formatted_offset}**!", ephemeral=True)
+
 
     @app_commands.command(name="ownerbroadcast", description="Send bot update notifications to all News channels (Owner only)")
     async def ownerbroadcast(self, interaction: discord.Interaction):
