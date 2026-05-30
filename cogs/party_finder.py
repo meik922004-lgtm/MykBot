@@ -846,11 +846,11 @@ class PartyFinderCog(commands.Cog):
 
     @app_commands.command(name="setup_party_channel", description="Configure Channel ID to receive Party Board notifications for this server.")
     @app_commands.describe(channel="Select a text channel to receive public party-seeking posts")
-    async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
+    # ĐỔI discord.abc.GuildChannel THÀNH discord.TextChannel
+    async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.TextChannel): 
         try:
             await interaction.response.defer(ephemeral=True)
             
-            # Kiểm tra quyền: Là Admin của server HOẶC là Bot Owner
             is_bot_owner = await self.bot.is_owner(interaction.user)
             if not (interaction.user.guild_permissions.administrator or is_bot_owner):
                 return await interaction.followup.send("❌ You need administrator or bot owner privileges!", ephemeral=True)
@@ -863,15 +863,15 @@ class PartyFinderCog(commands.Cog):
             await interaction.followup.send(f"✅ {channel.mention} will receive party notifications.", ephemeral=True)
         except Exception as e:
             print(f"Error setup_party_channel: {e}")
-            await interaction.followup.send("❌ An error occurred during setup. Please check if the bot has View/Send permissions in that channel.", ephemeral=True)
+            await interaction.followup.send("❌ An error occurred during setup.", ephemeral=True)
 
     @app_commands.command(name="setup_news_channel", description="Select channel to receive update/bot annoucement")
     @app_commands.describe(channel="Select a text channel to receive bot updates")
-    async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
+    # ĐỔI discord.abc.GuildChannel THÀNH discord.TextChannel
+    async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.TextChannel): 
         try:
             await interaction.response.defer(ephemeral=True)
             
-            # Kiểm tra quyền: Là Admin của server HOẶC là Bot Owner
             is_bot_owner = await self.bot.is_owner(interaction.user)
             if not (interaction.user.guild_permissions.administrator or is_bot_owner):
                 return await interaction.followup.send("❌ You need administrator or bot owner privileges!", ephemeral=True)
@@ -884,7 +884,7 @@ class PartyFinderCog(commands.Cog):
             await interaction.followup.send(f"✅ The News/Update channel has been set up at: {channel.mention}", ephemeral=True)
         except Exception as e:
             print(f"Error setup_news_channel: {e}")
-            await interaction.followup.send("❌ An error occurred during setup. Please check if the bot has View/Send permissions in that channel.", ephemeral=True)
+            await interaction.followup.send("❌ An error occurred during setup.", ephemeral=True)
 
 
 
