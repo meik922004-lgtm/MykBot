@@ -20,3 +20,7 @@ players_col = db.players
 parties_col = db.parties
 dungeon_configs_col = db["dungeon_configs"]
 invite_roles_col = db["invite_roles_config"]
+# Thêm vào Database.py
+rpg_profiles_col = db["rpg_profiles"]
+world_boss_col = db["world_boss"]
+boss_channels_col = db["boss_channels"]
