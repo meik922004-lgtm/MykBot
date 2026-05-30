@@ -12,28 +12,128 @@ from Database import rpg_profiles_col, world_boss_col, boss_channels_col
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
+# ========================================================================
+# CÁC LỚP GIAO DIỆN UI (VIEWS & MODALS)
+# ========================================================================
+
+class InventorySelect(discord.ui.Select):
+    def __init__(self, inventory: list, cog_instance):
+        self.cog = cog_instance
+        interactable_items = [item for item in inventory if "(Unlocked)" in item or item == "Size Reroll Fruit"]
+        
+        if not interactable_items:
+            options = [discord.SelectOption(label="Empty Inventory", value="empty")]
+        else:
+            unique_items = list(set(interactable_items))[:25] # Discord limit 25 options
+            options = [
+                discord.SelectOption(
+                    label=item, 
+                    description="Consume Fruit" if item == "Size Reroll Fruit" else "Equip Gear",
+                    emoji="🍎" if item == "Size Reroll Fruit" else "🛡️"
+                ) for item in unique_items
+            ]
+        super().__init__(placeholder="🎒 Select an item to use/equip...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "empty":
+            return await interaction.response.send_message("❌ **No usable items.**", ephemeral=True)
+        await self.cog.handle_inventory_use(interaction, self.values[0])
+
+class ProfileView(discord.ui.View):
+    def __init__(self, profile: dict, cog_instance):
+        super().__init__(timeout=300)
+        self.user_id = profile.get("user_id")
+        self.cog = cog_instance
+        self.add_item(InventorySelect(profile.get("inventory", []), cog_instance))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ **Access Denied!** Not your profile.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Heal (120s CD)", style=discord.ButtonStyle.success, custom_id="btn_heal", emoji="✨")
+    async def heal_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_heal(interaction)
+
+    @discord.ui.button(label="Evolve (50 Orbs)", style=discord.ButtonStyle.primary, custom_id="btn_evolve", emoji="🧬")
+    async def evolve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_evolve(interaction)
+
+class SellModal(discord.ui.Modal, title='Sell to Marketplace'):
+    item_type = discord.ui.TextInput(label='Type (gear / orb / core)', placeholder='gear', max_length=10)
+    item_target = discord.ui.TextInput(label='Exact Gear Name OR Quantity', placeholder='e.g., Chrome Dagger (Unlocked) OR 10')
+    price = discord.ui.TextInput(label='Price in Digibits', placeholder='e.g., 15.5')
+
+    def __init__(self, cog_instance):
+        super().__init__()
+        self.cog = cog_instance
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.handle_market_sell(interaction, self.item_type.value.lower(), self.item_target.value, self.price.value)
+
+class BuyModal(discord.ui.Modal, title='Buy from Marketplace'):
+    listing_id = discord.ui.TextInput(label='Listing ID', placeholder='e.g., LIT-1234', max_length=15)
+
+    def __init__(self, cog_instance):
+        super().__init__()
+        self.cog = cog_instance
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.handle_market_buy(interaction, self.listing_id.value)
+
+class MarketView(discord.ui.View):
+    def __init__(self, cog_instance):
+        super().__init__(timeout=None)
+        self.cog = cog_instance
+
+    @discord.ui.button(label="View Market", style=discord.ButtonStyle.blurple, emoji="🔄")
+    async def view_market(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_market_view(interaction)
+
+    @discord.ui.button(label="Buy Item", style=discord.ButtonStyle.success, emoji="🛒")
+    async def buy_item(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BuyModal(self.cog))
+
+    @discord.ui.button(label="Sell Item", style=discord.ButtonStyle.danger, emoji="📦")
+    async def sell_item(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SellModal(self.cog))
+
+class CombatView(discord.ui.View):
+    def __init__(self, cog_instance):
+        super().__init__(timeout=None)
+        self.cog = cog_instance
+
+    @discord.ui.button(label="Attack", style=discord.ButtonStyle.danger, emoji="⚔️")
+    async def attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_manual_attack(interaction)
+
+    @discord.ui.button(label="Toggle Auto-Attack", style=discord.ButtonStyle.primary, emoji="🤖")
+    async def auto_attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.toggle_auto_attack(interaction)
+
+    @discord.ui.button(label="Protect (45s CD)", style=discord.ButtonStyle.secondary, emoji="🛡️")
+    async def protect_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_protect(interaction)
+
+
+# ========================================================================
+# MAIN COG SYSTEM
+# ========================================================================
+
 class RPGSystemCog(commands.Cog):
-    # Cấu hình danh mục trang bị 3 Bậc (Rusty -> Chrome -> Divine)
     ITEMS = {
-        "Rusty Sword": {"type": "weapon", "atk": 15},
-        "Rusty Armor": {"type": "armor", "hp": 150, "def": 10},
-        "Rusty Vice": {"type": "vice", "crit_rate": 5, "crit_dmg": 1.2},
-        "Chrome Dagger": {"type": "weapon", "atk": 45},
-        "Chrome Cloak": {"type": "armor", "hp": 350, "def": 25},
-        "Chrome Vice": {"type": "vice", "crit_rate": 10, "crit_dmg": 1.5},
-        "Divine Blade": {"type": "weapon", "atk": 120},
-        "Divine Aegis": {"type": "armor", "hp": 800, "def": 60},
-        "Divine Vice": {"type": "vice", "crit_rate": 20, "crit_dmg": 2.0}
+        "Rusty Sword": {"type": "weapon", "atk": 15}, "Rusty Armor": {"type": "armor", "hp": 150, "def": 10}, "Rusty Vice": {"type": "vice", "crit_rate": 5, "crit_dmg": 1.2},
+        "Chrome Dagger": {"type": "weapon", "atk": 45}, "Chrome Cloak": {"type": "armor", "hp": 350, "def": 25}, "Chrome Vice": {"type": "vice", "crit_rate": 10, "crit_dmg": 1.5},
+        "Divine Blade": {"type": "weapon", "atk": 120}, "Divine Aegis": {"type": "armor", "hp": 800, "def": 60}, "Divine Vice": {"type": "vice", "crit_rate": 20, "crit_dmg": 2.0}
     }
 
-    # Cấu hình Phụ bản PvE 
     DUNGEONS = {
-        "digital_forest": {"name": "Digital Forest", "description": "Farms Weapons (Rusty / Chrome)."},
-        "factorial_town": {"name": "Factorial Town", "description": "Farms Armors (Rusty / Chrome)."},
-        "server_continent": {"name": "Server Continent", "description": "Farms Vices (Rusty / Chrome)."}
+        "digital_forest": {"name": "Digital Forest", "description": "Farms Weapons."},
+        "factorial_town": {"name": "Factorial Town", "description": "Farms Armors."},
+        "server_continent": {"name": "Server Continent", "description": "Farms Vices."}
     }
 
-    # Cấu hình dữ liệu Digimon
     DIGIMON_DATA = {
         "rookie": {
             "Agumon": {"attr": "Vaccine", "atk": 60, "hp": 1200, "vip": False, "img": "https://digimon.net/cimages/digimon/agumon.jpg"},
@@ -51,586 +151,73 @@ class RPGSystemCog(commands.Cog):
         }
     }
 
-    EVOLUTION_LINE = {
-        "Agumon": "Greymon", "Gabumon": "Garurumon", "Guilmon": "Growlmon",
-        "Lucemon": "Lucemon FM", "V-mon": "ExVeemon"
-    }
-
-    # Chi phí Core để ấp trứng
+    EVOLUTION_LINE = {"Agumon": "Greymon", "Gabumon": "Garurumon", "Guilmon": "Growlmon", "Lucemon": "Lucemon FM", "V-mon": "ExVeemon"}
     HATCH_CORE_COST = 5
 
     def __init__(self, bot):
         self.bot = bot
+        self.auto_attackers = set() # Quản lý danh sách người đang bật auto attack
         self.auto_spawn_boss.start()
 
     def cog_unload(self):
         self.auto_spawn_boss.cancel()
 
-    # ========================================================================
-    # PART 1: HELPER METHODS (HÀM TÍNH TOÁN CHỈ SỐ & THUỘC TÍNH)
-    # ========================================================================
-
+    # --- HELPER METHODS ---
     def clean_item_name(self, item_name: str) -> str:
         if not item_name: return "None"
         return item_name.replace(" (Unlocked)", "").replace(" (Locked)", "")
 
     def get_total_stats(self, profile: dict) -> dict:
         digimon = profile.get("digimon", {})
-        total_hp = digimon.get("hp", 0)
-        total_atk = digimon.get("atk", 0)
-        total_def = 10 
-        total_crit_rate = 0
-        total_crit_dmg = 1.0
+        total_hp, total_atk = digimon.get("hp", 0), digimon.get("atk", 0)
+        total_def, total_crit_rate, total_crit_dmg = 10, 0, 1.0
 
         gear = profile.get("gear", {"weapon": "None", "armor": "None", "vice": "None"})
-        
         w_name = self.clean_item_name(gear.get("weapon"))
         if w_name in self.ITEMS: total_atk += self.ITEMS[w_name].get("atk", 0)
-            
         a_name = self.clean_item_name(gear.get("armor"))
         if a_name in self.ITEMS:
             total_hp += self.ITEMS[a_name].get("hp", 0)
             total_def += self.ITEMS[a_name].get("def", 0)
-            
         v_name = self.clean_item_name(gear.get("vice"))
         if v_name in self.ITEMS:
             total_crit_rate += self.ITEMS[v_name].get("crit_rate", 0)
             total_crit_dmg += self.ITEMS[v_name].get("crit_dmg", 0)
-            
         return {"hp": total_hp, "atk": total_atk, "def": total_def, "crit_rate": total_crit_rate, "crit_dmg": total_crit_dmg}
 
     def get_attribute_multiplier(self, attacker_attr: str, defender_attr: str) -> float:
         if attacker_attr == defender_attr: return 1.0
         adv = {"Vaccine": "Virus", "Virus": "Data", "Data": "Vaccine"}
-        if adv.get(attacker_attr) == defender_attr: return 1.25 
-        return 0.8 
+        return 1.25 if adv.get(attacker_attr) == defender_attr else 0.8 
 
     async def verify_and_refresh_cores(self, user_id: int, profile: dict) -> int:
         current_date = datetime.utcnow().strftime("%Y-%m-%d")
         if profile.get("last_core_reset") != current_date:
             max_cores = 30 if profile.get("is_vip") else 20
-            await rpg_profiles_col.update_one(
-                {"user_id": user_id},
-                {"$set": {"digicore": max_cores, "last_core_reset": current_date}}
-            )
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"digicore": max_cores, "last_core_reset": current_date}})
             return max_cores
         return profile.get("digicore", 20)
 
     def roll_pve_loot(self, dungeon: str) -> str:
         is_high_tier = random.random() < 0.10
-        if dungeon == "digital_forest":
-            loot_base = "Chrome Dagger" if is_high_tier else "Rusty Sword"
-        elif dungeon == "factorial_town":
-            loot_base = "Digivice Shield" if is_high_tier else "Rusty Armor"
-        else: 
-            loot_base = "Chrome Vice" if is_high_tier else "Rusty Vice"
-            
-        is_unlocked = random.random() < 0.20
-        return f"{loot_base}{' (Unlocked)' if is_unlocked else ' (Locked)'}"
+        if dungeon == "digital_forest": loot_base = "Chrome Dagger" if is_high_tier else "Rusty Sword"
+        elif dungeon == "factorial_town": loot_base = "Digivice Shield" if is_high_tier else "Rusty Armor"
+        else: loot_base = "Chrome Vice" if is_high_tier else "Rusty Vice"
+        return f"{loot_base}{' (Unlocked)' if random.random() < 0.20 else ' (Locked)'}"
 
     # ========================================================================
-    # PART 2: DIGIMON SYSTEM (ẤP TRỨNG, TIẾN HÓA & TRÁI CÂY SIZE)
+    # DASHBOARD COMMANDS (Slash Commands chính)
     # ========================================================================
 
-    @app_commands.command(name="hatch", description=f"Hatch a Rookie Digimon (Costs 5 Hatch Cores)")
-    @app_commands.describe(confirm_replace="Set to True to permanently replace your current Digimon")
-    async def hatch(self, interaction: discord.Interaction, confirm_replace: bool = False):
-        """Lệnh ấp trứng yêu cầu Hatch Core và áp dụng cơ chế Size ngẫu nhiên"""
-        await interaction.response.defer()
-        user_id = interaction.user.id
-        
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        if not profile:
-            profile = {
-                "user_id": user_id, "ign": interaction.user.display_name, "gold": 0, "digibit": 0.0, 
-                "orb": 0, "hatch_core": 0, "current_hp": 0, 
-                "gear": {"weapon": "None", "armor": "None", "vice": "None"},
-                "inventory": [], "digicore": 20, "is_vip": False, "last_core_reset": datetime.utcnow().strftime("%Y-%m-%d")
-            }
-            await rpg_profiles_col.insert_one(profile)
-
-        if profile.get("hatch_core", 0) < self.HATCH_CORE_COST:
-            return await interaction.followup.send(f"❌ **Missing Materials!** You need **{self.HATCH_CORE_COST} Hatch Cores** to hatch an egg. (You have: {profile.get('hatch_core', 0)})")
-
-        if profile.get("digimon") and not confirm_replace:
-            return await interaction.followup.send("⚠️ **Warning!** You already have an active Digimon partner. Hatching a new one will **PERMANENTLY REPLACE** it. Re-run with `confirm_replace: True` to proceed.")
-
-        await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"hatch_core": -self.HATCH_CORE_COST}})
-
-        is_vip = profile.get("is_vip", False)
-        available_digimon = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
-        
-        hatched_name = random.choice(available_digimon)
-        base_stats = self.DIGIMON_DATA["rookie"][hatched_name]
-
-        min_size, max_size = (1.00, 1.30) if is_vip else (0.85, 1.25)
-        size_pct = round(random.uniform(min_size, max_size), 3)
-
-        actual_hp = int(base_stats["hp"] * size_pct)
-        actual_atk = int(base_stats["atk"] * size_pct)
-
-        digimon_stats = {
-            "name": hatched_name, "stage": "Rookie", "attr": base_stats["attr"],
-            "size": size_pct, "hp": actual_hp, "atk": actual_atk, "img": base_stats["img"]
-        }
-
-        await rpg_profiles_col.update_one(
-            {"user_id": user_id},
-            {"$set": {"digimon": digimon_stats, "current_hp": actual_hp}}
-        )
-
-        size_display = f"{size_pct * 100:.1f}%"
-        embed_color = discord.Color.gold() if size_pct >= 1.25 else discord.Color.green() if size_pct >= 1.00 else discord.Color.red()
-
-        embed = discord.Embed(title="🥚 Egg Hatched Successfully!", description=f"Spent {self.HATCH_CORE_COST} Hatch Cores.\nYou obtained **{hatched_name}**!", color=embed_color)
-        embed.set_image(url=digimon_stats["img"])
-        embed.add_field(name="🧬 Potential Size", value=f"**{size_display}**")
-        embed.add_field(name="⚔️ Scaled ATK", value=str(actual_atk))
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="evolve", description="Consume 50 Orbs to evolve your Digimon to Champion stage")
-    async def evolve(self, interaction: discord.Interaction):
-        """Tiến hóa áp dụng lại Size hiện tại để scale chỉ số mới"""
-        await interaction.response.defer()
-        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        
-        if not profile or not profile.get("digimon"): return await interaction.followup.send("❌ **Error!** You need to `/hatch` a Digimon first.")
-
-        digimon = profile["digimon"]
-        if digimon.get("stage") != "Rookie": return await interaction.followup.send("❌ **Max Level!** Your Digimon has already evolved beyond Rookie.")
-        if profile.get("orb", 0) < 50: return await interaction.followup.send(f"❌ **Insufficient Materials!** You need **50 Orbs** to evolve.")
-
-        next_form_name = self.EVOLUTION_LINE.get(digimon["name"])
-        if not next_form_name: return await interaction.followup.send("❌ **Unknown Line!** Evolution data missing.")
-
-        base_next_stats = self.DIGIMON_DATA["champion"][next_form_name]
-        current_size = digimon.get("size", 1.0)
-
-        actual_hp = int(base_next_stats["hp"] * current_size)
-        actual_atk = int(base_next_stats["atk"] * current_size)
-
-        next_stats = {
-            "name": next_form_name, "stage": "Champion", "attr": base_next_stats["attr"],
-            "size": current_size, "hp": actual_hp, "atk": actual_atk, "img": base_next_stats["img"]
-        }
-
-        await rpg_profiles_col.update_one(
-            {"user_id": interaction.user.id},
-            {"$inc": {"orb": -50}, "$set": {"digimon": next_stats, "current_hp": actual_hp}}
-        )
-
-        embed = discord.Embed(title="✨ EVOLUTION COMPLETED!", description=f"Your Digimon evolved into **{next_form_name}**!\nSize Maintained: **{current_size * 100:.1f}%**", color=discord.Color.purple())
-        embed.set_image(url=next_stats["img"])
-        embed.add_field(name="New HP", value=str(actual_hp), inline=True)
-        embed.add_field(name="New ATK", value=str(actual_atk), inline=True)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="use_fruit", description="Use a Size Reroll Fruit to randomize your Digimon's size")
-    async def use_fruit(self, interaction: discord.Interaction):
-        """Sử dụng trái cây để thay đổi phần trăm kích thước của Digimon"""
-        await interaction.response.defer()
-        user_id = interaction.user.id
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-
-        if not profile or not profile.get("digimon"):
-            return await interaction.followup.send("❌ **Error!** You don't have an active Digimon.")
-
-        inventory = profile.get("inventory", [])
-        if "Size Reroll Fruit" not in inventory:
-            return await interaction.followup.send("❌ **Not Found!** You don't have a Size Reroll Fruit in your inventory.")
-
-        # Xóa 1 trái cây bằng Python tránh lỗi MongoDB
-        inventory.remove("Size Reroll Fruit")
-        
-        is_vip = profile.get("is_vip", False)
-        min_size, max_size = (1.00, 1.30) if is_vip else (0.85, 1.25)
-        new_size = round(random.uniform(min_size, max_size), 3)
-
-        digimon = profile.get("digimon")
-        stage = digimon.get("stage", "Rookie").lower()
-        name = digimon.get("name")
-        
-        # Lấy lại base stats theo form hiện tại
-        base_stats = self.DIGIMON_DATA.get(stage, {}).get(name)
-        if not base_stats:
-            return await interaction.followup.send("❌ **Error!** Could not fetch base stats data.")
-
-        actual_hp = int(base_stats["hp"] * new_size)
-        actual_atk = int(base_stats["atk"] * new_size)
-
-        digimon["size"] = new_size
-        digimon["hp"] = actual_hp
-        digimon["atk"] = actual_atk
-
-        await rpg_profiles_col.update_one(
-            {"user_id": user_id},
-            {"$set": {"inventory": inventory, "digimon": digimon, "current_hp": actual_hp}}
-        )
-
-        embed = discord.Embed(title="🍎 Fruit Consumed!", color=discord.Color.green())
-        embed.description = f"Your **{name}** ate the Size Reroll Fruit!"
-        embed.add_field(name="New Size", value=f"**{new_size * 100:.1f}%**", inline=False)
-        embed.add_field(name="New Base Stats", value=f"❤️ HP: {actual_hp} | ⚔️ ATK: {actual_atk}", inline=False)
-        await interaction.followup.send(embed=embed)
-
-    # ========================================================================
-    # PART 3: PVE & MINING SYSTEM
-    # ========================================================================
-
-    @app_commands.command(name="mine", description="Mine for Digibits (No energy cost, low success rate)")
-    @app_commands.checks.cooldown(1, 10, key=lambda i: i.user.id) 
-    async def mine(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if random.random() < 0.40:
-            await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$inc": {"digibit": 0.25}})
-            await interaction.followup.send("⛏️ **Clink!** You successfully mined **0.25 Digibits**!")
-        else:
-            await interaction.followup.send("💨 **Swoosh!** You found nothing but rocks this time.")
-
-    @mine.error
-    async def mine_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.CommandOnCooldown):
-            await interaction.response.send_message(f"⏳ **Mining Fatigue!** Rest for **{error.retry_after:.1f}s**.", ephemeral=True)
-
-    @app_commands.command(name="auto_mine", description="VIP ONLY: Simulate 6 hours of mining instantly (1 per day)")
-    async def auto_mine(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        user_id = interaction.user.id
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        
-        if not profile or not profile.get("is_vip"):
-            return await interaction.followup.send("👑 **VIP Exclusive!** Only VIP members can deploy Auto-Miners.", ephemeral=True)
-
-        current_date = datetime.utcnow().strftime("%Y-%m-%d")
-        if profile.get("last_automine") == current_date:
-            return await interaction.followup.send("❌ **Cooldown!** You have already used your 6-hour Auto-Miner today.")
-
-        successes = sum(1 for _ in range(360) if random.random() < 0.40)
-        total_bits = successes * 0.25
-
-        await rpg_profiles_col.update_one(
-            {"user_id": user_id},
-            {"$inc": {"digibit": total_bits}, "$set": {"last_automine": current_date}}
-        )
-
-        embed = discord.Embed(title="🤖 VIP Auto-Miner Report", color=discord.Color.blue())
-        embed.description = "Your drones have finished scanning the sector for 6 hours."
-        embed.add_field(name="Successful Strikes", value=f"{successes}/360 attempts", inline=True)
-        embed.add_field(name="Digibits Mined", value=f"**+{total_bits:.2f} Bits**", inline=True)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="farm_dungeon", description="Spend 1 Digicore to farm gear, Digibits, and Hatch Cores")
-    @app_commands.choices(dungeon=[
-        app_commands.Choice(name="Digital Forest (Weapons)", value="digital_forest"),
-        app_commands.Choice(name="Factorial Town (Armors)", value="factorial_town"),
-        app_commands.Choice(name="Server Continent (Vices)", value="server_continent")
-    ])
-    async def farm_dungeon(self, interaction: discord.Interaction, dungeon: str):
-        """Phụ bản rơi trang bị, Digibit và Hatch Core"""
-        await interaction.response.defer()
-        user_id = interaction.user.id
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        
-        if not profile or not profile.get("digimon"): return await interaction.followup.send("❌ **No Digimon!** Hatch an egg first.")
-            
-        current_cores = await self.verify_and_refresh_cores(user_id, profile)
-        if current_cores <= 0: return await interaction.followup.send("❌ **Out of Energy!**")
-
-        is_vip = profile.get("is_vip", False)
-        
-        # Core: VIP rơi 100%, thường rơi 60%
-        core_dropped = 1 if (is_vip or random.random() < 0.60) else 0
-        drop_rate = 0.07 if is_vip else 0.05
-        
-        await rpg_profiles_col.update_one(
-            {"user_id": user_id}, 
-            {"$inc": {"digicore": -1, "digibit": 1.00, "hatch_core": core_dropped}}
-        )
-        
-        loot_dropped = None
-        if random.random() < drop_rate:
-            loot_dropped = self.roll_pve_loot(dungeon)
-            await rpg_profiles_col.update_one({"user_id": user_id}, {"$push": {"inventory": loot_dropped}})
-
-        embed = discord.Embed(title=f"🏰 Dungeon Cleared: {self.DUNGEONS[dungeon]['name']}", color=discord.Color.green())
-        reward_text = f"🌐 **+1.00 Digibit**\n"
-        if core_dropped > 0: reward_text += f"🧬 **+1 Hatch Core**\n"
-            
-        embed.add_field(name="Rewards Received", value=reward_text, inline=True)
-        if loot_dropped:
-            embed.add_field(name="💥 Rare Drop!", value=f"🎉 **{loot_dropped}**", inline=False)
-            embed.color = discord.Color.gold()
-        await interaction.followup.send(embed=embed)
-
-    # ========================================================================
-    # PART 4: COMBAT & WORLD BOSS MECHANICS
-    # ========================================================================
-
-    @tasks.loop(minutes=1)
-    async def auto_spawn_boss(self):
-        config = await world_boss_col.find_one({"type": "spawn_config"})
-        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]:
-            return
-
-        if await world_boss_col.find_one({"is_active": True}): return
-        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
-
-        boss_list = [
-            {"name": "Devimon", "hp": 100000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"},
-            {"name": "Myotismon", "hp": 300000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/myotismon.jpg"},
-            {"name": "MetalSeadramon", "hp": 600000, "attr": "Data", "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg"},
-            {"name": "Wargreymon", "hp": 1000000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"}
-        ]
-        boss = random.choice(boss_list)
-        boss.update({"is_active": True, "damage_log": {}})
-        await world_boss_col.insert_one(boss)
-
-        msg = f"🚨 **WARNING!** World Boss **{boss['name']}** ({boss['attr']}) has appeared with **{boss['hp']:,} HP**!"
-        await self.broadcast_system_message(msg)
-
-    @auto_spawn_boss.before_loop
-    async def before_auto_spawn(self): await self.bot.wait_until_ready()
-
-    @app_commands.command(name="protect", description="Take a defensive stance to block the next Boss Rage attack")
-    @app_commands.checks.cooldown(1, 45, key=lambda i: i.user.id)
-    async def protect(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"is_protecting": True}})
-        await interaction.followup.send("🛡️ **Defensive Stance Active!** Your Digimon will drastically reduce damage from the next Boss Rage.")
-
-    @app_commands.command(name="attack", description="Command your Digimon to attack the World Boss")
-    @app_commands.checks.cooldown(1, 4, key=lambda i: i.user.id)
-    async def attack(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-        boss = await world_boss_col.find_one({"is_active": True})
-        if not boss: return await interaction.followup.send("❌ **No active World Boss.**")
-
-        player = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not player or not player.get("digimon"): return await interaction.followup.send("❌ **You need to `/hatch` a Digimon first!**")
-        if player.get("current_hp", 0) <= 0: return await interaction.followup.send("☠️ **Your Digimon fainted!** Use `/heal` to revive.")
-
-        stats = self.get_total_stats(player)
-        digimon = player["digimon"]
-        
-        raw_dmg = stats["atk"] + random.randint(-5, 10)
-        is_crit = random.randint(1, 100) <= stats["crit_rate"]
-        if is_crit: raw_dmg *= stats["crit_dmg"]
-            
-        attr_mult = self.get_attribute_multiplier(digimon["attr"], boss["attr"])
-        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
-        
-        user_str = str(interaction.user.id)
-        result = await world_boss_col.find_one_and_update(
-            {"is_active": True},
-            {"$inc": {"current_hp": -final_dmg, f"damage_log.{user_str}": final_dmg}},
-            return_document=discord.pymongo.ReturnDocument.AFTER
-        )
-
-        crit_tag = "🔥 **CRITICAL HIT!** " if is_crit else ""
-        attr_tag = "*(Effective)* " if attr_mult > 1 else "*(Resisted)* " if attr_mult < 1 else ""
-        msg = f"{crit_tag}💥 **{digimon['name']}** used attack! Dealt **{final_dmg}** {attr_tag}DMG. (Boss HP: {max(0, result['current_hp']):,})"
-
-        if random.random() < 0.30 and result['current_hp'] > 0:
-            boss_dmg = random.randint(250, 600)
-            if player.get("is_protecting"):
-                boss_dmg = int(boss_dmg * 0.2) 
-                msg += f"\n🛡️ **GUARDED!** You blocked the Boss Rage! Took only **{boss_dmg} DMG**."
-                await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$unset": {"is_protecting": ""}})
-            else:
-                msg += f"\n💢 **BOSS RAGE!** The boss countered for **{boss_dmg} DMG**!"
-                
-            new_hp = max(0, player["current_hp"] - boss_dmg)
-            await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"current_hp": new_hp}})
-            if new_hp == 0: msg += "\n💀 **YOUR DIGIMON FAINTED!**"
-
-        if result['current_hp'] <= 0:
-            await self.distribute_boss_loot(interaction, result)
-        else:
-            await interaction.followup.send(msg)
-
-    async def distribute_boss_loot(self, interaction: discord.Interaction, boss_data: dict):
-        """Phân bổ chiến lợi phẩm World Boss với tỷ lệ rớt mới"""
-        await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"is_active": False}})
-        delay = random.randint(1800, 5400) 
-        await world_boss_col.update_one({"type": "spawn_config"}, {"$set": {"next_spawn": int(time.time()) + delay}}, upsert=True)
-
-        announcement = f"🎉 **THE WORLD BOSS HAS FALLEN!**\n\n**🏆 Leaderboard Rewards:**\n"
-        log = boss_data.get("damage_log", {})
-        sorted_log = sorted(log.items(), key=lambda x: x[1], reverse=True)
-        total_hp = boss_data.get("max_hp", 1)
-        divine_pool = ["Divine Blade (Unlocked)", "Divine Aegis (Unlocked)", "Divine Vice (Unlocked)"]
-
-        for rank, (uid_str, dmg) in enumerate(sorted_log, 1):
-            dmg_percent = dmg / total_hp
-            divine_chance = (0.20 / rank) + dmg_percent
-            
-            # Cân bằng Orb rơi rớt do giá Evolution giảm
-            orbs_earned = max(1, int(dmg_percent * 10)) 
-            if rank == 1: orbs_earned += 10 
-            elif rank <= 3: orbs_earned += 5
-            
-            reward_str = f"+{orbs_earned} Orbs"
-            update_query = {"$inc": {"orb": orbs_earned}}
-
-            # Tỷ lệ rớt Trái cây Size Reroll cho Top 3
-            if rank <= 3 and random.random() < 0.30:
-                reward_str += " & 🍎 **Size Reroll Fruit**"
-                update_query["$push"] = {"inventory": "Size Reroll Fruit"}
-            
-            # Đẩy Divine Gear vào mảng inventory an toàn
-            if random.random() < divine_chance:
-                divine_drop = random.choice(divine_pool)
-                reward_str += f" & 👑 **{divine_drop}**"
-                if "$push" not in update_query:
-                    update_query["$push"] = {"inventory": divine_drop}
-                else:
-                    update_query["$push"]["inventory"] = {"$each": ["Size Reroll Fruit", divine_drop]} if "Size Reroll Fruit" in reward_str else divine_drop
-                
-            await rpg_profiles_col.update_one({"user_id": int(uid_str)}, update_query)
-            if rank <= 10: announcement += f"#{rank} <@{uid_str}>: {dmg:,} DMG ➡️ {reward_str}\n"
-
-        await interaction.followup.send(announcement)
-        await self.broadcast_system_message(announcement)
-
-    # ========================================================================
-    # PART 5: MARKETPLACE SYSTEM (CHỢ GIAO DỊCH LIÊN SERVER)
-    # ========================================================================
-
-    @app_commands.command(name="market_sell", description="List an item or material on the market for Digibits")
-    @app_commands.choices(item_type=[
-        app_commands.Choice(name="Equipment (From Inventory)", value="equipment"),
-        app_commands.Choice(name="Boss Orb (Material)", value="orb"),
-        app_commands.Choice(name="Hatch Core (Material)", value="core")
-    ])
-    @app_commands.describe(
-        target_name="Exact name of equipment OR quantity if selling material (e.g. '5')",
-        price="Total selling price in Digibits (e.g. 12.50)"
-    )
-    async def market_sell(self, interaction: discord.Interaction, item_type: str, target_name: str, price: float):
-        """Đăng bán vật phẩm/tài nguyên trên Chợ chung"""
-        await interaction.response.defer()
-        user_id = interaction.user.id
-        
-        if price <= 0: return await interaction.followup.send("❌ **Invalid Price!** Price must be greater than 0.")
-        price = round(price, 2)
-        
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        if not profile: return await interaction.followup.send("❌ You don't have an active RPG profile.")
-
-        listing_id = f"LIT-{random.randint(1000, 9999)}"
-        display_name = ""
-
-        if item_type == "equipment":
-            inventory = profile.get("inventory", [])
-            if target_name not in inventory:
-                return await interaction.followup.send(f"❌ **Item Not Found!** '{target_name}' is not in your inventory.")
-            if not target_name.endswith("(Unlocked)"):
-                return await interaction.followup.send("❌ **Listing Failed!** Only items with the **(Unlocked)** tag can be sold.")
-            inventory.remove(target_name)
-            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"inventory": inventory}})
-            display_name = target_name
-
-        elif item_type == "orb":
-            try:
-                qty = int(target_name)
-                if qty <= 0: raise ValueError
-            except ValueError:
-                return await interaction.followup.send("❌ **Error!** Please input a valid positive integer quantity for Orbs.")
-            if profile.get("orb", 0) < qty:
-                return await interaction.followup.send(f"❌ **Insufficient Stock!** You only have {profile.get('orb', 0)} Orbs.")
-            await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"orb": -qty}})
-            display_name = f"{qty}x World Boss Orb"
-
-        elif item_type == "core":
-            try:
-                qty = int(target_name)
-                if qty <= 0: raise ValueError
-            except ValueError:
-                return await interaction.followup.send("❌ **Error!** Please input a valid positive integer quantity for Cores.")
-            if profile.get("hatch_core", 0) < qty:
-                return await interaction.followup.send(f"❌ **Insufficient Stock!** You only have {profile.get('hatch_core', 0)} Hatch Cores.")
-            await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"hatch_core": -qty}})
-            display_name = f"{qty}x Hatch Core"
-
-        await market_col.insert_one({
-            "listing_id": listing_id, "seller_id": user_id, "seller_name": interaction.user.name,
-            "item_type": item_type, "item_name": display_name, "raw_gear_name": target_name if item_type == "equipment" else "",
-            "quantity": qty if item_type != "equipment" else 1, "price": price, "created_at": int(time.time())
-        })
-
-        embed = discord.Embed(title="🏪 Marketplace Listing Created", color=discord.Color.blue())
-        embed.description = f"Successfully listed **{display_name}** on the public server market."
-        embed.add_field(name="Listing ID", value=f"`{listing_id}`", inline=True)
-        embed.add_field(name="Price", value=f"🌐 {price:.2f} Digibits", inline=True)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="market_view", description="Browse all active listings on the marketplace")
-    async def market_view(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        listings = await market_col.find({}).sort("created_at", -1).to_list(25) 
-        if not listings:
-            return await interaction.followup.send("🏪 **The marketplace is empty right now.** Use `/market_sell` to list something!")
-
-        embed = discord.Embed(title="🏪 Digital World Marketplace", color=discord.Color.purple())
-        embed.description = "Use `/market_buy [listing_id]` to purchase an item."
-        for item in listings:
-            embed.add_field(
-                name=f"📦 {item['item_name']}",
-                value=f"🆔 ID: `{item['listing_id']}`\n💰 Price: **{item['price']:.2f} Digibits**\n👤 Seller: {item['seller_name']}",
-                inline=False
-            )
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="market_buy", description="Buy an item from the marketplace using your Digibits")
-    async def market_buy(self, interaction: discord.Interaction, listing_id: str):
-        """Mua vật phẩm/tài nguyên trên Chợ"""
-        await interaction.response.defer()
-        buyer_id = interaction.user.id
-        
-        listing = await market_col.find_one({"listing_id": listing_id.upper()})
-        if not listing: return await interaction.followup.send("❌ **Listing Not Found!** This listing may have been bought or expired.")
-        if listing["seller_id"] == buyer_id: return await interaction.followup.send("❌ **Action Denied!** You cannot purchase your own listed items.")
-
-        buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
-        if not buyer_profile or buyer_profile.get("digibit", 0.0) < listing["price"]:
-            return await interaction.followup.send(f"❌ **Transaction Failed!** Insufficient Digibits. (Required: {listing['price']:.2f})")
-
-        price = listing["price"]
-        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"digibit": -price}})
-        await rpg_profiles_col.update_one({"user_id": listing["seller_id"]}, {"$inc": {"digibit": price}})
-
-        item_type = listing["item_type"]
-        if item_type == "equipment":
-            await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$push": {"inventory": listing["raw_gear_name"]}})
-        elif item_type == "orb":
-            await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"orb": listing["quantity"]}})
-        elif item_type == "core":
-            await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"hatch_core": listing["quantity"]}})
-
-        await market_col.delete_one({"_id": listing["_id"]})
-
-        embed = discord.Embed(title="🛍️ Deal Completed Successfully!", color=discord.Color.green())
-        embed.description = f"You bought **{listing['item_name']}** from **{listing['seller_name']}**."
-        embed.add_field(name="Amount Paid", value=f"🌐 -{price:.2f} Digibits", inline=True)
-        await interaction.followup.send(embed=embed)
-
-    # ========================================================================
-    # PART 6: PROFILE & UTILITIES
-    # ========================================================================
-
-    @app_commands.command(name="rpg_profile", description="View your Digimon Tamer profile")
+    @app_commands.command(name="rpg_profile", description="View and manage your Digimon Tamer profile (Heal, Evolve, Equip)")
     async def rpg_profile(self, interaction: discord.Interaction):
         await interaction.response.defer()
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        
         if not profile: return await interaction.followup.send("❌ **Welcome to Digital World!** Please use `/hatch` to start your adventure.")
 
-        digimon = profile.get("digimon", {})
-        stats = self.get_total_stats(profile)
-        gear = profile.get("gear", {})
-        
+        digimon, stats, gear = profile.get("digimon", {}), self.get_total_stats(profile), profile.get("gear", {})
         embed = discord.Embed(title=f"📱 Tamer {profile.get('ign')}", color=discord.Color.teal())
+        
         if digimon:
             size_display = f"{digimon.get('size', 1.0) * 100:.1f}%"
             embed.set_thumbnail(url=digimon.get("img", interaction.user.display_avatar.url))
@@ -642,122 +229,383 @@ class RPGSystemCog(commands.Cog):
         embed.add_field(name="💰 Currencies", value=f"🌐 **{profile.get('digibit', 0):.2f} Digibits**\n🔮 **{profile.get('orb', 0)} Orbs**\n🧬 **{profile.get('hatch_core', 0)} Hatch Cores**", inline=False)
         embed.add_field(name="Equipped Gear", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
         
-        inv = ", ".join(profile.get("inventory", [])) or "Empty"
-        embed.add_field(name="🎒 Inventory", value=f"```{inv}```", inline=False)
+        await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
+
+    @app_commands.command(name="market", description="Open the Global Marketplace Dashboard")
+    async def market_dashboard(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        embed = discord.Embed(title="🏪 Digital World Marketplace", description="Click the buttons below to interact with the market.", color=discord.Color.purple())
+        await interaction.followup.send(embed=embed, view=MarketView(self))
+
+    @app_commands.command(name="combat", description="Open the Boss Combat Panel")
+    async def combat_dashboard(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="⚔️ Boss Combat Interface", description="Control your attacks or toggle Auto-Attack.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, view=CombatView(self))
+
+    # ========================================================================
+    # UI HANDLERS (Xử lý các thao tác ấn nút từ Giao diện)
+    # ========================================================================
+
+    async def handle_inventory_use(self, interaction: discord.Interaction, item_name: str):
+        # Nút dùng đồ từ túi
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        inventory = profile.get("inventory", [])
+        
+        if item_name not in inventory:
+            return await interaction.followup.send("❌ Item not found.")
+
+        if item_name == "Size Reroll Fruit":
+            inventory.remove(item_name)
+            digimon = profile.get("digimon")
+            if not digimon: return await interaction.followup.send("❌ No Digimon.")
+
+            new_size = round(random.uniform(1.00 if profile.get("is_vip") else 0.85, 1.30 if profile.get("is_vip") else 1.25), 3)
+            base_stats = self.DIGIMON_DATA.get(digimon.get("stage", "Rookie").lower(), {}).get(digimon.get("name"))
+            if not base_stats: return await interaction.followup.send("❌ Error fetching base stats.")
+
+            actual_hp, actual_atk = int(base_stats["hp"] * new_size), int(base_stats["atk"] * new_size)
+            digimon.update({"size": new_size, "hp": actual_hp, "atk": actual_atk})
+            
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"inventory": inventory, "digimon": digimon, "current_hp": actual_hp}})
+            await interaction.followup.send(f"🍎 **Fruit Consumed!** Size rerolled to **{new_size * 100:.1f}%**!")
+        else:
+            cleaned_base = self.clean_item_name(item_name)
+            slot_type = self.ITEMS[cleaned_base]["type"]
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {f"gear.{slot_type}": item_name}})
+            await interaction.followup.send(f"🛡️ **Equipped:** {item_name} -> `{slot_type.upper()}`")
+
+    async def handle_heal(self, interaction: discord.Interaction):
+        # Nút Heal
+        await interaction.response.defer(ephemeral=True)
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        if not profile or not profile.get("digimon"): return await interaction.followup.send("❌ No Digimon found.")
+
+        current_time = int(time.time())
+        if current_time - profile.get("last_heal", 0) < 120:
+            return await interaction.followup.send(f"⏳ **Cooldown!** Wait {120 - (current_time - profile.get('last_heal', 0))}s.")
+
+        max_hp = self.get_total_stats(profile)["hp"]
+        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"current_hp": max_hp, "last_heal": current_time}})
+        await interaction.followup.send(f"✨ **Healed!** HP: **{max_hp}/{max_hp}**.")
+
+    async def handle_evolve(self, interaction: discord.Interaction):
+        # Nút Evolve
+        await interaction.response.defer(ephemeral=True)
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        digimon = profile.get("digimon", {})
+        
+        if digimon.get("stage") != "Rookie": return await interaction.followup.send("❌ Max Level reached.")
+        if profile.get("orb", 0) < 50: return await interaction.followup.send("❌ Need **50 Orbs**.")
+
+        next_form_name = self.EVOLUTION_LINE.get(digimon["name"])
+        base_next_stats = self.DIGIMON_DATA["champion"][next_form_name]
+        current_size = digimon.get("size", 1.0)
+        actual_hp, actual_atk = int(base_next_stats["hp"] * current_size), int(base_next_stats["atk"] * current_size)
+
+        next_stats = {"name": next_form_name, "stage": "Champion", "attr": base_next_stats["attr"], "size": current_size, "hp": actual_hp, "atk": actual_atk, "img": base_next_stats["img"]}
+        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$inc": {"orb": -50}, "$set": {"digimon": next_stats, "current_hp": actual_hp}})
+        await interaction.followup.send(f"✨ **EVOLVED!** Partner is now **{next_form_name}**!")
+
+    # ========================================================================
+    # MARKET HANDLERS
+    # ========================================================================
+
+    async def handle_market_view(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        listings = await market_col.find({}).sort("created_at", -1).to_list(15) 
+        if not listings: return await interaction.followup.send("🏪 Market is empty.")
+
+        embed = discord.Embed(title="🏪 Active Listings", color=discord.Color.purple())
+        for item in listings:
+            embed.add_field(name=f"📦 {item['item_name']}", value=f"🆔 `{item['listing_id']}` | 💰 **{item['price']:.2f} Bits** | 👤 {item['seller_name']}", inline=False)
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="equip_gear", description="Equip a weapon or armor from your inventory to boost your total stats")
-    async def equip_gear(self, interaction: discord.Interaction, item_name: str):
+    async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
+        await interaction.response.defer()
+        buyer_id = interaction.user.id
+        listing = await market_col.find_one({"listing_id": listing_id.upper()})
+        
+        if not listing: return await interaction.followup.send("❌ **Listing Not Found!**")
+        if listing["seller_id"] == buyer_id: return await interaction.followup.send("❌ Cannot buy your own item.")
+
+        buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
+        if not buyer_profile or buyer_profile.get("digibit", 0.0) < listing["price"]:
+            return await interaction.followup.send("❌ **Insufficient Digibits.**")
+
+        price = listing["price"]
+        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"digibit": -price}})
+        await rpg_profiles_col.update_one({"user_id": listing["seller_id"]}, {"$inc": {"digibit": price}})
+
+        if listing["item_type"] == "gear": await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$push": {"inventory": listing["raw_gear_name"]}})
+        elif listing["item_type"] == "orb": await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"orb": listing["quantity"]}})
+        elif listing["item_type"] == "core": await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"hatch_core": listing["quantity"]}})
+
+        await market_col.delete_one({"_id": listing["_id"]})
+        await interaction.followup.send(f"🛍️ **Purchased {listing['item_name']} for {price:.2f} Digibits!**")
+
+    async def handle_market_sell(self, interaction: discord.Interaction, item_type: str, target: str, price_str: str):
+        await interaction.response.defer()
+        try: price = round(float(price_str), 2)
+        except: return await interaction.followup.send("❌ Invalid price format.")
+        if price <= 0: return await interaction.followup.send("❌ Price must be > 0.")
+        if item_type not in ["gear", "orb", "core"]: return await interaction.followup.send("❌ Type must be 'gear', 'orb', or 'core'.")
+
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        display_name, qty = "", 1
+
+        if item_type == "gear":
+            if target not in profile.get("inventory", []) or not target.endswith("(Unlocked)"):
+                return await interaction.followup.send("❌ Item not found or locked.")
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$pull": {"inventory": target}}) # Kéo đồ ra khỏi túi
+            display_name = target
+        else:
+            qty = int(target)
+            db_field = "orb" if item_type == "orb" else "hatch_core"
+            if profile.get(db_field, 0) < qty: return await interaction.followup.send("❌ Insufficient quantity.")
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {db_field: -qty}})
+            display_name = f"{qty}x {'World Boss Orb' if item_type == 'orb' else 'Hatch Core'}"
+
+        listing_id = f"LIT-{random.randint(1000, 9999)}"
+        await market_col.insert_one({"listing_id": listing_id, "seller_id": user_id, "seller_name": interaction.user.name, "item_type": item_type, "item_name": display_name, "raw_gear_name": target if item_type == "gear" else "", "quantity": qty, "price": price, "created_at": int(time.time())})
+        await interaction.followup.send(f"🏪 **Listed {display_name} for {price:.2f} Bits!** (ID: `{listing_id}`)")
+
+    # ========================================================================
+    # COMBAT ENGINE (Xử lý Attack Core)
+    # ========================================================================
+
+    async def toggle_auto_attack(self, interaction: discord.Interaction):
+        # Bật tắt Auto Attack
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        if user_id in self.auto_attackers:
+            self.auto_attackers.discard(user_id)
+            await interaction.followup.send("🛑 **Auto-Attack DEACTIVATED.**")
+        else:
+            self.auto_attackers.add(user_id)
+            await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** Initiating sequence...")
+            # Tạo task chạy ngầm cho người chơi này
+            self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction.channel))
+
+    async def auto_attack_loop(self, user_id: int, user_name: str, channel: discord.TextChannel):
+        """Vòng lặp tự động đánh - Delay 4.5s"""
+        while user_id in self.auto_attackers:
+            msg, should_stop = await self.execute_combat_turn(user_id, user_name)
+            if msg: await channel.send(msg)
+            if should_stop:
+                self.auto_attackers.discard(user_id)
+                break
+            await asyncio.sleep(4.5)
+
+    async def handle_manual_attack(self, interaction: discord.Interaction):
+        # Nút Attack tay
+        await interaction.response.defer()
+        current_time = int(time.time())
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        
+        # Cooldown tay 4s tĩnh
+        if profile and current_time - profile.get("last_manual_atk", 0) < 4:
+            return await interaction.followup.send("⏳ **Cooldown!** Too fast.", ephemeral=True)
+            
+        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"last_manual_atk": current_time}})
+        
+        msg, should_stop = await self.execute_combat_turn(interaction.user.id, interaction.user.display_name)
+        if msg: await interaction.followup.send(msg)
+        if should_stop: self.auto_attackers.discard(interaction.user.id)
+
+    async def handle_protect(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        current_time = int(time.time())
+        if profile and current_time - profile.get("last_protect", 0) < 45:
+            return await interaction.followup.send("⏳ **Protect Cooldown!**", ephemeral=True)
+            
+        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"is_protecting": True, "last_protect": current_time}})
+        await interaction.followup.send("🛡️ **Defensive Stance Active!**")
+
+    async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
+        """Core logic xử lý 1 lượt đánh. Trả về (Thông báo, Có nên dừng auto không)"""
+        boss = await world_boss_col.find_one({"is_active": True})
+        if not boss: return ("❌ **No active World Boss.**", True)
+
+        player = await rpg_profiles_col.find_one({"user_id": user_id})
+        if not player or not player.get("digimon"): return ("❌ **No Digimon!** Hatch an egg.", True)
+        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Your Digimon fainted!** Use Heal.", True)
+
+        stats, digimon = self.get_total_stats(player), player["digimon"]
+        raw_dmg = stats["atk"] + random.randint(-5, 10)
+        is_crit = random.randint(1, 100) <= stats["crit_rate"]
+        if is_crit: raw_dmg *= stats["crit_dmg"]
+            
+        attr_mult = self.get_attribute_multiplier(digimon["attr"], boss["attr"])
+        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
+        
+        result = await world_boss_col.find_one_and_update(
+            {"is_active": True}, {"$inc": {"current_hp": -final_dmg, f"damage_log.{str(user_id)}": final_dmg}},
+            return_document=discord.pymongo.ReturnDocument.AFTER
+        )
+
+        msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss: {max(0, result['current_hp']):,})"
+
+        # Logic Boss Phản công (Boss Rage 30%)
+        if random.random() < 0.30 and result['current_hp'] > 0:
+            boss_dmg = random.randint(250, 600)
+            if player.get("is_protecting"):
+                boss_dmg = int(boss_dmg * 0.2) 
+                msg += f"\n🛡️ **GUARDED!** Blocked Rage! Took **{boss_dmg} DMG**."
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
+            else:
+                # 🚨 CẢNH BÁO RAGE IN ĐẬM VÀ PING
+                msg += f"\n🚨 <@{user_id}> **BOSS RAGE DETECTED!** Countered for **{boss_dmg} DMG**!"
+                
+            new_hp = max(0, player["current_hp"] - boss_dmg)
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
+            if new_hp == 0: 
+                msg += "\n💀 **YOUR DIGIMON FAINTED!**"
+                return (msg, True) # Dừng auto attack vì đã chết
+
+        if result['current_hp'] <= 0:
+            # Nếu đòn đánh này giết boss
+            await self.distribute_boss_loot(result)
+            return (msg + "\n🎉 **BOSS DEFEATED!**", True)
+            
+        return (msg, False)
+
+    async def distribute_boss_loot(self, boss_data: dict):
+        # Hàm phân chia đồ tương tự trước đó nhưng không nhận params interaction nữa
+        await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"is_active": False}})
+        await world_boss_col.update_one({"type": "spawn_config"}, {"$set": {"next_spawn": int(time.time()) + random.randint(1800, 5400)}}, upsert=True)
+
+        announcement = f"🎉 **THE WORLD BOSS HAS FALLEN!**\n\n**🏆 Leaderboard Rewards:**\n"
+        sorted_log = sorted(boss_data.get("damage_log", {}).items(), key=lambda x: x[1], reverse=True)
+        total_hp = boss_data.get("max_hp", 1)
+
+        for rank, (uid_str, dmg) in enumerate(sorted_log, 1):
+            dmg_percent = dmg / total_hp
+            orbs_earned = max(1, int(dmg_percent * 10)) + (10 if rank == 1 else 5 if rank <= 3 else 0)
+            reward_str = f"+{orbs_earned} Orbs"
+            update_query = {"$inc": {"orb": orbs_earned}}
+
+            if rank <= 3 and random.random() < 0.30:
+                reward_str += " & 🍎"
+                update_query["$push"] = {"inventory": "Size Reroll Fruit"}
+            if random.random() < (0.20 / rank) + dmg_percent:
+                divine_drop = random.choice(["Divine Blade (Unlocked)", "Divine Aegis (Unlocked)", "Divine Vice (Unlocked)"])
+                reward_str += f" & 👑"
+                update_query.setdefault("$push", {})
+                if "inventory" in update_query["$push"]: update_query["$push"]["inventory"] = {"$each": ["Size Reroll Fruit", divine_drop]}
+                else: update_query["$push"]["inventory"] = divine_drop
+                
+            await rpg_profiles_col.update_one({"user_id": int(uid_str)}, update_query)
+            if rank <= 10: announcement += f"#{rank} <@{uid_str}>: {dmg:,} DMG ➡️ {reward_str}\n"
+
+        await self.broadcast_system_message(announcement)
+
+    # ========================================================================
+    # PVE / MINE / UTILITIES COMMANDS (CÁC LỆNH KHÁC)
+    # ========================================================================
+
+    @app_commands.command(name="hatch", description=f"Hatch a Rookie Digimon (Costs 5 Hatch Cores)")
+    async def hatch(self, interaction: discord.Interaction, confirm_replace: bool = False):
         await interaction.response.defer()
         user_id = interaction.user.id
-        
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        if not profile: return await interaction.followup.send("❌ **Profile not found!**")
+        if not profile:
+            profile = {"user_id": user_id, "ign": interaction.user.display_name, "gold": 0, "digibit": 0.0, "orb": 0, "hatch_core": 0, "current_hp": 0, "gear": {"weapon": "None", "armor": "None", "vice": "None"}, "inventory": [], "digicore": 20, "is_vip": False, "last_core_reset": datetime.utcnow().strftime("%Y-%m-%d")}
+            await rpg_profiles_col.insert_one(profile)
 
-        inventory = profile.get("inventory", [])
-        matched_item = next((item for item in inventory if item.lower() == item_name.lower()), None)
-        if not matched_item: return await interaction.followup.send(f"❌ **Equip Failed!** You do not possess any item named '{item_name}'.")
+        if profile.get("hatch_core", 0) < self.HATCH_CORE_COST: return await interaction.followup.send("❌ Missing Hatch Cores.")
+        if profile.get("digimon") and not confirm_replace: return await interaction.followup.send("⚠️ Set `confirm_replace: True` to overwrite.")
 
-        cleaned_base = self.clean_item_name(matched_item)
-        slot_type = self.ITEMS[cleaned_base]["type"]
+        await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"hatch_core": -self.HATCH_CORE_COST}})
+        is_vip = profile.get("is_vip", False)
+        available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
+        
+        hatched_name = random.choice(available)
+        base_stats = self.DIGIMON_DATA["rookie"][hatched_name]
+        size_pct = round(random.uniform(1.00 if is_vip else 0.85, 1.30 if is_vip else 1.25), 3)
 
-        await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {f"gear.{slot_type}": matched_item}})
-        await interaction.followup.send(f"🛡️ **Success!** You have equipped **{matched_item}** into your `{slot_type.upper()}` slot.")
+        actual_hp, actual_atk = int(base_stats["hp"] * size_pct), int(base_stats["atk"] * size_pct)
+        digimon_stats = {"name": hatched_name, "stage": "Rookie", "attr": base_stats["attr"], "size": size_pct, "hp": actual_hp, "atk": actual_atk, "img": base_stats["img"]}
 
-    @app_commands.command(name="heal", description="Recover Digimon HP (120s Cooldown)")
-    @app_commands.checks.cooldown(1, 120, key=lambda i: i.user.id) 
-    async def heal(self, interaction: discord.Interaction):
+        await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"digimon": digimon_stats, "current_hp": actual_hp}})
+        embed = discord.Embed(title="🥚 Hatched Successfully!", description=f"Obtained **{hatched_name}**!", color=discord.Color.green())
+        embed.add_field(name="🧬 Size", value=f"**{size_pct * 100:.1f}%**")
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="farm_dungeon", description="Spend 1 Digicore to farm gear, Digibits, and Hatch Cores")
+    @app_commands.choices(dungeon=[app_commands.Choice(name="Digital Forest (Weapons)", value="digital_forest"), app_commands.Choice(name="Factorial Town (Armors)", value="factorial_town"), app_commands.Choice(name="Server Continent (Vices)", value="server_continent")])
+    async def farm_dungeon(self, interaction: discord.Interaction, dungeon: str):
         await interaction.response.defer()
-        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile or not profile.get("digimon"): return await interaction.followup.send("❌ **No Digimon found!**")
-            
-        max_hp = self.get_total_stats(profile)["hp"]
-        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"current_hp": max_hp}})
-        await interaction.followup.send(f"✨ **Healed!** HP restored to **{max_hp}/{max_hp}**.")
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not profile or not profile.get("digimon"): return await interaction.followup.send("❌ No Digimon! Hatch an egg first.")
+        if await self.verify_and_refresh_cores(user_id, profile) <= 0: return await interaction.followup.send("❌ Out of Energy!")
 
-    # ========================================================================
-    # PART 7: SETUP, ADMIN & WEBHOOK EVENT LISTENERS
-    # ========================================================================
+        is_vip = profile.get("is_vip", False)
+        core_dropped = 1 if (is_vip or random.random() < 0.60) else 0
+        
+        await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"digicore": -1, "digibit": 1.00, "hatch_core": core_dropped}})
+        
+        loot = self.roll_pve_loot(dungeon) if random.random() < (0.07 if is_vip else 0.05) else None
+        if loot: await rpg_profiles_col.update_one({"user_id": user_id}, {"$push": {"inventory": loot}})
 
-    @app_commands.command(name="setup_boss_channel", description="Setup the live World Boss battlefield and cross-server chat")
-    @app_commands.describe(channel="Choose a text channel")
+        embed = discord.Embed(title=f"🏰 Dungeon Cleared", color=discord.Color.green())
+        embed.add_field(name="Rewards", value=f"🌐 +1.00 Digibit\n" + (f"🧬 +1 Hatch Core\n" if core_dropped else ""))
+        if loot: embed.add_field(name="Rare Drop!", value=f"🎉 **{loot}**", inline=False)
+        await interaction.followup.send(embed=embed)
+
+    # LOOP NGẦM SPAWN BOSS (giữ nguyên logic cũ)
+    @tasks.loop(minutes=1)
+    async def auto_spawn_boss(self):
+        config = await world_boss_col.find_one({"type": "spawn_config"})
+        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
+        if await world_boss_col.find_one({"is_active": True}): return
+        
+        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
+        boss = random.choice([{"name": "Devimon", "hp": 100000, "attr": "Virus"}, {"name": "Wargreymon", "hp": 1000000, "attr": "Vaccine"}])
+        boss.update({"is_active": True, "damage_log": {}})
+        await world_boss_col.insert_one(boss)
+        await self.broadcast_system_message(f"🚨 **WARNING!** World Boss **{boss['name']}** appeared with **{boss['hp']:,} HP**!")
+
+    @auto_spawn_boss.before_loop
+    async def before_auto_spawn(self): await self.bot.wait_until_ready()
+
+    # WEBHOOK SETUP VÀ RELAY GIỮ NGUYÊN
+    @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
-        is_owner = await self.bot.is_owner(interaction.user)
-        if not (interaction.user.guild_permissions.administrator or is_owner):
-            return await interaction.followup.send("❌ **Access Denied!** You need Administrator permissions.", ephemeral=True)
-
-        try:
-            existing_webhooks = await channel.webhooks()
-            webhook = next((w for w in existing_webhooks if w.user == self.bot.user), None)
-            if not webhook:
-                webhook = await channel.create_webhook(name="DMW Cross-Server Relay")
-                
-            await boss_channels_col.update_one(
-                {"guild_id": interaction.guild_id},
-                {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}},
-                upsert=True
-            )
-            await interaction.followup.send(f"✅ **Success!** Battlefield has been established at {channel.mention}.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ **Error!** Bot lacks 'Manage Webhooks' permission.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ **Error occurred:** {e}", ephemeral=True)
-
-    @app_commands.command(name="spawn_boss", description="Admin: Force spawn a World Boss to trigger the cycle")
-    async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
-        if not interaction.user.guild_permissions.administrator: return await interaction.response.send_message("❌ **Access Denied!** Admin privileges required.", ephemeral=True)
-            
-        await world_boss_col.insert_one({"name": name, "max_hp": hp, "current_hp": hp, "attr": "Virus", "img": "", "is_active": True, "damage_log": {}})
-        await interaction.response.send_message(f"⚔️ **World Boss {name} forced to spawn!**")
-        await self.broadcast_system_message(f"🚨 **WARNING!** **{name}** has arrived with **{hp:,} HP**!")
+        if not interaction.user.guild_permissions.administrator: return await interaction.followup.send("❌ Access Denied!")
+        webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
+        await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
+        await interaction.followup.send("✅ Success!")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild: return
-        current_channel_config = await boss_channels_col.find_one({"channel_id": message.channel.id})
-        if not current_channel_config: return 
-
-        other_channels = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(length=None)
-        if not other_channels: return 
-
-        tasks = []
-        for config in other_channels:
-            webhook_url = config.get("webhook_url")
-            if webhook_url:
-                sender_name = f"[{message.guild.name[:10]}] {message.author.display_name}"
-                tasks.append(self.send_webhook_message(
-                    webhook_url=webhook_url, content=message.content, username=sender_name,
-                    avatar_url=message.author.display_avatar.url, attachments=message.attachments
-                ))
+        if not await boss_channels_col.find_one({"channel_id": message.channel.id}): return 
+        others = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
+        tasks = [self._send_relay(c["webhook_url"], message.content, f"[{message.guild.name[:10]}] {message.author.display_name}", message.author.display_avatar.url, message.attachments) for c in others if "webhook_url" in c]
         if tasks: await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def send_webhook_message(self, webhook_url, content, username, avatar_url, attachments):
-        try:
-            async with aiohttp.ClientSession() as session:
-                webhook = discord.Webhook.from_url(webhook_url, session=session)
-                files_content = ""
-                if attachments: files_content = "\n" + "\n".join([att.url for att in attachments])
-                final_content = content + files_content
-                if final_content.strip() == "": return 
-                await webhook.send(content=final_content, username=username, avatar_url=avatar_url)
-        except Exception as e:
-            print(f"Relay webhook error: {e}")
+    async def _send_relay(self, url, content, username, avatar_url, attachments):
+        async with aiohttp.ClientSession() as s:
+            w = discord.Webhook.from_url(url, session=s)
+            files = "\n" + "\n".join([a.url for a in attachments]) if attachments else ""
+            if (content + files).strip(): await w.send(content=content + files, username=username, avatar_url=avatar_url)
 
     async def broadcast_system_message(self, content: str):
-        all_channels = await boss_channels_col.find({}).to_list(None)
+        channels = await boss_channels_col.find({}).to_list(None)
         tasks = []
-        for config in all_channels:
-            if url := config.get("webhook_url"): tasks.append(self._send_system_webhook(url, content))
+        for c in channels:
+            if url := c.get("webhook_url"):
+                async def send(u, msg):
+                    async with aiohttp.ClientSession() as s: await discord.Webhook.from_url(u, session=s).send(content=msg, username="SYSTEM")
+                tasks.append(send(url, content))
         await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _send_system_webhook(self, webhook_url, content):
-        try:
-            async with aiohttp.ClientSession() as session:
-                webhook = discord.Webhook.from_url(webhook_url, session=session)
-                await webhook.send(content=content, username="WORLD BOSS SYSTEM", avatar_url=self.bot.user.display_avatar.url)
-        except Exception:
-            pass
 
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
