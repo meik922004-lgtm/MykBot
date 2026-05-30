@@ -849,8 +849,11 @@ class PartyFinderCog(commands.Cog):
     async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
         try:
             await interaction.response.defer(ephemeral=True)
-            if not interaction.user.guild_permissions.administrator:
-                return await interaction.followup.send("❌ You need administrator privileges!", ephemeral=True)
+            
+            # Kiểm tra quyền: Là Admin của server HOẶC là Bot Owner
+            is_bot_owner = await self.bot.is_owner(interaction.user)
+            if not (interaction.user.guild_permissions.administrator or is_bot_owner):
+                return await interaction.followup.send("❌ You need administrator or bot owner privileges!", ephemeral=True)
             
             await server_configs_col.update_one(
                 {"guild_id": interaction.guild_id},
@@ -867,8 +870,11 @@ class PartyFinderCog(commands.Cog):
     async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
         try:
             await interaction.response.defer(ephemeral=True)
-            if not interaction.user.guild_permissions.administrator:
-                return await interaction.followup.send("❌ You need administrator privileges!", ephemeral=True)
+            
+            # Kiểm tra quyền: Là Admin của server HOẶC là Bot Owner
+            is_bot_owner = await self.bot.is_owner(interaction.user)
+            if not (interaction.user.guild_permissions.administrator or is_bot_owner):
+                return await interaction.followup.send("❌ You need administrator or bot owner privileges!", ephemeral=True)
             
             await server_configs_col.update_one(
                 {"guild_id": interaction.guild_id},
