@@ -64,17 +64,17 @@ class RPGSystemCog(commands.Cog):
             if not webhook:
                 webhook = await channel.create_webhook(name="DMW Cross-Server Relay")
                 
-            # 3. Lưu thông tin vào Database (Giả định boss_channels_col đã có)
-            # await boss_channels_col.update_one(
-            #     {"guild_id": interaction.guild_id},
-            #     {
-            #         "$set": {
-            #             "channel_id": channel.id,
-            #             "webhook_url": webhook.url
-            #         }
-            #     },
-            #     upsert=True
-            # )
+             #3. Lưu thông tin vào Database (Giả định boss_channels_col đã có)
+            await boss_channels_col.update_one(
+                {"guild_id": interaction.guild_id},
+                {
+                    "$set": {
+                        "channel_id": channel.id,
+                        "webhook_url": webhook.url
+                     }
+                },
+                 upsert=True
+             )
             
             await interaction.followup.send(f"✅ Đã thiết lập chiến trường thành công tại {channel.mention}. Webhook đã được tạo sẵn sàng cho Chat liên server!", ephemeral=True)
             
