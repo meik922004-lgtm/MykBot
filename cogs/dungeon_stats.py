@@ -161,8 +161,8 @@ class DungeonStats(commands.Cog):
         player = await db.players.find_one({"user_id": interaction.user.id})
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
         
-        if not cfg: return await interaction.followup.send(f"❌ Error: Cant find data of `{dg_name}` in DB.", ephemeral=True)
-        if not player or "my_stats" not in player or not player["my_stats"]: return await interaction.followup.send("❌ Please use `/mygear` first!", ephemeral=True)
+        if not cfg: return await interaction.followup.send(f"❌ Error: Can't find data for `{dg_name}` in the database.", ephemeral=True)
+        if not player or "my_stats" not in player or not player["my_stats"]: return await interaction.followup.send("❌ Please setup your profile using `/mygear` first!", ephemeral=True)
 
         req = cfg.get("reqs", {})
         has_any_passed = False 
@@ -186,40 +186,39 @@ class DungeonStats(commands.Cog):
             embed.add_field(name=f"Role: {role_name} [{'✅ PASS' if is_role_ok else '❌ FAIL'}]", value="\n".join(results), inline=False)
 
         embed.color = discord.Color.green() if has_any_passed else discord.Color.red()
-        if not embed.fields: return await interaction.followup.send("❌ Cant check your gear info, please re update!", ephemeral=True)
+        if not embed.fields: return await interaction.followup.send("❌ Could not check your gear info, please update it!", ephemeral=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="mygear", description="Set your character profile")
+    @app_commands.command(name="mygear", description="Set up your character profile")
     async def mygear(self, interaction: discord.Interaction):
         p = await db.players.find_one({"user_id": interaction.user.id})
         if not p or not p.get("ign") or p.get("ign") == "Not Set":
             await interaction.response.send_modal(MyGearIGNModal(self.bot))
         else:
-            embed = discord.Embed(title="⚙️ Setup MyGear", description=f"Current profile: **{p.get('ign')}**\nPlease select role to setup gears:", color=discord.Color.blue())
+            embed = discord.Embed(title="⚙️ Setup MyGear", description=f"Current profile: **{p.get('ign')}**\nPlease select a role to setup your gears:", color=discord.Color.blue())
             await interaction.response.send_message(embed=embed, view=MyGearWizard(interaction.user.id, p), ephemeral=True)
 
-    @app_commands.command(name="set_timezone", description="🌍 Setting your timezone")
+    @app_commands.command(name="set_timezone", description="🌍 Set your local timezone")
     async def set_timezone(self, interaction: discord.Interaction):
         options = [discord.SelectOption(label=f"UTC{'+' if i>0 else ''}{i}", value=str(i)) for i in [-8, -5, -3, 0, 1, 2, 7, 8, 9, 10]]
-        select = discord.ui.Select(placeholder="🌍 Chọn khu vực / múi giờ của bạn...", options=options)
+        select = discord.ui.Select(placeholder="🌍 Select your region / timezone...", options=options)
         
         async def tz_callback(inter: discord.Interaction):
             offset = float(select.values[0])
             await db.players.update_one({"user_id": inter.user.id}, {"$set": {"tz_offset": offset}}, upsert=True)
-            await inter.response.edit_message(content=f"✅ Múi giờ UTC{'+' if offset>0 else ''}{str(offset).replace('.0', '')} đã được lưu.", view=None, embed=None)
+            await inter.response.edit_message(content=f"✅ Timezone UTC{'+' if offset>0 else ''}{str(offset).replace('.0', '')} has been saved successfully.", view=None, embed=None)
             
         select.callback = tz_callback
         view = discord.ui.View()
         view.add_item(select)
-        embed = discord.Embed(title="🌍Config your timezone", description="Choose your location so the bot can synchronize Party times accurately with you.", color=discord.Color.blue())
+        embed = discord.Embed(title="🌍 Configure your timezone", description="Choose your location so the bot can synchronize Party times accurately for you.", color=discord.Color.blue())
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @app_commands.command(name="showmygear", description="Flex Gear")
+    @app_commands.command(name="showmygear", description="Flex your current gear profile")
     async def showmygear(self, interaction: discord.Interaction):
         p = await db.players.find_one({"user_id": interaction.user.id})
         if not p or "my_stats" not in p or not p["my_stats"]: return await interaction.response.send_message("❌ Your gear information is empty!", ephemeral=True)
         
-        # Check VIP status for embed color
         rpg_p = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
         is_premium = rpg_p.get("premium_ui", False) if rpg_p else False
         
@@ -232,12 +231,12 @@ class DungeonStats(commands.Cog):
                 embed.add_field(name=f"Role: {role_name}", value=f"Gear: {stats.get('gear', 'N/A')}\nVice: {stats.get('vice', 'N/A')}\nDeck: {stats.get('deck', 'N/A')}\nBracelet: {stats.get('bracelet', 'N/A')}", inline=False)
         await interaction.response.send_message(embed=embed)
         
-    @app_commands.command(name="dglist", description="Check gear requirement of dg")
+    @app_commands.command(name="dglist", description="Check gear requirements for dungeons")
     async def dglist(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
-        if not dungeons: return await interaction.response.send_message("❌ Empty.", ephemeral=True)
-        await interaction.followup.send("📍 Please select dungeon", view=DungeonListView(dungeons))
+        if not dungeons: return await interaction.response.send_message("❌ Database is empty.", ephemeral=True)
+        await interaction.followup.send("📍 Please select a dungeon to check:", view=DungeonListView(dungeons))
 
 async def setup(bot):
     await bot.add_cog(DungeonStats(bot))

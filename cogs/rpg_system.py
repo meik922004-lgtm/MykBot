@@ -37,7 +37,7 @@ class DigiBagSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ **Digimon Bag is empty!**", ephemeral=True)
+            return await interaction.response.send_message("❌ **Your Digimon Bag is empty!**", ephemeral=True)
         await self.cog.handle_switch_digimon(interaction, self.values[0])
 
 class BagView(discord.ui.View):
@@ -76,7 +76,7 @@ class ProfileView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ **Access Denied!** Not your profile.", ephemeral=True)
+            await interaction.response.send_message("❌ **Access Denied!** This is not your profile.", ephemeral=True)
             return False
         return True
 
@@ -93,17 +93,21 @@ class SellModal(discord.ui.Modal, title='Sell to Marketplace'):
     item_type = discord.ui.TextInput(label='Type (gear / orb / core)', placeholder='gear', max_length=10)
     item_target = discord.ui.TextInput(label='Exact Gear Name OR Quantity', placeholder='e.g., Chrome Dagger (Unlocked) OR 10')
     price = discord.ui.TextInput(label='Price in Digibits', placeholder='e.g., 15.5')
+    
     def __init__(self, cog_instance):
         super().__init__()
         self.cog = cog_instance
+        
     async def on_submit(self, interaction: discord.Interaction):
         await self.cog.handle_market_sell(interaction, self.item_type.value.lower(), self.item_target.value, self.price.value)
 
 class BuyModal(discord.ui.Modal, title='Buy from Marketplace'):
     listing_id = discord.ui.TextInput(label='Listing ID', placeholder='e.g., LIT-1234', max_length=15)
+    
     def __init__(self, cog_instance):
         super().__init__()
         self.cog = cog_instance
+        
     async def on_submit(self, interaction: discord.Interaction):
         await self.cog.handle_market_buy(interaction, self.listing_id.value)
 
@@ -115,9 +119,11 @@ class MarketView(discord.ui.View):
     @discord.ui.button(label="View Market", style=discord.ButtonStyle.blurple, emoji="🔄")
     async def view_market(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_market_view(interaction)
+        
     @discord.ui.button(label="Buy Item", style=discord.ButtonStyle.success, emoji="🛒")
     async def buy_item(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyModal(self.cog))
+        
     @discord.ui.button(label="Sell Item", style=discord.ButtonStyle.danger, emoji="📦")
     async def sell_item(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SellModal(self.cog))
@@ -132,7 +138,7 @@ class CombatView(discord.ui.View):
     async def attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_manual_attack(interaction)
         
-    @discord.ui.button(label="Toggle Auto-Attack", style=discord.ButtonStyle.primary, emoji="🤖", custom_id="boss_auto_atk")
+    @discord.ui.button(label="Auto-Attack", style=discord.ButtonStyle.primary, emoji="🤖", custom_id="boss_auto_atk")
     async def auto_attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.toggle_auto_attack(interaction)
         
@@ -326,24 +332,24 @@ class RPGSystemCog(commands.Cog):
     # DASHBOARD & PROFILE COMMANDS
     # ========================================================================
 
-    @app_commands.command(name="upgrade_ui", description="Dùng 100 MyK Coin để nâng cấp giao diện Profile và Party cao cấp")
+    @app_commands.command(name="upgrade_ui", description="Use 100 MyK Coins to upgrade to Premium UI")
     async def upgrade_ui(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile: return await interaction.followup.send("❌ Profile không tồn tại.", ephemeral=True)
+        if not profile: return await interaction.followup.send("❌ Profile not found.", ephemeral=True)
         
         myk_coin = profile.get("myk_coin", 0)
         if myk_coin < 100:
-            return await interaction.followup.send(f"❌ Bạn không đủ MyK Coin! Bạn hiện có: `{myk_coin}/100` Coin.", ephemeral=True)
+            return await interaction.followup.send(f"❌ Not enough MyK Coins! You have: `{myk_coin}/100` Coins.", ephemeral=True)
             
         await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$inc": {"myk_coin": -100}, "$set": {"premium_ui": True}})
-        await interaction.followup.send("🎉 **Chúc mừng!** Bạn đã nâng cấp thành công giao diện Premium UI!", ephemeral=True)
+        await interaction.followup.send("🎉 **Congratulations!** You have successfully upgraded to the Premium UI!", ephemeral=True)
 
     @app_commands.command(name="rpg_profile", description="View your Tamer profile")
     async def rpg_profile(self, interaction: discord.Interaction):
         await interaction.response.defer()
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile: return await interaction.followup.send("❌ Please use `/hatch` to create a profile.")
+        if not profile: return await interaction.followup.send("❌ Please use `/hatch` to create a profile first.")
 
         digimon = self.get_active_digimon(profile)
         stats, gear = self.get_total_stats(profile), profile.get("gear", {})
@@ -440,16 +446,16 @@ class RPGSystemCog(commands.Cog):
             
         await interaction.followup.send("✅ Successfully switched active Digimon!", ephemeral=True)
 
-    @app_commands.command(name="train_digimon", description="Train Digimon (Tốn 5000 Digibits)")
+    @app_commands.command(name="train_digimon", description="Train Digimon (Costs 5000 Digibits)")
     @app_commands.choices(stat=[app_commands.Choice(name="ATK (+20 ATK / 5k Bits)", value="atk"), app_commands.Choice(name="HP (+100 HP / 5k Bits)", value="hp")])
     async def train_digimon(self, interaction: discord.Interaction, stat: str):
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
         if not profile or profile.get("digibit", 0) < 5000:
-            return await interaction.followup.send("❌ Bạn không đủ 5,000 Digibits.", ephemeral=True)
+            return await interaction.followup.send("❌ Not enough Digibits (Requires 5,000).", ephemeral=True)
             
         active_digi = self.get_active_digimon(profile)
-        if not active_digi: return await interaction.followup.send("❌ Equip a Digimon first.", ephemeral=True)
+        if not active_digi: return await interaction.followup.send("❌ Please equip a Digimon first.", ephemeral=True)
         
         MAX_TRAIN_ATK = 1000
         MAX_TRAIN_HP = 5000
@@ -487,7 +493,7 @@ class RPGSystemCog(commands.Cog):
         auto_dungeon = profile.get("auto_dungeon")
         
         embed = discord.Embed(title="🚜 Farming Dashboard", color=discord.Color.green())
-        embed.description = "Quản lý việc cày cuốc tự động hoặc thủ công tại đây.\n*Lưu ý: Auto Dungeon hiện tại không tốn Năng Lượng và chạy mỗi 2 Phút.*"
+        embed.description = "Manage your automated and manual farming activities here.\n*Note: Auto Dungeon costs NO Energy and runs every 2 Minutes.*"
         embed.add_field(name="⛏️ Auto-Mine Status", value="🟢 **ON**" if is_auto_mine else "🔴 **OFF**", inline=True)
         embed.add_field(name="🏰 Auto-Dungeon Status", value=f"🟢 **{self.DUNGEONS.get(auto_dungeon, {}).get('name', 'Unknown')}**" if auto_dungeon else "🔴 **OFF**", inline=False)
         
@@ -522,7 +528,7 @@ class RPGSystemCog(commands.Cog):
             return await interaction.followup.send("🛑 **Auto-Dungeon stopped.**", ephemeral=True)
             
         await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"auto_dungeon": target_dungeon}})
-        await interaction.followup.send(f"🏰 **Auto-Dungeon set to {self.DUNGEONS[target_dungeon]['name']}!** (Tốc độ: 2 Phút / Lượt).", ephemeral=True)
+        await interaction.followup.send(f"🏰 **Auto-Dungeon set to {self.DUNGEONS[target_dungeon]['name']}!** (Speed: 2 Mins / Run).", ephemeral=True)
 
     async def handle_view_logs(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -531,12 +537,11 @@ class RPGSystemCog(commands.Cog):
         
         embed = discord.Embed(title="📜 System Farm Logs", color=discord.Color.dark_gray())
         if not logs:
-            embed.description = "Chưa có dữ liệu cày cuốc tự động."
+            embed.description = "No automated farming data yet."
         else:
             embed.description = "```\n" + "\n".join(logs) + "\n```"
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # Chạy mỗi 2 phút cho Auto Dungeon
     @tasks.loop(minutes=2)
     async def farm_system_loop(self):
         profiles = await rpg_profiles_col.find({"$or": [{"is_auto_mining": True}, {"auto_dungeon": {"$ne": None}}]}).to_list(None)
@@ -552,20 +557,18 @@ class RPGSystemCog(commands.Cog):
                 
             dungeon = profile.get("auto_dungeon")
             if dungeon:
-                runs = 1 # 1 Run mỗi chu kỳ 2 phút
+                runs = 1
                 is_vip = profile.get("is_vip", False)
                 is_premium = profile.get("premium_ui", False)
                 
                 cores = sum(1 for _ in range(runs) if (is_vip or random.random() < 0.60))
                 
-                # Tỷ lệ rớt đồ thấp hơn khi Auto
                 drop_chance = 0.015 if is_premium else 0.01
                 loot_dropped = [f"{self.roll_pve_loot(dungeon)} (Unlocked)" for _ in range(runs) if random.random() < drop_chance]
                 
                 updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + runs
                 if cores > 0: updates["$inc"]["hatch_core"] = updates["$inc"].get("hatch_core", 0) + cores
                 if loot_dropped: 
-                    # Sửa lỗi add gear
                     updates["$push"]["inventory"] = {"$each": loot_dropped}
                     
                 loot_str = f", {cores} Cores, {len(loot_dropped)} Gears" if cores or loot_dropped else ""
@@ -639,7 +642,7 @@ class RPGSystemCog(commands.Cog):
         if not digimon: return await interaction.followup.send("❌ No Active Digimon.", ephemeral=True)
         if digimon.get("stage") == "Mega": return await interaction.followup.send("❌ Max Level (Mega) reached.", ephemeral=True)
         
-        TRAIN_COST = 50000 # Sử dụng Digibits
+        TRAIN_COST = 50000
         if profile.get("digibit", 0) < TRAIN_COST: return await interaction.followup.send(f"❌ Need **{TRAIN_COST:,} Digibits**.", ephemeral=True)
 
         next_form_name = self.EVOLUTION_LINE.get(digimon["name"])
@@ -736,8 +739,8 @@ class RPGSystemCog(commands.Cog):
         hp_bar = "🟥" * filled_blocks + "⬛" * empty_blocks
 
         embed = discord.Embed(
-            title=f"🚨 BOSS XUẤT HIỆN: {boss_data['name']} 🚨", 
-            description=f"**Hệ:** {boss_data.get('attr', 'Unknown')}\n\n**HP:** {current_hp:,} / {max_hp:,}\n{hp_bar} ({hp_percent * 100:.1f}%)",
+            title=f"🚨 BOSS APPEARED: {boss_data['name']} 🚨", 
+            description=f"**Attribute:** {boss_data.get('attr', 'Unknown')}\n\n**HP:** {current_hp:,} / {max_hp:,}\n{hp_bar} ({hp_percent * 100:.1f}%)",
             color=discord.Color.dark_red()
         )
         if boss_data.get("img"):
@@ -750,11 +753,11 @@ class RPGSystemCog(commands.Cog):
             medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
             for idx, (uid_str, dmg) in enumerate(sorted_log):
                 lb_text += f"{medals[idx]} <@{uid_str}>: **{dmg:,}** DMG\n"
-            embed.add_field(name="🏆 TOP SÁT THƯƠNG", value=lb_text, inline=False)
+            embed.add_field(name="🏆 DAMAGE LEADERBOARD", value=lb_text, inline=False)
         else:
-            embed.add_field(name="🏆 TOP SÁT THƯƠNG", value="Chưa có ai tấn công...", inline=False)
+            embed.add_field(name="🏆 DAMAGE LEADERBOARD", value="No attackers yet...", inline=False)
 
-        embed.set_footer(text="Dùng lệnh /combat hoặc nút dưới đây để tấn công (Real-time)")
+        embed.set_footer(text="Use /combat or the buttons below to attack (Real-time)")
         return embed
 
     async def broadcast_initial_boss(self, boss_data: dict):
@@ -773,7 +776,7 @@ class RPGSystemCog(commands.Cog):
                             "message_id": msg.id
                         })
                 except Exception as e:
-                    print(f"Không thể gửi thông báo Boss tới kênh {c['channel_id']}: {e}")
+                    print(f"Could not send boss announcement to {c['channel_id']}: {e}")
                     
         if active_messages:
             await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
@@ -837,7 +840,7 @@ class RPGSystemCog(commands.Cog):
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
         
-        await interaction.response.send_message(f"⚔️ Đã cưỡng chế gọi Boss **{name}**!", ephemeral=True)
+        await interaction.response.send_message(f"⚔️ Force spawned Boss **{name}**!", ephemeral=True)
         await self.broadcast_initial_boss(new_boss)
 
     @tasks.loop(minutes=1)
@@ -879,11 +882,10 @@ class RPGSystemCog(commands.Cog):
     # LỆNH COMBAT & COMBAT ENGINE LOGIC
     # ========================================================================
     
-    @app_commands.command(name="combat", description="Hiển thị giao diện chiến đấu Boss")
+    @app_commands.command(name="combat", description="Display Boss Combat Interface")
     async def combat_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         
-        # Check if user is in a party for Party Boss
         party = await parties_col.find_one({"members.user_id": interaction.user.id})
         boss = None
         if party:
@@ -893,7 +895,7 @@ class RPGSystemCog(commands.Cog):
             boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
             
         if not boss:
-            return await interaction.followup.send("❌ Hiện tại không có Boss nào đang hoạt động!")
+            return await interaction.followup.send("❌ There are no active Bosses right now!")
             
         embed = self.generate_boss_embed(boss)
         msg = await interaction.followup.send(embed=embed, view=CombatView(self), wait=True)
@@ -1019,7 +1021,6 @@ class RPGSystemCog(commands.Cog):
         sorted_log = sorted(boss_data.get("damage_log", {}).items(), key=lambda x: x[1], reverse=True)
         total_hp = boss_data.get("max_hp", 1)
 
-        # Trả thưởng + Cấp 1 MyK Coin cho mọi người tham gia
         participant_ids = [int(uid_str) for uid_str, _ in sorted_log]
         if participant_ids:
             await rpg_profiles_col.update_many(
@@ -1054,7 +1055,7 @@ class RPGSystemCog(commands.Cog):
             await self.broadcast_system_message(announcement)
         else:
             party = await parties_col.find_one({"_id": ObjectId(boss_data["party_id"])})
-            if party: await handle_cross_server_chat(self.bot, party, msg_override=announcement) # Trả log cho Party DM
+            if party: await handle_cross_server_chat(self.bot, party, msg_override=announcement)
 
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
@@ -1064,28 +1065,30 @@ class RPGSystemCog(commands.Cog):
         await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
         await interaction.followup.send("✅ Success!", ephemeral=True)
 
-    # ĐÃ TỐI ƯU HÓA HOÀN TOÀN: Xóa tin nhắn gốc mượt mà + Webhook Session chuẩn xác
+    # ĐÃ TỐI ƯU HÓA HOÀN TOÀN: Xóa tin nhắn gốc mượt mà + Webhook Session chuẩn xác + Hỗ trợ Stickers
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild: return
+        if message.author.bot or message.webhook_id or not message.guild: return
         channel_data = await boss_channels_col.find_one({"channel_id": message.channel.id})
         if not channel_data: return 
-        
-        # Xóa tin nhắn gốc của người dùng ngay lập tức
-        try:
-            await message.delete()
-        except discord.Forbidden:
-            pass
 
         content = message.content
         files_text = "\n" + "\n".join([a.url for a in message.attachments]) if message.attachments else ""
-        final_content = content + files_text
+        stickers_text = "\n" + "\n".join([s.url for s in message.stickers]) if message.stickers else ""
+        final_content = f"{content}{files_text}{stickers_text}".strip()
         
-        if not final_content.strip(): return
+        if not final_content: return
+
+        # Xóa tin nhắn gốc của người dùng ngay lập tức (Yêu cầu quyền Manage Messages)
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            pass # Vẫn tiếp tục chạy nếu bot không có quyền xóa
+        except discord.NotFound:
+            pass
 
         all_channels = await boss_channels_col.find({}).to_list(None)
         
-        # Share session chung cho nhiều webhook để tránh spam aiohttp
         async with aiohttp.ClientSession() as session:
             tasks = []
             for c in all_channels:
@@ -1094,7 +1097,7 @@ class RPGSystemCog(commands.Cog):
                     tasks.append(webhook.send(
                         content=final_content, 
                         username=f"[{message.guild.name[:10]}] {message.author.display_name}", 
-                        avatar_url=message.author.display_avatar.url,
+                        avatar_url=message.author.display_avatar.url or message.author.default_avatar.url,
                         allowed_mentions=discord.AllowedMentions.none()
                     ))
             if tasks:
