@@ -583,7 +583,7 @@ class EditPartyInfoModal(discord.ui.Modal, title='Edit Party Information'):
     )
     new_time = discord.ui.TextInput(
         label='Start Time (HH:MM) - Leave blank to keep', 
-        placeholder='E.g., 21:30 (leave blank if you dont want to change time', 
+        placeholder='E.g., 21:30 (Để trống nếu không muốn đổi giờ)', 
         required=False
     )
     new_req = discord.ui.TextInput(
