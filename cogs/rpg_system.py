@@ -9,8 +9,8 @@ import uuid
 from datetime import datetime
 from bson import ObjectId
 from cogs.party_finder import handle_cross_server_chat
-# Import collections from Database.py
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
+import pymongo
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
@@ -364,7 +364,7 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="⚔️ ATK", value=str(stats['atk']), inline=True)
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
             
-        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Digibits**\n🔮 **{profile.get('orb', 0)} Orbs**\n🧬 **{profile.get('hatch_core', 0)} Hatch Cores**\n🪙 **{profile.get('myk_coin', 0)} MyK Coins**", inline=False)
+        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Digibits**", inline=False)
         embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
         
         await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
@@ -983,7 +983,7 @@ class RPGSystemCog(commands.Cog):
         
         result = await world_boss_col.find_one_and_update(
             {"_id": boss["_id"]}, {"$inc": {"current_hp": -final_dmg, f"damage_log.{str(user_id)}": final_dmg}},
-            return_document=discord.pymongo.ReturnDocument.AFTER
+            return_document=pymongo.ReturnDocument.AFTER
         )
 
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss: {max(0, result['current_hp']):,}){skill_msg}"
