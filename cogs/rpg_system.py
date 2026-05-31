@@ -1068,40 +1068,36 @@ class RPGSystemCog(commands.Cog):
 
     # ĐÃ SỬA LỖI DOUBLE CHAT TRIỆT ĐỂ: Chỉ gửi tới các server KHÁC kênh hiện tại (message.channel.id)
     @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot or message.webhook_id or not message.guild: return
-        channel_data = await boss_channels_col.find_one({"channel_id": message.channel.id})
-        if not channel_data: return 
+    async def on_message(self, message):
+        # Bỏ qua tin nhắn của bot để tránh loop
+        if message.author.bot:
+            return
+            
+        # Gọi hàm xử lý cross-server chat
+        await self.handle_cross_server_chat(message)
 
-        content = message.content
-        files_text = "\n" + "\n".join([a.url for a in message.attachments]) if message.attachments else ""
-        stickers_text = "\n" + "\n".join([s.url for s in message.stickers]) if message.stickers else ""
-        final_content = f"{content}{files_text}{stickers_text}".strip()
-        
-        if not final_content: return
-
-        # Xóa tin nhắn gốc của người dùng ngay lập tức (Yêu cầu quyền Manage Messages)
-        try:
-            await message.delete()
-        except discord.Forbidden:
-            pass # Vẫn tiếp tục chạy nếu bot không có quyền xóa
-        except discord.NotFound:
-            pass
-
-        # LẤY CÁC KÊNH KHÁC (Chừa kênh hiện tại ra để tránh lặp chat)
+    async def handle_cross_server_chat(self, message):
+        # Lấy toàn bộ các kênh nhận chat cross-server từ Database TRỪ kênh hiện tại
         others = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
         
+        if not others:
+            return
+
+        # Đã XÓA lệnh await message.delete() ở đây để giữ lại tin nhắn gốc ở server gửi.
+        # Sử dụng Webhook để gửi tới các kênh (Server) khác
         async with aiohttp.ClientSession() as session:
             tasks = []
             for c in others:
                 if "webhook_url" in c:
                     webhook = discord.Webhook.from_url(c["webhook_url"], session=session)
                     tasks.append(webhook.send(
-                        content=final_content, 
+                        content=message.content, 
                         username=f"[{message.guild.name[:10]}] {message.author.display_name}", 
                         avatar_url=message.author.display_avatar.url or message.author.default_avatar.url,
                         allowed_mentions=discord.AllowedMentions.none()
                     ))
+            
+            # Gửi đồng loạt tới các server để không bị nghẽn
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
