@@ -886,6 +886,7 @@ class RPGSystemCog(commands.Cog):
     async def combat_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         
+        # Check if user is in a party for Party Boss
         party = await parties_col.find_one({"members.user_id": interaction.user.id})
         boss = None
         if party:
@@ -965,8 +966,8 @@ class RPGSystemCog(commands.Cog):
 
         player = await rpg_profiles_col.find_one({"user_id": user_id})
         digimon = self.get_active_digimon(player)
-        if not player or not digimon: return ("❌ **No Digimon!** Hatch an egg.", True)
-        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Your Digimon fainted!** Use Heal.", True)
+        if not player or not digimon: return ("❌ **No Digimon found!** Hatch an egg first.", True)
+        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Your Digimon has fainted!** Please Heal.", True)
 
         stats = self.get_total_stats(player)
         raw_dmg = stats["atk"] + random.randint(-5, 10)
@@ -988,7 +989,7 @@ class RPGSystemCog(commands.Cog):
             return_document=pymongo.ReturnDocument.AFTER
         )
 
-        msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss: {max(0, result['current_hp']):,}){skill_msg}"
+        msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, result['current_hp']):,}){skill_msg}"
 
         if random.random() < 0.30 and result['current_hp'] > 0:
             boss_dmg = random.randint(250, 600)
@@ -1065,7 +1066,7 @@ class RPGSystemCog(commands.Cog):
         await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
         await interaction.followup.send("✅ Success!", ephemeral=True)
 
-    # ĐÃ TỐI ƯU HÓA HOÀN TOÀN: Xóa tin nhắn gốc mượt mà + Webhook Session chuẩn xác + Hỗ trợ Stickers
+    # ĐÃ SỬA LỖI DOUBLE CHAT TRIỆT ĐỂ: Chỉ gửi tới các server KHÁC kênh hiện tại (message.channel.id)
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.webhook_id or not message.guild: return
@@ -1087,11 +1088,12 @@ class RPGSystemCog(commands.Cog):
         except discord.NotFound:
             pass
 
-        all_channels = await boss_channels_col.find({}).to_list(None)
+        # LẤY CÁC KÊNH KHÁC (Chừa kênh hiện tại ra để tránh lặp chat)
+        others = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
         
         async with aiohttp.ClientSession() as session:
             tasks = []
-            for c in all_channels:
+            for c in others:
                 if "webhook_url" in c:
                     webhook = discord.Webhook.from_url(c["webhook_url"], session=session)
                     tasks.append(webhook.send(
