@@ -127,13 +127,15 @@ class CombatView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog_instance
 
-    @discord.ui.button(label="Attack", style=discord.ButtonStyle.danger, emoji="⚔️")
+    @discord.ui.button(label="Attack", style=discord.ButtonStyle.danger, emoji="⚔️", custom_id="boss_atk")
     async def attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_manual_attack(interaction)
-    @discord.ui.button(label="Toggle Auto-Attack", style=discord.ButtonStyle.primary, emoji="🤖")
+        
+    @discord.ui.button(label="Toggle Auto-Attack", style=discord.ButtonStyle.primary, emoji="🤖", custom_id="boss_auto_atk")
     async def auto_attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.toggle_auto_attack(interaction)
-    @discord.ui.button(label="Protect (45s CD)", style=discord.ButtonStyle.secondary, emoji="🛡️")
+        
+    @discord.ui.button(label="Protect (45s CD)", style=discord.ButtonStyle.secondary, emoji="🛡️", custom_id="boss_protect")
     async def protect_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_protect(interaction)
 
@@ -188,7 +190,6 @@ class RPGSystemCog(commands.Cog):
         "server_continent": {"name": "Server Continent", "description": "Farms Vices."}
     }
 
-    # DIGIMON DATA WITH IMAGES
     DIGIMON_DATA = {
         "rookie": {
             "Agumon": {"attr": "Vaccine", "atk": 60, "hp": 1200, "vip": False, "img": "https://digimon.net/cimages/digimon/agumon.jpg"},
@@ -260,10 +261,12 @@ class RPGSystemCog(commands.Cog):
         self.auto_attackers = set()
         self.auto_spawn_boss.start()
         self.farm_system_loop.start()
+        self.live_boss_update_loop.start()
 
     def cog_unload(self):
         self.auto_spawn_boss.cancel()
         self.farm_system_loop.cancel()
+        self.live_boss_update_loop.cancel()
 
     # --- HELPER METHODS ---
     def get_active_digimon(self, profile: dict) -> dict:
@@ -376,7 +379,7 @@ class RPGSystemCog(commands.Cog):
         if not profile:
             profile = {
                 "user_id": user_id, "ign": interaction.user.display_name, 
-                "gold": 0, "digibit": 0.0, "orb": 0, "hatch_core": 15, # Đã sửa thành 15 Hatch Cores
+                "gold": 0, "digibit": 0.0, "orb": 0, "hatch_core": 15,
                 "current_hp": 0, "gear": {"weapon": "None", "armor": "None", "vice": "None"}, 
                 "inventory": [], "digicore": 100, "is_vip": False, 
                 "last_core_reset": datetime.utcnow().strftime("%Y-%m-%d"),
@@ -535,12 +538,10 @@ class RPGSystemCog(commands.Cog):
             log_msgs = []
             updates = {"$inc": {}, "$push": {}}
             
-            # 1. Processing Auto-Mining (0.25 bit / 1h => ~0.02 bit / 5 min)
             if profile.get("is_auto_mining"):
                 updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 0.02
                 log_msgs.append("⛏️ Auto-mine: +0.02 Bits")
                 
-            # 2. Processing Auto-Dungeon (Consume 5 energy max per 5 mins)
             dungeon = profile.get("auto_dungeon")
             if dungeon:
                 energy = profile.get("digicore", 0)
@@ -548,7 +549,7 @@ class RPGSystemCog(commands.Cog):
                     updates["$set"] = {"auto_dungeon": None}
                     log_msgs.append("🛑 No Energy. Stopped Auto-Dungeon.")
                 else:
-                    runs = min(energy, 5) # 5 runs per cycle to be efficient
+                    runs = min(energy, 5) 
                     is_vip = profile.get("is_vip", False)
                     cores = sum(1 for _ in range(runs) if (is_vip or random.random() < 0.60))
                     loot_dropped = [self.roll_pve_loot(dungeon) for _ in range(runs) if random.random() < (0.07 if is_vip else 0.05)]
@@ -564,9 +565,8 @@ class RPGSystemCog(commands.Cog):
             if log_msgs:
                 log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] " + " | ".join(log_msgs)
                 if "farm_logs" not in updates["$push"]:
-                    updates["$push"]["farm_logs"] = {"$each": [log_entry], "$slice": -10} # Lưu tối đa 10 log gần nhất
+                    updates["$push"]["farm_logs"] = {"$each": [log_entry], "$slice": -10} 
                     
-                # Clean up empty operators to avoid MongoDB errors
                 if not updates["$inc"]: del updates["$inc"]
                 if not updates["$push"]: del updates["$push"]
                 
@@ -711,95 +711,9 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(f"🏪 **Listed {display_name} for {price:.2f} Bits!** (ID: `{listing_id}`)", ephemeral=True)
 
     # ========================================================================
-    # COMBAT ENGINE
-    # ========================================================================
-    # ========================================================================
     # WORLD BOSS & REAL-TIME LEADERBOARD SYSTEM
     # ========================================================================
 
-    async def broadcast_initial_boss(self, boss_data: dict):
-        embed = self.generate_boss_embed(boss_data)
-        channels = await boss_channels_col.find({}).to_list(None)
-        
-        active_messages = []
-        for c in channels:
-            if url := c.get("webhook_url"):
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        webhook = discord.Webhook.from_url(url, session=s)
-                        # Gửi tin nhắn mới qua Webhook
-                        msg = await webhook.send(embed=embed, username="SYSTEM RAID", wait=True)
-                        active_messages.append({
-                            "channel_id": c["channel_id"],
-                            "message_id": msg.id
-                        })
-                except Exception as e:
-                    print(f"Không thể gửi thông báo Boss tới kênh {c['channel_id']}: {e}")
-                    
-        # Lưu toàn bộ Message IDs vào Database để loop update
-        if active_messages:
-            await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
-        
-        # Bắt đầu vòng lặp Live Update nếu nó chưa chạy
-        if not self.live_boss_update_loop.is_running():
-            self.live_boss_update_loop.start()
-
-    @tasks.loop(minutes=1)
-    async def auto_spawn_boss(self):
-        config = await world_boss_col.find_one({"type": "spawn_config"})
-        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
-        if await world_boss_col.find_one({"is_active": True}): return
-        
-        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
-        
-        # Nâng mức HP cho liên server
-        boss_roster = [
-            {"name": "Devimon", "hp": 25_000_000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
-            {"name": "WarGreymon", "hp": 100_000_000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
-            {"name": "Apocalymon", "hp": 250_000_000, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"}
-        ]
-        chosen_boss = random.choice(boss_roster)
-        
-        new_boss = {
-            "name": chosen_boss["name"], 
-            "max_hp": chosen_boss["hp"], 
-            "current_hp": chosen_boss["hp"], 
-            "attr": chosen_boss["attr"], 
-            "img": chosen_boss.get("img", ""), 
-            "is_active": True, 
-            "damage_log": {},
-            "active_messages": [] # Chuẩn bị mảng rỗng để hứng Message IDs
-        }
-        
-        result = await world_boss_col.insert_one(new_boss)
-        new_boss["_id"] = result.inserted_id
-        
-        await self.broadcast_initial_boss(new_boss)
-
-    @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
-    async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
-        if not interaction.user.guild_permissions.administrator: 
-            return await interaction.response.send_message("❌ **Access Denied!** Admin privileges required.", ephemeral=True)
-        
-        # Dọn dẹp boss cũ nếu có
-        await world_boss_col.update_many({"is_active": True}, {"$set": {"is_active": False}})
-        
-        new_boss = {
-            "name": name, 
-            "max_hp": hp, 
-            "current_hp": hp, 
-            "attr": "Unknown", 
-            "img": "", 
-            "is_active": True, 
-            "damage_log": {},
-            "active_messages": []
-        }
-        
-        result = await world_boss_col.insert_one(new_boss)
-        new_boss["_id"] = result.inserted_id
-        
-        await interaction.response.send_message(f"⚔️ Đã cưỡng chế gọi Boss **{name}**!", ephemeral=True)
-        await self.broadcast_initial_boss(new_boss)
     def generate_boss_embed(self, boss_data: dict) -> discord.Embed:
         max_hp = boss_data.get("max_hp", 1)
         current_hp = max(0, boss_data.get("current_hp", 0))
@@ -821,8 +735,7 @@ class RPGSystemCog(commands.Cog):
         # Xử lý Bảng xếp hạng sát thương (Leaderboard)
         damage_log = boss_data.get("damage_log", {})
         if damage_log:
-            # Sắp xếp top người chơi gây sát thương cao nhất
-            sorted_log = sorted(damage_log.items(), key=lambda x: x[1], reverse=True)[:5] # Lấy Top 5
+            sorted_log = sorted(damage_log.items(), key=lambda x: x[1], reverse=True)[:5] 
             lb_text = ""
             medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
             for idx, (uid_str, dmg) in enumerate(sorted_log):
@@ -833,7 +746,28 @@ class RPGSystemCog(commands.Cog):
 
         embed.set_footer(text="Đang cập nhật trực tiếp (Real-time)...")
         return embed
-    
+
+    async def broadcast_initial_boss(self, boss_data: dict):
+        embed = self.generate_boss_embed(boss_data)
+        channels = await boss_channels_col.find({}).to_list(None)
+        
+        active_messages = []
+        for c in channels:
+            if url := c.get("webhook_url"):
+                try:
+                    async with aiohttp.ClientSession() as s:
+                        webhook = discord.Webhook.from_url(url, session=s)
+                        msg = await webhook.send(embed=embed, view=CombatView(self), username="SYSTEM RAID", wait=True)
+                        active_messages.append({
+                            "channel_id": c["channel_id"],
+                            "message_id": msg.id
+                        })
+                except Exception as e:
+                    print(f"Không thể gửi thông báo Boss tới kênh {c['channel_id']}: {e}")
+                    
+        if active_messages:
+            await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
+
     @tasks.loop(seconds=5)
     async def live_boss_update_loop(self):
         boss = await world_boss_col.find_one({"is_active": True})
@@ -849,24 +783,86 @@ class RPGSystemCog(commands.Cog):
                 if not channel:
                     channel = await self.bot.fetch_channel(msg_info["channel_id"])
                 
-                # Fetch webhook message if using webhook, or bot message
                 webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None)
                 if webhook:
-                    await webhook.edit_message(msg_info["message_id"], embed=embed)
+                    await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
                     updated_messages.append(msg_info)
             except discord.NotFound:
-                pass # Tin nhắn đã bị xóa, bỏ qua
+                pass 
             except Exception as e:
                 print(f"Lỗi cập nhật Boss UI: {e}")
-                updated_messages.append(msg_info) # Giữ lại để thử lại sau
+                updated_messages.append(msg_info) 
 
-        # Cập nhật lại danh sách tin nhắn hợp lệ vào DB
         if len(active_messages) != len(updated_messages):
             await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
 
     @live_boss_update_loop.before_loop
     async def before_live_boss_update(self):
         await self.bot.wait_until_ready()  
+
+    @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
+    async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
+        if not interaction.user.guild_permissions.administrator: 
+            return await interaction.response.send_message("❌ **Access Denied!** Admin privileges required.", ephemeral=True)
+        
+        await world_boss_col.update_many({"is_active": True}, {"$set": {"is_active": False}})
+        
+        new_boss = {
+            "name": name, 
+            "max_hp": hp, 
+            "current_hp": hp, 
+            "attr": "Unknown", 
+            "img": "", 
+            "is_active": True, 
+            "damage_log": {},
+            "active_messages": []
+        }
+        
+        result = await world_boss_col.insert_one(new_boss)
+        new_boss["_id"] = result.inserted_id
+        
+        await interaction.response.send_message(f"⚔️ Đã cưỡng chế gọi Boss **{name}**!", ephemeral=True)
+        await self.broadcast_initial_boss(new_boss)
+
+    @tasks.loop(minutes=1)
+    async def auto_spawn_boss(self):
+        config = await world_boss_col.find_one({"type": "spawn_config"})
+        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
+        if await world_boss_col.find_one({"is_active": True}): return
+        
+        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
+        
+        boss_roster = [
+            {"name": "Devimon", "hp": 25_000_000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
+            {"name": "WarGreymon", "hp": 100_000_000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
+            {"name": "Apocalymon", "hp": 250_000_000, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"}
+        ]
+        chosen_boss = random.choice(boss_roster)
+        
+        new_boss = {
+            "name": chosen_boss["name"], 
+            "max_hp": chosen_boss["hp"], 
+            "current_hp": chosen_boss["hp"], 
+            "attr": chosen_boss["attr"], 
+            "img": chosen_boss.get("img", ""), 
+            "is_active": True, 
+            "damage_log": {},
+            "active_messages": []
+        }
+        
+        result = await world_boss_col.insert_one(new_boss)
+        new_boss["_id"] = result.inserted_id
+        
+        await self.broadcast_initial_boss(new_boss)
+
+    @auto_spawn_boss.before_loop
+    async def before_auto_spawn(self): 
+        await self.bot.wait_until_ready()
+
+    # ========================================================================
+    # COMBAT ENGINE LOGIC
+    # ========================================================================
+
     async def toggle_auto_attack(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
@@ -888,8 +884,7 @@ class RPGSystemCog(commands.Cog):
             await asyncio.sleep(4.5)
 
     async def handle_manual_attack(self, interaction: discord.Interaction):
-        # Trả lời ẩn cho riêng người bấm nút
-        await interaction.response.defer(ephemeral=False) 
+        await interaction.response.defer(ephemeral=True) 
         
         current_time = int(time.time())
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
@@ -899,7 +894,6 @@ class RPGSystemCog(commands.Cog):
             
         await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"last_manual_atk": current_time}})
         
-        # GỌI HÀM TÍNH DAMAGE (đã có ở bản trước)
         msg, should_stop = await self.execute_combat_turn(interaction.user.id, interaction.user.display_name)
         
         if msg: 
@@ -969,7 +963,6 @@ class RPGSystemCog(commands.Cog):
 
     async def distribute_boss_loot(self, boss_data: dict):
         await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"is_active": False}})
-        # Spawn con boss tiếp theo đúng 1 giờ (3600 giây) sau khi chết
         await world_boss_col.update_one({"type": "spawn_config"}, {"$set": {"next_spawn": int(time.time()) + 3600}}, upsert=True)
         
         announcement = f"🎉 **THE WORLD BOSS HAS FALLEN!**\n\n**🏆 Leaderboard Rewards:**\n"
@@ -1000,30 +993,6 @@ class RPGSystemCog(commands.Cog):
             if rank <= 10: announcement += f"#{rank} <@{uid_str}>: {dmg:,} DMG ➡️ {reward_str}\n"
 
         await self.broadcast_system_message(announcement)
-
-    @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss to trigger the cycle")
-    async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
-        if not interaction.user.guild_permissions.administrator: 
-            return await interaction.response.send_message("❌ **Access Denied!** Admin privileges required.", ephemeral=True)
-            
-        await world_boss_col.insert_one({"name": name, "max_hp": hp, "current_hp": hp, "attr": "Virus", "img": "", "is_active": True, "damage_log": {}})
-        await interaction.response.send_message(f"⚔️ **World Boss {name} forced to spawn!**", ephemeral=True)
-        await self.broadcast_system_message(f"🚨 **WARNING!** **{name}** has arrived with **{hp:,} HP**!")
-
-    @tasks.loop(minutes=1)
-    async def auto_spawn_boss(self):
-        config = await world_boss_col.find_one({"type": "spawn_config"})
-        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
-        if await world_boss_col.find_one({"is_active": True}): return
-        
-        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
-        boss = random.choice([{"name": "Devimon", "hp": 100000, "attr": "Virus"}, {"name": "Wargreymon", "hp": 1000000, "attr": "Vaccine"}])
-        boss.update({"is_active": True, "damage_log": {}})
-        await world_boss_col.insert_one(boss)
-        await self.broadcast_system_message(f"🚨 **WARNING!** World Boss **{boss['name']}** appeared with **{boss['hp']:,} HP**!")
-
-    @auto_spawn_boss.before_loop
-    async def before_auto_spawn(self): await self.bot.wait_until_ready()
 
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
