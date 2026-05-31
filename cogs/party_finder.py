@@ -55,8 +55,8 @@ async def update_party_lobby_dms(bot, party_id):
     if not party: return
         
     embed = discord.Embed(title=f"🎮 Party Lobby: {party.get('dg_name')}", color=discord.Color.purple())
-    embed.add_field(name="👑 Trưởng nhóm", value=party.get('leader_ign'), inline=True)
-    embed.add_field(name="⏰ Khởi hành", value=party.get('start_time', 'ASAP'), inline=True)
+    embed.add_field(name="👑 Team Leader", value=party.get('leader_ign'), inline=True)
+    embed.add_field(name="⏰ Start in", value=party.get('start_time', 'ASAP'), inline=True)
     
     m_text = ""
     for idx, m in enumerate(party.get('members', [])):
@@ -143,16 +143,16 @@ class PartyLobbyDMView(discord.ui.View):
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         party = await parties_col.find_one({"_id": ObjectId(self.party_id)})
-        if not party: return await interaction.followup.send("❌ Nhóm không tồn tại.", ephemeral=True)
+        if not party: return await interaction.followup.send("❌The group does not exist..", ephemeral=True)
         
         is_leader = party.get("leader_id") == interaction.user.id
         if is_leader:
             await parties_col.delete_one({"_id": ObjectId(self.party_id)})
-            await interaction.followup.send("❌ Bạn là Trưởng Nhóm, Party đã bị giải tán.", ephemeral=True)
+            await interaction.followup.send("❌ You are the Team Leader, the Party has been disbanded..", ephemeral=True)
             await handle_cross_server_chat(self.bot, party, action="delete")
         else:
             await parties_col.update_one({"_id": ObjectId(self.party_id)}, {"$pull": {"members": {"user_id": interaction.user.id}}})
-            await interaction.followup.send("✅ Bạn đã rời nhóm.", ephemeral=True)
+            await interaction.followup.send("✅You have left the group.", ephemeral=True)
             await update_party_lobby_dms(self.bot, self.party_id)
             await update_broadcast_messages(self.bot, self.party_id)
             await handle_cross_server_chat(self.bot, party, interaction.user.id, action="remove")
@@ -166,10 +166,10 @@ class PartyBossSpawnConfirmView(discord.ui.View):
         self.leader_id = leader_id
         self.dg_name = dg_name
 
-    @discord.ui.button(label="Có, triệu hồi Boss nhóm", style=discord.ButtonStyle.success, emoji="👹")
+    @discord.ui.button(label="Yes, summon the Boss!", style=discord.ButtonStyle.success, emoji="👹")
     async def confirm_spawn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.leader_id:
-            return await interaction.response.send_message("❌ Chỉ Trưởng nhóm mới có quyền này!", ephemeral=True)
+            return await interaction.response.send_message("❌ Only leader have permission!", ephemeral=True)
         await interaction.response.defer()
         
         await world_boss_col.insert_one({
@@ -183,14 +183,14 @@ class PartyBossSpawnConfirmView(discord.ui.View):
             "damage_log": {},
             "active_messages": []
         })
-        await interaction.followup.send("🔥 **Boss Nhóm đã được triệu hồi thành công!** Hãy dùng `/combat` để tấn công!")
+        await interaction.followup.send("🔥 **Party boss summon successfully, use /combat to attack!")
         self.stop()
 
     @discord.ui.button(label="Không, chỉ đi phó bản thường", style=discord.ButtonStyle.secondary)
     async def cancel_spawn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.leader_id:
-            return await interaction.response.send_message("❌ Chỉ Trưởng nhóm mới có quyền này!", ephemeral=True)
-        await interaction.response.send_message("✅ Đã hủy triệu hồi Boss.")
+            return await interaction.response.send_message("❌ Only the Team Leader has this authority.!", ephemeral=True)
+        await interaction.response.send_message("✅ Boss summons have been cancelled..")
         self.stop()
 
 
@@ -437,7 +437,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         broadcast_records = await broadcast_to_all_servers(self.bot, embed, str(result.inserted_id), {"dg_name": self.dg_name.value}, interaction.guild)
         if broadcast_records: await parties_col.update_one({"_id": result.inserted_id}, {"$set": {"broadcasts": broadcast_records}})
             
-        await interaction.followup.send("✅ Đã tạo Party! Hãy kiểm tra DM (Tin nhắn riêng) của bạn.", view=PartyBossSpawnConfirmView(self.bot, str(result.inserted_id), interaction.user.id, self.dg_name.value), ephemeral=True)
+        await interaction.followup.send("✅ Party created! Please check your DMs (Private Messages)..", view=PartyBossSpawnConfirmView(self.bot, str(result.inserted_id), interaction.user.id, self.dg_name.value), ephemeral=True)
         await self.lobby_view.update_lobby(self.parent_interaction, self.lobby_view.page)
 
 

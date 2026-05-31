@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from bson import ObjectId
-from party_finder import handle_cross_server_chat
+from cogs.party_finder import handle_cross_server_chat
 # Import collections from Database.py
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
 
