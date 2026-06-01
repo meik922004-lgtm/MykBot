@@ -10,6 +10,7 @@ from Database import players_col, parties_col, dungeon_configs_col, world_boss_c
 
 server_configs_col = players_col.database["server_configs"]
 
+
 # --- DATABASE HELPER FUNCTIONS ---
 def get_discord_timestamp(time_str: str, tz_offset: float = 7.0):
     try:
@@ -204,18 +205,40 @@ class PartyBossSpawnConfirmView(discord.ui.View):
             return await interaction.response.send_message("❌ Only leader have permission!", ephemeral=True)
         await interaction.response.defer()
         
+        # 1. Fetch thông tin Party
+        party = await parties_col.find_one({"_id": ObjectId(self.party_id)})
+        member_ids = [m["user_id"] for m in party.get("members", [])]
+        
+        # 2. Lấy dữ liệu ATK của thành viên từ RPG Profile
+        profiles = await rpg_profiles_col.find({"user_id": {"$in": member_ids}}).to_list(None)
+        total_team_atk = 0
+        
+        for p in profiles:
+            active_id = p.get("active_digimon_id")
+            digimon = next((d for d in p.get("digimon_list", []) if d.get("id") == active_id), None)
+            if digimon:
+                total_team_atk += digimon.get("atk", 0) + digimon.get("trained_atk", 0)
+                
+        # 3. Tính toán Scaling Ngẫu nhiên
+        if total_team_atk == 0:
+            total_team_atk = 5000 # Giá trị phòng hờ nếu đội hình rỗng (chưa set digimon)
+            
+        import random
+        # Random lượng máu từ 15 đến 30 lần sức sát thương của toàn đội
+        random_hp = int(total_team_atk * random.uniform(15.0, 30.0))
+        
         await world_boss_col.insert_one({
             "party_id": self.party_id,
             "name": f"Party Raid Boss ({self.dg_name})",
-            "max_hp": 75000,
-            "current_hp": 75000,
-            "atk": 800,
+            "max_hp": random_hp,
+            "current_hp": random_hp,
+            "atk": int(total_team_atk * 0.8), # Tăng thêm tính nguy hiểm của Boss dựa vào team
             "is_active": True,
             "img": "https://digimon.net/cimages/digimon/merukimon.jpg",
             "damage_log": {},
             "active_messages": []
         })
-        await interaction.followup.send("🔥 **Party Boss summoned successfully!** Use `/combat` to attack!")
+        await interaction.followup.send(f"🔥 **Party Boss summoned successfully!** (HP Scale: {random_hp:,}) Use `/combat` to attack!")
         self.stop()
 
     @discord.ui.button(label="No, Normal Dungeon Only", style=discord.ButtonStyle.secondary)

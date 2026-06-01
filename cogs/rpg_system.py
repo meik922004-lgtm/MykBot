@@ -14,6 +14,7 @@ import pymongo
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
+OWNER_IDS = [128368973756721158]
 # ========================================================================
 # UI INTERFACE CLASSES (VIEWS & MODALS)
 # ========================================================================
@@ -760,6 +761,7 @@ class RPGSystemCog(commands.Cog):
         embed.set_footer(text="Use /combat or the buttons below to attack (Real-time)")
         return embed
 
+    # Sửa đổi 1: Thông báo Boss nổi bật hơn trên toàn Server + Kèm Combat UI
     async def broadcast_initial_boss(self, boss_data: dict):
         embed = self.generate_boss_embed(boss_data)
         channels = await boss_channels_col.find({}).to_list(None)
@@ -770,7 +772,14 @@ class RPGSystemCog(commands.Cog):
                 try:
                     async with aiohttp.ClientSession() as s:
                         webhook = discord.Webhook.from_url(url, session=s)
-                        msg = await webhook.send(embed=embed, view=CombatView(self), username="SYSTEM RAID", wait=True)
+                        # THÊM CONTENT TEXT để ping / gây chú ý
+                        msg = await webhook.send(
+                            content="🚨 **WORLD BOSS HAS SPAWNED! PREPARE FOR BATTLE!**",
+                            embed=embed, 
+                            view=CombatView(self), 
+                            username="SYSTEM RAID", 
+                            wait=True
+                        )
                         active_messages.append({
                             "channel_id": c["channel_id"],
                             "message_id": msg.id
@@ -1061,7 +1070,16 @@ class RPGSystemCog(commands.Cog):
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
-        if not interaction.user.guild_permissions.administrator: return await interaction.followup.send("❌ Access Denied!", ephemeral=True)
+        
+        # 1. Kiểm tra xem người dùng có phải là Admin hoặc Owner không
+        is_admin = interaction.user.guild_permissions.administrator if interaction.guild else False
+        is_owner = interaction.user.id in OWNER_IDS
+        
+        # 2. Nếu không phải Admin VÀ cũng không phải Owner -> Báo lỗi
+        if not (is_admin or is_owner): 
+            return await interaction.followup.send("❌ Access Denied! Chỉ Admin hoặc Owner mới có thể sử dụng lệnh này.", ephemeral=True)
+            
+        # 3. Chạy logic setup bình thường nếu thỏa mãn điều kiện
         webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
         await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
         await interaction.followup.send("✅ Success!", ephemeral=True)
@@ -1069,37 +1087,17 @@ class RPGSystemCog(commands.Cog):
     # ĐÃ SỬA LỖI DOUBLE CHAT TRIỆT ĐỂ: Chỉ gửi tới các server KHÁC kênh hiện tại (message.channel.id)
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Bỏ qua tin nhắn của bot để tránh loop
-        if message.author.bot:
+        # Bỏ qua tin nhắn của bot hoặc tin nhắn ngoài server
+        if message.author.bot or not message.guild:
             return
             
-        # Gọi hàm xử lý cross-server chat
+        # KIỂM TRA: Chỉ cho phép gửi global chat nếu tin nhắn được chat ĐÚNG vào kênh đã setup
+        channel_config = await boss_channels_col.find_one({"guild_id": message.guild.id})
+        if not channel_config or channel_config.get("channel_id") != message.channel.id:
+            return
+            
+        # Nếu đã đúng kênh, gọi hàm xử lý cross-server chat
         await self.handle_cross_server_chat(message)
-
-    async def handle_cross_server_chat(self, message):
-        # Lấy toàn bộ các kênh nhận chat cross-server từ Database TRỪ kênh hiện tại
-        others = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
-        
-        if not others:
-            return
-
-        # Đã XÓA lệnh await message.delete() ở đây để giữ lại tin nhắn gốc ở server gửi.
-        # Sử dụng Webhook để gửi tới các kênh (Server) khác
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for c in others:
-                if "webhook_url" in c:
-                    webhook = discord.Webhook.from_url(c["webhook_url"], session=session)
-                    tasks.append(webhook.send(
-                        content=message.content, 
-                        username=f"[{message.guild.name[:10]}] {message.author.display_name}", 
-                        avatar_url=message.author.display_avatar.url or message.author.default_avatar.url,
-                        allowed_mentions=discord.AllowedMentions.none()
-                    ))
-            
-            # Gửi đồng loạt tới các server để không bị nghẽn
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
 
     async def broadcast_system_message(self, content: str):
         channels = await boss_channels_col.find({}).to_list(None)
