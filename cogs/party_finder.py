@@ -123,7 +123,7 @@ async def broadcast_to_all_servers(bot: commands.Bot, embed: discord.Embed, part
     return broadcasts
 
 async def get_formatted_gear_summary(stats: dict, role_entered: str) -> str:
-    DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk", "aoe", "dps aoe", "dpsaoe"]
+    DPS_GROUPS = ["dps", "ufm", "fm", "future", "ulforce", "future mode", "dps aa", "dps sk", "dpsaa", "dpssk", "aoe", "dps aoe", "dpsaoe", "any role", "any"]
     clean_role = role_entered.lower().replace("(", "").replace(")", "").strip()
     is_dps = clean_role in DPS_GROUPS
     
@@ -171,10 +171,10 @@ class PartyLobbyDMView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         party_data = await parties_col.find_one({"_id": ObjectId(self.party_id)})
         if not party_data:
-            return await interaction.followup.send("❌ Nhóm không còn tồn tại.", ephemeral=True)
+            return await interaction.followup.send("❌ The group no longer exists.", ephemeral=True)
             
         members = party_data.get("members", [])
-        embed = discord.Embed(title=f"📋 Hồ sơ trang bị - {party_data.get('dg_name')}", color=discord.Color.blue())
+        embed = discord.Embed(title=f"📋 Gears profiles - {party_data.get('dg_name')}", color=discord.Color.blue())
         
         for m in members:
             profile = await get_player_profile(m['user_id'])
@@ -188,9 +188,9 @@ class PartyLobbyDMView(discord.ui.View):
     async def edit_party_info(self, interaction: discord.Interaction, button: discord.ui.Button):
         party_data = await parties_col.find_one({"_id": ObjectId(self.party_id)})
         if not party_data:
-            return await interaction.response.send_message("❌ Nhóm không còn tồn tại.", ephemeral=True)
+            return await interaction.response.send_message("❌ The group no longer exists..", ephemeral=True)
         if interaction.user.id != party_data.get('leader_id'): 
-            return await interaction.response.send_message("❌ Chỉ có Trưởng nhóm mới có quyền chỉnh sửa!", ephemeral=True)
+            return await interaction.response.send_message("❌ Only the Team Leader has the authority to make edits!", ephemeral=True)
             
         await interaction.response.send_modal(EditPartyInfoModal(party_data, self.bot))
 
@@ -199,31 +199,31 @@ class PartyLobbyDMView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         party_data = await parties_col.find_one({"_id": ObjectId(self.party_id)})
         if not party_data:
-            return await interaction.followup.send("❌ Nhóm không còn tồn tại.", ephemeral=True)
+            return await interaction.followup.send("❌ The group no longer exists..", ephemeral=True)
         if interaction.user.id != party_data.get('leader_id'):
-            return await interaction.followup.send("❌ Chỉ có Trưởng nhóm mới có quyền Broadcast.", ephemeral=True)
+            return await interaction.followup.send("❌Only the Team Leader has Broadcast access..", ephemeral=True)
             
         embed = create_party_embed(party_data)
         broadcast_records = await broadcast_to_all_servers(self.bot, embed, self.party_id, {"dg_name": party_data.get('dg_name', '')}, interaction.guild)
         if broadcast_records: 
             await parties_col.update_one({"_id": ObjectId(self.party_id)}, {"$set": {"broadcasts": broadcast_records}})
-        await interaction.followup.send("📢 Đã phát tin tìm tổ đội (Broadcast) lại đến tất cả máy chủ thành công!", ephemeral=True)
+        await interaction.followup.send("📢The team recruitment announcement (broadcast) has been successfully broadcast to all servers!", ephemeral=True)
 
     @discord.ui.button(label="🚪 Leave / Disband", style=discord.ButtonStyle.danger, row=1)
     async def exit_party(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         party_data = await parties_col.find_one({"_id": ObjectId(self.party_id)})
         if not party_data:
-            return await interaction.followup.send("❌ Nhóm không tồn tại.", ephemeral=True)
+            return await interaction.followup.send("❌ The group does not exist..", ephemeral=True)
             
         is_leader = (party_data.get("leader_id") == interaction.user.id)
         if is_leader:
             await handle_cross_server_chat(self.bot, party_data, action="delete", msg_override=f"❌ Nhóm **{party_data.get('dg_name')}** đã bị giải tán bởi Trưởng nhóm.")
             await parties_col.delete_one({"_id": ObjectId(self.party_id)})
-            await interaction.followup.send("💥 Bạn đã giải tán nhóm thành công.", ephemeral=True)
+            await interaction.followup.send("💥 You have successfully disbanded the group.g.", ephemeral=True)
         else:
             await parties_col.update_one({"_id": ObjectId(self.party_id)}, {"$pull": {"members": {"user_id": interaction.user.id}}})
-            await interaction.followup.send("✅ Bạn đã rời khỏi nhóm thành công.", ephemeral=True)
+            await interaction.followup.send("✅ You have successfully left the group..", ephemeral=True)
             await handle_cross_server_chat(self.bot, party_data, interaction.user.id, action="remove")
             await update_party_lobby_dms(self.bot, self.party_id)
             await update_broadcast_messages(self.bot, self.party_id)
@@ -321,7 +321,7 @@ class RequestJoinView(discord.ui.View):
                 dm_channel = applicant.dm_channel or await applicant.create_dm()
                 embed = create_party_embed(updated_party)
                 view = PartyLobbyDMView(self.bot, self.party_id, user_id=self.applicant_id, leader_id=updated_party.get('leader_id'))
-                msg = await dm_channel.send(content=f"🎉 Leader **{updated_party.get('leader_ign')}** đã duyệt bạn vào nhóm!", embed=embed, view=view)
+                msg = await dm_channel.send(content=f"🎉 Leader **{updated_party.get('leader_ign')}** has approved you to join the group.!", embed=embed, view=view)
                 
                 # Lưu lại tin nhắn gốc trong DM của member để cập nhật real-time
                 await parties_col.update_one(
@@ -418,9 +418,9 @@ class LobbyPaginationView(discord.ui.View):
                 {"_id": party['_id'], "members.user_id": interaction.user.id},
                 {"$set": {"members.$.dm_message_id": msg.id}}
             )
-            await interaction.followup.send("✅ Đã gửi giao diện quản lý Party vào DM của bạn!", ephemeral=True)
+            await interaction.followup.send("✅ I've sent the Party management interface to your DMs.!", ephemeral=True)
         except discord.Forbidden:
-            await interaction.followup.send("❌ Không thể gửi DM cho bạn. Vui lòng kiểm tra lại cài đặt bảo mật riêng tư.", ephemeral=True)
+            await interaction.followup.send("❌Unable to send you a DM. Please check your privacy settings.", ephemeral=True)
 
     async def update_lobby(self, target, new_page: int):
         fresh_parties = await parties_col.find({}).to_list(length=100)
@@ -498,7 +498,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         profile = await get_player_profile(interaction.user.id)
         
         if not is_profile_complete(profile): 
-            return await interaction.followup.send("⚠️ Please setup your profile first.", ephemeral=True)
+            return await interaction.followup.send("⚠️ Please setup your profile /mygear first.", ephemeral=True)
             
         formatted_time = get_discord_timestamp(self.start_time.value.strip(), float(profile.get('tz_offset', 7.0)))
         leader_ign, role_entered = profile.get('ign'), self.role.value.strip()
@@ -670,13 +670,13 @@ class PartyFinderCog(commands.Cog):
             
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-    @app_commands.command(name="my_party", description="Gửi lại bảng giao diện quản lý Party vào DM của bạn (Tránh trôi chat)")
+    @app_commands.command(name="my_party", description="Send the Party management interface back to your DMs (to avoid the chat getting lost).")
     async def my_party(self, interaction: discord.Interaction):
         """Lệnh gọi lại UI trong DM phòng trường hợp trôi chat."""
         await interaction.response.defer(ephemeral=True)
         party = await parties_col.find_one({"members.user_id": interaction.user.id})
         if not party:
-            return await interaction.followup.send("❌ Bạn hiện không tham gia vào tổ đội nào.", ephemeral=True)
+            return await interaction.followup.send("❌You are not currently part of any team..", ephemeral=True)
             
         try:
             dm_channel = interaction.user.dm_channel or await interaction.user.create_dm()
@@ -689,9 +689,9 @@ class PartyFinderCog(commands.Cog):
                 {"_id": party['_id'], "members.user_id": interaction.user.id},
                 {"$set": {"members.$.dm_message_id": msg.id}}
             )
-            await interaction.followup.send("✅ Giao diện quản lý Party đã được gửi vào DM của bạn!", ephemeral=True)
+            await interaction.followup.send("✅The Party management interface has been sent to your DMs!", ephemeral=True)
         except discord.Forbidden:
-            await interaction.followup.send("❌ Không thể gửi DM. Vui lòng mở nhận tin nhắn từ thành viên cùng server.", ephemeral=True)
+            await interaction.followup.send("❌ Unable to send DMs. Please enable receiving messages from members on the same server.", ephemeral=True)
 
     @app_commands.command(name="setup_party_channel", description="Configure Party Board channel")
     async def setup_party_channel(self, interaction: discord.Interaction, channel: discord.TextChannel): 
