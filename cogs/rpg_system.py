@@ -1092,20 +1092,35 @@ class RPGSystemCog(commands.Cog):
         if message.author.bot or not message.guild:
             return
             
-        # Kiểm tra cấu hình kênh
+        # Kiểm tra kênh hiện tại có phải là kênh Boss không
         channel_config = await boss_channels_col.find_one({"guild_id": message.guild.id})
         if not channel_config or channel_config.get("channel_id") != message.channel.id:
             return
             
-        # ĐÂY LÀ CÁCH GỌI HÀM TỪ COG KHÁC:
-        # Bước 1: Lấy instance của Cog chứa hàm (thay "PartyFinderCog" bằng tên CLASS chính xác của bạn)
-        party_finder_cog = self.bot.get_cog("PartyFinderCog") 
+        # Lấy TẤT CẢ các kênh ngoại trừ kênh hiện tại (để tránh double chat)
+        other_channels = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
         
-        # Bước 2: Kiểm tra nếu Cog đó tồn tại thì mới gọi hàm
-        if party_finder_cog and hasattr(party_finder_cog, "handle_cross_server_chat"):
-            await party_finder_cog.handle_cross_server_chat(message)
-        else:
-            print("⚠️ Lỗi: Không tìm thấy PartyFinderCog hoặc hàm handle_cross_server_chat trong hệ thống!")
+        if not other_channels:
+            return
+
+        # Tạo nội dung tin nhắn bao gồm text và ảnh/tệp đính kèm (nếu có)
+        content = message.content
+        if message.attachments:
+            content += "\n" + "\n".join([att.url for att in message.attachments])
+            
+        # Gửi tin nhắn qua Webhook đến các server khác
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for c in other_channels:
+                if url := c.get("webhook_url"):
+                    webhook = discord.Webhook.from_url(url, session=session)
+                    tasks.append(webhook.send(
+                        content=content,
+                        username=message.author.display_name,
+                        avatar_url=message.author.display_avatar.url
+                    ))
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     async def broadcast_system_message(self, content: str):
         channels = await boss_channels_col.find({}).to_list(None)
