@@ -11,6 +11,7 @@ from bson import ObjectId
 from cogs.party_finder import handle_cross_server_chat
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
 import pymongo
+cross_messages_col = rpg_profiles_col.database["cross_chat_logs"]
 
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
@@ -1086,41 +1087,86 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send("✅ Success!", ephemeral=True)
 
     # ĐÃ SỬA LỖI DOUBLE CHAT TRIỆT ĐỂ: Chỉ gửi tới các server KHÁC kênh hiện tại (message.channel.id)
+    
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Bỏ qua tin nhắn của bot hoặc tin nhắn ngoài server
         if message.author.bot or not message.guild:
             return
             
-        # Kiểm tra kênh hiện tại có phải là kênh Boss không
         channel_config = await boss_channels_col.find_one({"guild_id": message.guild.id})
         if not channel_config or channel_config.get("channel_id") != message.channel.id:
             return
             
-        # Lấy TẤT CẢ các kênh ngoại trừ kênh hiện tại (để tránh double chat)
         other_channels = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
-        
         if not other_channels:
             return
 
-        # Tạo nội dung tin nhắn bao gồm text và ảnh/tệp đính kèm (nếu có)
         content = message.content
         if message.attachments:
             content += "\n" + "\n".join([att.url for att in message.attachments])
             
-        # Gửi tin nhắn qua Webhook đến các server khác
+        formatted_username = f"[{message.guild.name[:15]}] {message.author.display_name}"
+        if len(formatted_username) > 80:
+            formatted_username = formatted_username[:77] + "..."
+            
+        # Danh sách để lưu lại ID tin nhắn đồng bộ
+        sent_targets = []
+
         async with aiohttp.ClientSession() as session:
-            tasks = []
             for c in other_channels:
                 if url := c.get("webhook_url"):
-                    webhook = discord.Webhook.from_url(url, session=session)
-                    tasks.append(webhook.send(
-                        content=content,
-                        username=message.author.display_name,
-                        avatar_url=message.author.display_avatar.url
-                    ))
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                    try:
+                        webhook = discord.Webhook.from_url(url, session=session)
+                        # wait=True bắt buộc phải có để lấy về thông tin tin nhắn sau khi gửi thành công
+                        sent_msg = await webhook.send(
+                            content=content,
+                            username=formatted_username,
+                            avatar_url=message.author.display_avatar.url or message.author.default_avatar.url,
+                            wait=True 
+                        )
+                        # Lưu lại thông tin: Gửi bằng webhook nào, ID tin nhắn ở server đó là gì
+                        sent_targets.append({
+                            "webhook_url": url,
+                            "channel_id": c.get("channel_id"),
+                            "message_id": sent_msg.id
+                        })
+                    except Exception as e:
+                        print(f"⚠️ Lỗi gửi webhook đến kênh {c.get('channel_id')}: {e}")
+
+        # Nếu gửi thành công ít nhất 1 server, lưu mối liên kết này vào Database
+        if sent_targets:
+            await cross_messages_col.insert_one({
+                "source_msg_id": message.id,      # ID tin nhắn gốc của người dùng
+                "source_channel_id": message.channel.id,
+                "targets": sent_targets,           # Danh sách các bản sao ở server khác
+                "created_at": datetime.utcnow()   # Thời gian tạo (để dọn dẹp data sau này nếu cần)
+            })
+    @commands.Cog.listener()
+    async def on_message_edit(self, before, after):
+        if after.author.bot or not after.guild:
+            return
+
+        # Tìm xem tin nhắn vừa sửa có nằm trong lịch sử chat liên server không
+        log = await cross_messages_col.find_one({"source_msg_id": before.id})
+        if not log:
+            return
+
+        # Chuẩn bị nội dung mới sau khi sửa
+        new_content = after.content
+        if after.attachments:
+            new_content += "\n" + "\n".join([att.url for att in after.attachments])
+
+        # Đồng bộ sửa sang tất cả các server khác
+        async with aiohttp.ClientSession() as session:
+            for target in log.get("targets", []):
+                try:
+                    webhook = discord.Webhook.from_url(target["webhook_url"], session=session)
+                    # Thực hiện sửa tin nhắn bản sao qua ID đã lưu
+                    await webhook.edit_message(target["message_id"], content=new_content)
+                except discord.NotFound:
+                    print(f"⚠️ No star message found to edit in channel {target['channel_id']}")
+                except Exception as e:
+                    print(f"❌Error when editing cross-server messages: {e}")
 
     async def broadcast_system_message(self, content: str):
         channels = await boss_channels_col.find({}).to_list(None)
@@ -1132,6 +1178,30 @@ class RPGSystemCog(commands.Cog):
                     tasks.append(webhook.send(content=content, username="SYSTEM RAID"))
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+    @commands.Cog.listener()
+    async def on_message_delete(self, message):
+        if message.author.bot or not message.guild:
+            return
 
+        # Tìm xem tin nhắn vừa xóa có nằm trong lịch sử chat liên server không
+        log = await cross_messages_col.find_one({"source_msg_id": message.id})
+        if not log:
+            return
+
+        # Tiến hành gỡ bỏ tin nhắn ở tất cả các server khác
+        async with aiohttp.ClientSession() as session:
+            for target in log.get("targets", []):
+                try:
+                    webhook = discord.Webhook.from_url(target["webhook_url"], session=session)
+                    # Thực hiện xóa tin nhắn bản sao qua ID đã lưu
+                    await webhook.delete_message(target["message_id"])
+                except discord.NotFound:
+                    # Trường hợp tin nhắn ở server đó đã bị admin bên đó xóa trước rồi
+                    pass
+                except Exception as e:
+                    print(f"❌ Lỗi khi xóa tin nhắn liên server: {e}")
+
+        # Xóa bản ghi lịch sử trong DB để tránh làm nặng cơ sở dữ liệu
+        await cross_messages_col.delete_one({"_id": log["_id"]})
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
