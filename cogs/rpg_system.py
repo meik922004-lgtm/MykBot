@@ -11,7 +11,7 @@ from bson import ObjectId
 from cogs.party_finder import handle_cross_server_chat
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
 import pymongo
-from cogs.party_finder import handle_cross_server_chat
+
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
@@ -1092,13 +1092,20 @@ class RPGSystemCog(commands.Cog):
         if message.author.bot or not message.guild:
             return
             
-        # KIỂM TRA: Chỉ cho phép gửi global chat nếu tin nhắn được chat ĐÚNG vào kênh đã setup
+        # Kiểm tra cấu hình kênh
         channel_config = await boss_channels_col.find_one({"guild_id": message.guild.id})
         if not channel_config or channel_config.get("channel_id") != message.channel.id:
             return
             
-        # Nếu đã đúng kênh, gọi hàm xử lý cross-server chat
-        await self.handle_cross_server_chat(message)
+        # ĐÂY LÀ CÁCH GỌI HÀM TỪ COG KHÁC:
+        # Bước 1: Lấy instance của Cog chứa hàm (thay "PartyFinderCog" bằng tên CLASS chính xác của bạn)
+        party_finder_cog = self.bot.get_cog("PartyFinderCog") 
+        
+        # Bước 2: Kiểm tra nếu Cog đó tồn tại thì mới gọi hàm
+        if party_finder_cog and hasattr(party_finder_cog, "handle_cross_server_chat"):
+            await party_finder_cog.handle_cross_server_chat(message)
+        else:
+            print("⚠️ Lỗi: Không tìm thấy PartyFinderCog hoặc hàm handle_cross_server_chat trong hệ thống!")
 
     async def broadcast_system_message(self, content: str):
         channels = await boss_channels_col.find({}).to_list(None)
