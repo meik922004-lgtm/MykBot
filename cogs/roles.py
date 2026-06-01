@@ -6,7 +6,7 @@ import os
 
 # ==========================================
 # CẤU HÌNH ID OWNER TẠI ĐÂY
-OWNER_IDS = 1283689737567211581  # Thay thế bằng ID Discord của bạn
+OWNER_IDS = [1283689737567211581]  # Thay thế bằng ID Discord của bạn
 # ==========================================
 
 CONFIG_PATH = "roles_config.json"

@@ -11,6 +11,7 @@ from bson import ObjectId
 from cogs.party_finder import handle_cross_server_chat
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
 import pymongo
+from cogs.party_finder import handle_cross_server_chat
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
