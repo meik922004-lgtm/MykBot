@@ -218,7 +218,7 @@ class PartyLobbyDMView(discord.ui.View):
             
         is_leader = (party_data.get("leader_id") == interaction.user.id)
         if is_leader:
-            await handle_cross_server_chat(self.bot, party_data, action="delete", msg_override=f"❌ Nhóm **{party_data.get('dg_name')}** đã bị giải tán bởi Trưởng nhóm.")
+            await handle_cross_server_chat(self.bot, party_data, action="delete", msg_override=f"❌ The group **{party_data.get('dg_name')}** has been disbanded by the Group Leader.")
             await parties_col.delete_one({"_id": ObjectId(self.party_id)})
             await interaction.followup.send("💥 You have successfully disbanded the group.g.", ephemeral=True)
         else:
