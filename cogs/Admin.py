@@ -207,6 +207,8 @@ class Admin(commands.Cog):
             embed.color = discord.Color.red()
             embed.add_field(name="Lỗi", value="\n".join(errors), inline=False)
         await ctx.send(embed=embed)
+
+        
 async def setup(bot):
     await bot.add_cog(Admin(bot))
     await bot.add_cog(DigitalTour(bot))
