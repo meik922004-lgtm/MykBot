@@ -1073,18 +1073,23 @@ class RPGSystemCog(commands.Cog):
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
         
-        # 1. Kiểm tra xem người dùng có phải là Admin hoặc Owner không
-        is_admin = interaction.user.guild_permissions.administrator if interaction.guild else False
+        # 1. Khắc phục lỗi AttributeError bằng cách dùng interaction.permissions
+        is_admin = interaction.permissions.administrator if interaction.guild else False
         is_owner = interaction.user.id in OWNER_IDS
         
-        # 2. Nếu không phải Admin VÀ cũng không phải Owner -> Báo lỗi
+        # 2. Check quyền sử dụng lệnh
         if not (is_admin or is_owner): 
             return await interaction.followup.send("❌ Access Denied! Chỉ Admin hoặc Owner mới có thể sử dụng lệnh này.", ephemeral=True)
             
-        # 3. Chạy logic setup bình thường nếu thỏa mãn điều kiện
-        webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
-        await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
-        await interaction.followup.send("✅ Success!", ephemeral=True)
+        # 3. Bắt lỗi trong trường hợp Bot chưa được cấp quyền Webhook
+        try:
+            webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
+            await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
+            await interaction.followup.send("✅ Success! Kênh Boss đã được thiết lập.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Lỗi: Bot không có quyền `Manage Webhooks` trong kênh bạn vừa chọn. Vui lòng cấp quyền cho Bot và thử lại!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Đã xảy ra lỗi không xác định: {e}", ephemeral=True)    
 
     # ĐÃ SỬA LỖI DOUBLE CHAT TRIỆT ĐỂ: Chỉ gửi tới các server KHÁC kênh hiện tại (message.channel.id)
     
