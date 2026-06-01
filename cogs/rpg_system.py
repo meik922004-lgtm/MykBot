@@ -1058,70 +1058,123 @@ class RPGSystemCog(commands.Cog):
         if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
 
     async def toggle_auto_attack(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
+        
+        # Khởi tạo dict cache nếu chưa có (Khuyến nghị đưa dòng này vào def __init__ của Cog)
+        if not hasattr(self, 'auto_attack_cache'):
+            self.auto_attack_cache = {}
+
         if user_id in self.auto_attackers:
-            self.auto_attackers.remove(user_id)
-            if user_id in auto_attack_cache:
-                del auto_attack_cache[user_id]
-            await interaction.response.send_message("🔴 **Auto-Attack Disabled.**", ephemeral=True)
+            self.auto_attackers.discard(user_id)
+            self.auto_attack_cache.pop(user_id, None) # Xóa cache khi tắt
+            await interaction.followup.send("🛑 **Auto-Attack DEACTIVATED.**", ephemeral=True)
         else:
             self.auto_attackers.add(user_id)
-            party = await parties_col.find_one({"members.user_id": user_id})
-            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
-            if not boss: boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
-            if boss:
-                await self.process_auto_attack_interaction(interaction, boss.get("boss_id", str(boss["_id"])), 500) 
-            else:
-                await interaction.response.send_message("❌ **No active Boss found.**", ephemeral=True)
+            self.auto_attack_cache[user_id] = 0
+            await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** Hệ thống sẽ dồn sát thương và thông báo ngầm mỗi 10s.", ephemeral=True)
+            # Truyền nguyên object interaction vào task để tận dụng followup.send
+            self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction))
 
-    async def process_auto_attack_interaction(self, interaction: discord.Interaction, boss_id: str, base_dmg: int):
-        user_id = interaction.user.id
-        current_time = time.time()
+    async def auto_attack_loop(self, user_id: int, user_name: str, interaction: discord.Interaction):
+        # 10 giây tương đương khoảng 2 lượt đánh (so với nhịp 4.5s cũ)
+        HITS_PER_INTERVAL = 2
         
-        if user_id not in auto_attack_cache:
-            auto_attack_cache[user_id] = {
-                "boss_id": boss_id,
-                "accumulated_dmg": 0,
-                "last_notify": current_time
-            }
-            
-        auto_attack_cache[user_id]["accumulated_dmg"] += base_dmg
-        
-        if current_time - auto_attack_cache[user_id]["last_notify"] >= 30.0:
-            final_dmg = auto_attack_cache[user_id]["accumulated_dmg"]
-            
-            auto_attack_cache[user_id]["accumulated_dmg"] = 0
-            auto_attack_cache[user_id]["last_notify"] = current_time
-            
-            await world_boss_col.update_one(
-                {"boss_id": boss_id},
-                {"$inc": {"hp": -final_dmg, "current_hp": -final_dmg}, "$addToSet": {"participants": user_id}}
+        while user_id in self.auto_attackers:
+            await asyncio.sleep(10)
+            if user_id not in self.auto_attackers:
+                break
+
+            # 1. Kéo dữ liệu cơ sở
+            player = await rpg_profiles_col.find_one({"user_id": user_id})
+            party = await parties_col.find_one({"members.user_id": user_id})
+            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
+
+            if not boss or not player or player.get("current_hp", 0) <= 0:
+                self.auto_attackers.discard(user_id)
+                self.auto_attack_cache.pop(user_id, None)
+                try:
+                    await interaction.followup.send("❌ **Trận chiến kết thúc hoặc Digimon đã gục!** Dừng Auto-Attack.", ephemeral=True)
+                except discord.NotFound: pass
+                break
+
+            digimon = self.get_active_digimon(player)
+            stats = self.get_total_stats(player)
+            attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
+
+            # 2. CỘNG DỒN SÁT THƯƠNG VÀO CACHE (Bỏ qua DB)
+            batch_dmg = 0
+            for _ in range(HITS_PER_INTERVAL):
+                raw_dmg = stats["atk"] + random.randint(-5, 10)
+                if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
+                if "skill" in digimon and random.random() < digimon["skill"]["chance"]: raw_dmg *= digimon["skill"]["dmg_mult"]
+                batch_dmg += int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
+
+            self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
+            dmg_to_sync = self.auto_attack_cache[user_id]
+
+            # 3. TRUYỀN DỮ LIỆU DB (Chỉ 1 lần mỗi 10s)
+            result = await world_boss_col.find_one_and_update(
+                {"_id": boss["_id"]}, 
+                {"$inc": {"current_hp": -dmg_to_sync, "hp": -dmg_to_sync, f"damage_log.{str(user_id)}": dmg_to_sync}, 
+                 "$addToSet": {"participants": user_id}},
+                return_document=pymongo.ReturnDocument.AFTER
             )
             
-            await self.process_boss_damage(interaction, boss_id, final_dmg)
-            
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    f"🔄 [Auto-Combat] The system has been fully synchronized: {final_dmg:,} Damage dealt to the Boss in the last 30 seconds.", 
-                    ephemeral=True
-                )
-        else:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚔️ The auto-attack continues to accumulate damage..", ephemeral=True)
+            self.auto_attack_cache[user_id] = 0 # Trống cache sau khi push thành công
+            current_hp = result.get('current_hp', result.get('hp', 0))
+
+            # 4. GỬI THÔNG BÁO ẨN
+            try:
+                msg = f"🔄 **[Đồng bộ 10s]** Bạn vừa dồn **{dmg_to_sync:,} DMG**. (Boss HP: {max(0, current_hp):,})"
+                await interaction.followup.send(msg, ephemeral=True)
+            except discord.NotFound:
+                # Bỏ qua lỗi nếu đã lố 15 phút (Interaction Expired)
+                pass
+
+            # 5. Xử lý logic phản đòn và Loot (Đồng bộ với Manual Attack)
+            if current_hp > 0 and random.random() < 0.30:
+                boss_dmg = random.randint(250, 600)
+                if player.get("is_protecting"):
+                    boss_dmg = int(boss_dmg * 0.2)
+                    await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
+                
+                new_hp = max(0, player.get("current_hp", 0) - boss_dmg)
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
+                
+                if new_hp == 0:
+                    try:
+                        await interaction.followup.send(f"💀 **CẢNH BÁO:** Digimon của bạn đã bị phản đòn hạ gục!", ephemeral=True)
+                    except discord.NotFound: pass
+                    self.auto_attackers.discard(user_id)
+                    break
+
+            if current_hp <= 0:
+                await self.distribute_boss_loot(result)
+                await self.trigger_chain_boss_respawn(result.get("participants", []))
+                try:
+                    await interaction.followup.send("🎉 **BOSS DEFEATED!** Chuỗi Auto-Attack hoàn tất.", ephemeral=True)
+                except discord.NotFound: pass
+                self.auto_attackers.discard(user_id)
+                break
 
     async def handle_manual_attack(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True) 
         current_time = int(time.time())
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        
+
         if profile and current_time - profile.get("last_manual_atk", 0) < 4:
             return await interaction.followup.send("⏳ **Cooldown!** Slow down your strikes.", ephemeral=True)
-            
+
         await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"last_manual_atk": current_time}})
         msg, should_stop = await self.execute_combat_turn(interaction.user.id, interaction.user.display_name)
-        
-        if msg: await interaction.followup.send(msg, ephemeral=True)
-        if should_stop: self.auto_attackers.discard(interaction.user.id)
+
+        if msg: 
+            await interaction.followup.send(msg, ephemeral=True)
+        if should_stop: 
+            self.auto_attackers.discard(interaction.user.id)
+            if hasattr(self, 'auto_attack_cache'):
+                self.auto_attack_cache.pop(interaction.user.id, None)
 
     async def handle_protect(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
