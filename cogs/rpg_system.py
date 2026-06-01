@@ -14,7 +14,7 @@ import pymongo
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
-OWNER_IDS = [128368973756721158]
+OWNER_IDS = [1283689737567211581]
 # ========================================================================
 # UI INTERFACE CLASSES (VIEWS & MODALS)
 # ========================================================================
