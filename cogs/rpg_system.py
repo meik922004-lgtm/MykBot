@@ -16,7 +16,7 @@ cross_messages_col = rpg_profiles_col.database["cross_chat_logs"]
 
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 
-OWNER_IDS = [1283689737567211581]
+OWNER_IDS = 1283689737567211581
 # ========================================================================
 # UI INTERFACE CLASSES (VIEWS & MODALS)
 # ========================================================================
