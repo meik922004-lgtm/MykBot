@@ -473,7 +473,7 @@ class RPGSystemCog(commands.Cog):
         if not profile:
             profile = {
                 "user_id": user_id, "ign": interaction.user.display_name, 
-                "gold": 0, "digibit": 0.0, "orb": 0, "hatch_core": 15, "myk_coin": 0, "premium_ui": False,
+                "gold": 0, "digibit": 0.0, "hatch_core": 15, "myk_coin": 0, "premium_ui": False,
                 "current_hp": 0, "gear": {"weapon": "None", "armor": "None", "vice": "None"}, 
                 "inventory": [], "is_vip": False, 
                 "digimon_list": [], "active_digimon_id": None,
