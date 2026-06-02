@@ -289,7 +289,7 @@ class MarketShopView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         listings = await market_col.find({}).sort("created_at", -1).to_list(25)
         new_view = discord.ui.View(timeout=60)
-        new_view.add_item(MarketBuySelect(listings, self.cog))
+        new_view.add_item(MarketBuySelect(listings, self))
         await interaction.followup.send("🛒 **Select an item from the marketplace list below:**", view=new_view, ephemeral=True)
 
     @discord.ui.button(label="Sell Item (Select from Bag)", style=discord.ButtonStyle.danger, emoji="📦")
@@ -1821,7 +1821,7 @@ class MarketBuySelect(discord.ui.Select):
             return await interaction.response.send_message(
                 "❌ Currently, no items are available for sale.", ephemeral=True
             )
-        await self.cog.handle_market_buy(interaction, self.values[0])
+        await self.handle_market_buy(interaction, self.values[0])
 
 
 async def setup(bot):
