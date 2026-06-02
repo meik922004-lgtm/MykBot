@@ -2,7 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
-from Database import db,news_col
+from Database import db
+news_col = db["server_configs"]
 
 
 # ==========================================
