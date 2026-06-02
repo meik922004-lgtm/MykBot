@@ -165,14 +165,14 @@ class GearInventorySelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         selected_value = self.values[0]
         if selected_value == "empty":
-            return await interaction.response.send_message("❌ Kho đồ của bạn đang trống!", ephemeral=True)
+            return await interaction.response.send_message("❌ Your inventory is empty.!", ephemeral=True)
             
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         
         if not profile:
-            return await interaction.followup.send("❌ Không tìm thấy dữ liệu nhân vật.", ephemeral=True)
+            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
             
         inventory = profile.get("inventory", [])
         
@@ -189,7 +189,7 @@ class GearInventorySelect(discord.ui.Select):
                 break
                 
         if target_item is None:
-            return await interaction.followup.send("❌ Vật phẩm không còn tồn tại trong kho đồ của bạn!", ephemeral=True)
+            return await interaction.followup.send("❌ The item no longer exists in your inventory.!", ephemeral=True)
             
         item_name = target_item if isinstance(target_item, str) else target_item.get("name", "Unknown")
         
@@ -202,10 +202,10 @@ class GearInventorySelect(discord.ui.Select):
             active_digi = next((d for d in digimon_list if d["id"] == active_id), None)
             
             if not active_digi:
-                return await interaction.followup.send("❌ Bạn cần kích hoạt (Active) một Digimon đồng hành trước khi sử dụng Fruit!", ephemeral=True)
+                return await interaction.followup.send("❌ You need to activate a companion Digimon before using a Fruit!", ephemeral=True)
                 
-            # Reroll ngẫu nhiên kích thước từ 0.5 (50%) đến 2.5 (250%)
-            new_size = round(random.uniform(0.5, 2.5), 2)
+            # Reroll ngẫu nhiên kích thước từ 0.5 (50%) đến 1.5 (250%)
+            new_size = round(random.uniform(0.5, 1.25), 2)
             active_digi["size"] = new_size
             
             # Trừ vật phẩm khỏi túi đồ
@@ -215,7 +215,7 @@ class GearInventorySelect(discord.ui.Select):
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "digimon_list": digimon_list}}
             )
-            return await interaction.followup.send(f"🍎 Bạn đã dùng **{item_name}** lên **{active_digi['name']}**!\n📏 Kích thước mới cập nhật: **{new_size * 100:.1f}%**", ephemeral=True)
+            return await interaction.followup.send(f"🍎 You have used **{item_name}** on **{active_digi['name']}**!\n📏 New size updated: **{new_size * 100:.1f}%**", ephemeral=True)
             
         # --------------------------------------------------
         # TRƯỜNG HỢP 2: TRANG BỊ GEARS (Weapon, Armor, Vice)
@@ -240,10 +240,10 @@ class GearInventorySelect(discord.ui.Select):
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "equipped": equipped}}
             )
-            return await interaction.followup.send(f"✅ Đã trang bị thành công: **{item_name}** vào slot **[{gear_type.upper()}]**!", ephemeral=True)
+            return await interaction.followup.send(f"✅ Item **{item_name}** has been successfully fitted into the slot. **[{gear_type.upper()}]**!", ephemeral=True)
             
         # Nếu chọn vật phẩm thông thường khác
-        await interaction.followup.send(f"📦 Vật phẩm **{item_name}** không thể dùng hoặc trang bị trực tiếp tại đây.", ephemeral=True)
+        await interaction.followup.send(f"📦 Item **{item_name}** cannot be used or equipped directly here.", ephemeral=True)
 class ProfileView(discord.ui.View):
     def __init__(self, profile: dict, cog_instance):
         super().__init__(timeout=300)
@@ -261,7 +261,7 @@ class ProfileView(discord.ui.View):
     async def heal_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_heal(interaction)
 
-    @discord.ui.button(label="Evolve (50,000 Bits)", style=discord.ButtonStyle.primary, custom_id="btn_evolve", emoji="🧬")
+    @discord.ui.button(label="Evolve (5,000 Bits)", style=discord.ButtonStyle.primary, custom_id="btn_evolve", emoji="🧬")
     async def evolve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_evolve(interaction)
 
@@ -646,11 +646,7 @@ class RPGSystemCog(commands.Cog):
     @live_boss_update_loop.before_loop
     async def before_live_boss_update(self): await self.bot.wait_until_ready()  
 
-class WorldBossCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.auto_attackers = set()
-        self.auto_attack_cache = {}
+
 
     @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
     async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
@@ -1330,8 +1326,8 @@ class WorldBossCog(commands.Cog):
             return await interaction.followup.send("❌ Digimon not found or cannot sell your currently active partner!", ephemeral=True)
         await interaction.followup.send("♻️ Successfully sold extra Digimon for **+2.0 Digibits**!", ephemeral=True)
 
-    @app_commands.command(name="train_digimon", description="Train Digimon (Costs 5000 Digibits)")
-    @app_commands.choices(stat=[app_commands.Choice(name="ATK (+20 ATK / 5k Bits)", value="atk"), app_commands.Choice(name="HP (+100 HP / 5k Bits)", value="hp")])
+    @app_commands.command(name="train_digimon", description="Train Digimon (Costs 1000 Digibits)")
+    @app_commands.choices(stat=[app_commands.Choice(name="ATK (+20 ATK / 1k Bits)", value="atk"), app_commands.Choice(name="HP (+100 HP / 1k Bits)", value="hp")])
     async def train_digimon(self, interaction: discord.Interaction, stat: str):
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
@@ -1354,11 +1350,11 @@ class WorldBossCog(commands.Cog):
         # Kiểm tra trừ tiền nguyên tử ngay trên DB kết hợp điều kiện $gte
         new_list = self.update_active_digimon(profile, updates)
         res = await rpg_profiles_col.update_one(
-            {"user_id": interaction.user.id, "digibit": {"$gte": 5000}}, 
-            {"$set": {"digimon_list": new_list}, "$inc": {"digibit": -5000}}
+            {"user_id": interaction.user.id, "digibit": {"$gte": 1000}}, 
+            {"$set": {"digimon_list": new_list}, "$inc": {"digibit": -1000}}
         )
         if res.modified_count == 0:
-            return await interaction.followup.send("❌ Not enough Digibits (Requires 5,000).", ephemeral=True)
+            return await interaction.followup.send("❌ Not enough Digibits (Requires 1,000).", ephemeral=True)
             
         await interaction.followup.send(f"🏋️ **Training successful!** {stat.upper()} increased for {active_digi['name']}.", ephemeral=True)
 
@@ -1382,21 +1378,21 @@ class WorldBossCog(commands.Cog):
         # Thiết lập bộ lọc thời gian nguyên tử trên DB, chặn đứng hoàn toàn việc spam click bằng tool bypass Cooldown thời gian thực
         res = await rpg_profiles_col.update_one(
             {"user_id": user_id, "last_manual_mine": {"$lte": current_time - 300}},
-            {"$inc": {"digibit": 0.40}, "$set": {"last_manual_mine": current_time}}
+            {"$inc": {"digibit": 2}, "$set": {"last_manual_mine": current_time}}
         )
         if res.modified_count == 0:
             profile = await rpg_profiles_col.find_one({"user_id": user_id})
             remaining = 300 - (current_time - profile.get("last_manual_mine", 0))
             return await interaction.followup.send(f"⏳ **Tool is resting!** Try again in {max(0, remaining)}s.", ephemeral=True)
             
-        await interaction.followup.send("⛏️ You mined **+0.40 Digibits** manually!", ephemeral=True)
+        await interaction.followup.send("⛏️ You mined **+2Digibits** manually!", ephemeral=True)
 
     @app_commands.command(name="sell_gear", description="Secure your inventory of duplicate regular equipment to exchange for Digibits.")
     async def sell_gear(self, interaction: discord.Interaction, item_name: str, quantity: int = 1):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        if not profile: return await interaction.followup.send("❌ Bạn chưa khởi tạo hồ sơ nhân vật.", ephemeral=True)
+        if not profile: return await interaction.followup.send("❌ You haven't created a character profile yet.", ephemeral=True)
             
         inventory = profile.get("inventory", [])
         equipped = profile.get("gear", {"weapon": "None", "armor": "None", "vice": "None"})
@@ -1404,11 +1400,11 @@ class WorldBossCog(commands.Cog):
         
         equipped_items = [self.clean_item_name(equipped.get(k)) for k in ["weapon", "armor", "vice"]]
         if cleaned_search in equipped_items:
-            return await interaction.followup.send(f"❌ **Hành động bị chặn an toàn!** Món đồ `{item_name}` hiện đang được bạn trang bị trực tiếp trên người.", ephemeral=True)
+            return await interaction.followup.send(f"❌ **Action blocked safely!** The item `{item_name}` is currently equipped directly by you..", ephemeral=True)
             
         normal_matches = [item for item in inventory if isinstance(item, str) and self.clean_item_name(item) == cleaned_search]
         if not normal_matches:
-            return await interaction.followup.send(f"❌ Không tìm thấy trang bị thường `{item_name}` trong túi đồ.", ephemeral=True)
+            return await interaction.followup.send(f"❌ No regular equipment `{item_name}` was found in the inventory.", ephemeral=True)
             
         available_count = len(normal_matches)
         to_sell_count = available_count if quantity <= 0 else min(quantity, available_count)
@@ -1464,8 +1460,8 @@ class WorldBossCog(commands.Cog):
             items_to_push = [] # Mảng trung gian gom tất cả các loại vật phẩm farm được
             
             if profile.get("is_auto_mining"):
-                updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 1
-                log_msgs.append("⛏️ Mine: + 1 Bits")
+                updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 2
+                log_msgs.append("⛏️ Mine: + 2 Bits")
                 
             dungeon = profile.get("auto_dungeon")
             if dungeon:
@@ -1611,7 +1607,7 @@ class WorldBossCog(commands.Cog):
                 "❌ Max Level (Mega) reached.", ephemeral=True
             )
 
-        TRAIN_COST = 50000
+        TRAIN_COST = 5000
         if profile.get("digibit", 0) < TRAIN_COST:
             return await interaction.followup.send(
                 f"❌ You need **{TRAIN_COST:,} Digibits** to evolve.",
