@@ -498,6 +498,7 @@ class RPGSystemCog(commands.Cog):
         self.farm_system_loop.start()
         self.live_boss_update_loop.start()
         self.bot.loop.create_task(self.initialize_market_mega_products())
+        self.auto_attack_cache = {}
     def cog_unload(self):
         self.auto_spawn_boss.cancel()
         self.farm_system_loop.cancel()
