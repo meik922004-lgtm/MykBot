@@ -11,6 +11,7 @@ from bson import ObjectId
 from cogs.party_finder import handle_cross_server_chat
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
 import pymongo
+from pymongo import UpdateOne
 
 cross_messages_col = rpg_profiles_col.database["cross_chat_logs"]
 market_col = rpg_profiles_col.database["rpg_marketplace"]
@@ -411,7 +412,7 @@ class RPGSystemCog(commands.Cog):
         self.auto_spawn_boss.start()
         self.farm_system_loop.start()
         self.live_boss_update_loop.start()
-
+        self.bot.loop.create_task(self.initialize_market_mega_products())
     def cog_unload(self):
         self.auto_spawn_boss.cancel()
         self.farm_system_loop.cancel()
@@ -742,15 +743,15 @@ class RPGSystemCog(commands.Cog):
     @tasks.loop(minutes=2)
     async def farm_system_loop(self):
         profiles = await rpg_profiles_col.find({"$or": [{"is_auto_mining": True}, {"auto_dungeon": {"$ne": None}}]}).to_list(None)
-        
+        bulk_operations = [] # Chứa các lệnh update
         for profile in profiles:
             user_id = profile["user_id"]
             log_msgs = []
             updates = {"$inc": {}, "$push": {}}
             
             if profile.get("is_auto_mining"):
-                updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 0.02
-                log_msgs.append("⛏️ Mine: +0.02 Bits")
+                updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 0.2
+                log_msgs.append("⛏️ Mine: +0.2 Bits")
                 
             dungeon = profile.get("auto_dungeon")
             if dungeon:
@@ -785,8 +786,14 @@ class RPGSystemCog(commands.Cog):
                     
                 if not updates["$inc"]: del updates["$inc"]
                 if not updates["$push"]: del updates["$push"]
-                if updates: await rpg_profiles_col.update_one({"user_id": user_id}, updates)
+                
+                if updates: 
+                    # Thay vì gọi await rpg_profiles_col.update_one ngay lập tức, ta đưa vào danh sách
+                    bulk_operations.append(UpdateOne({"user_id": user_id}, updates))
 
+    # Thực thi tất cả trong 1 lần gọi DB
+        if bulk_operations:
+            await rpg_profiles_col.bulk_write(bulk_operations, ordered=False)
     @farm_system_loop.before_loop
     async def before_farm_system_loop(self):
         await self.bot.wait_until_ready()
@@ -975,7 +982,7 @@ class RPGSystemCog(commands.Cog):
         if active_messages: await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
         if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
 
-    @tasks.loop(seconds=5)
+    @tasks.loop(seconds=20) # Tăng lên 20 giây
     async def live_boss_update_loop(self):
         bosses = await world_boss_col.find({"is_active": True}).to_list(None)
         for boss in bosses:
@@ -985,9 +992,13 @@ class RPGSystemCog(commands.Cog):
 
             for msg_info in active_messages:
                 try:
-                    channel = self.bot.get_channel(msg_info["channel_id"]) or await self.bot.fetch_channel(msg_info["channel_id"])
+                    channel = self.bot.get_channel(msg_info["channel_id"])
+                    if not channel:
+                        continue # Bỏ qua nếu không lấy được channel từ cache để tránh gọi API
+                        
                     if msg_info.get("is_interaction"):
-                        msg = await channel.fetch_message(msg_info["message_id"])
+                        # Dùng get_partial_message thay vì fetch_message để không tốn 1 lần gọi API Get
+                        msg = channel.get_partial_message(msg_info["message_id"])
                         await msg.edit(embed=embed, view=CombatView(self))
                         updated_messages.append(msg_info)
                     else:
@@ -995,8 +1006,11 @@ class RPGSystemCog(commands.Cog):
                         if webhook:
                             await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
                             updated_messages.append(msg_info)
-                except discord.NotFound: pass 
-                except Exception: updated_messages.append(msg_info) 
+                except discord.NotFound:
+                    pass 
+                except discord.HTTPException: 
+                    # Lỗi Rate Limit thường rơi vào đây, vẫn giữ lại tin nhắn để lần sau update
+                    updated_messages.append(msg_info) 
 
             if len(active_messages) != len(updated_messages):
                 await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
@@ -1125,12 +1139,12 @@ class RPGSystemCog(commands.Cog):
             current_hp = result.get('current_hp', result.get('hp', 0))
 
             # 4. GỬI THÔNG BÁO ẨN
-            try:
-                msg = f"🔄 **[Đồng bộ 10s]** Bạn vừa dồn **{dmg_to_sync:,} DMG**. (Boss HP: {max(0, current_hp):,})"
-                await interaction.followup.send(msg, ephemeral=True)
-            except discord.NotFound:
+            #try:
+              #  msg = f"🔄 **[Đồng bộ 10s]** Bạn vừa dồn **{dmg_to_sync:,} DMG**. (Boss HP: {max(0, current_hp):,})"
+              #  await interaction.followup.send(msg, ephemeral=True)
+            #except discord.NotFound:
                 # Bỏ qua lỗi nếu đã lố 15 phút (Interaction Expired)
-                pass
+             #   pass
 
             # 5. Xử lý logic phản đòn và Loot (Đồng bộ với Manual Attack)
             if current_hp > 0 and random.random() < 0.30:
