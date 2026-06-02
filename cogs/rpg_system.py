@@ -105,21 +105,30 @@ class GearInventorySelect(discord.ui.Select):
         options = []
         for gear in gear_list[:25]:
             stats = []
-            if "atk" in gear: stats.append(f"ATK +{gear['atk']}")
-            if "def" in gear: stats.append(f"DEF +{gear['def']}")
-            if "hp" in gear: stats.append(f"HP +{gear['hp']}")
-            stat_desc = " | ".join(stats) if stats else "No Stats"
             
-            options.append(discord.SelectOption(
-                label=f"{gear.get('name', 'Unknown')} ({gear.get('rarity', 'Common')})",
-                description=f"Loại: {gear.get('type', 'N/A').upper()} | {stat_desc}",
-                value=gear.get("id", str(uuid.uuid4()))
-            ))
+            if isinstance(gear, str):
+                cleaned_name = cog_instance.clean_item_name(gear)
+                gear_data = cog_instance.ITEMS.get(cleaned_name, {})
+                if "atk" in gear_data: stats.append(f"ATK +{gear_data['atk']}")
+                if "def" in gear_data: stats.append(f"DEF +{gear_data['def']}")
+                if "hp" in gear_data: stats.append(f"HP +{gear_data['hp']}")
+                stat_desc = " | ".join(stats) if stats else "No Stats"
+                options.append(discord.SelectOption(
+                    label=f"{cleaned_name} (Normal)", description=f"Loại: {gear_data.get('type', 'item').upper()} | {stat_desc}", value=cleaned_name
+                ))
+                
+            elif isinstance(gear, dict):
+                if "atk" in gear: stats.append(f"ATK +{gear['atk']}")
+                if "def" in gear: stats.append(f"DEF +{gear['def']}")
+                if "hp" in gear: stats.append(f"HP +{gear['hp']}")
+                stat_desc = " | ".join(stats) if stats else "No Stats"
+                options.append(discord.SelectOption(
+                    label=f"{gear.get('name', 'Unknown')} ({gear.get('rarity', 'Common')})", description=f"Loại: {gear.get('type', 'N/A').upper()} | {stat_desc}", value=gear.get("id", str(uuid.uuid4()))
+                ))
+
         if not options:
             options = [discord.SelectOption(label="Kho đồ trống", value="empty")]
         super().__init__(placeholder="Xem danh sách trang bị...", options=options)
-
-
 class ProfileView(discord.ui.View):
     def __init__(self, profile: dict, cog_instance):
         super().__init__(timeout=300)
@@ -283,7 +292,7 @@ class FarmDigiMinerSelect(discord.ui.Select):
         if not profile:
             return await interaction.response.send_message("Character data not found.", ephemeral=True)
             
-        selected_digis = [d for d in profile.get("bag", []) if d["id"] in self.values]
+        selected_digis = [d for d in profile.get("digimon_list", []) if d["id"] in self.values]
         
         total_efficiency = 0
         for d in selected_digis:
@@ -304,10 +313,15 @@ class FarmDigiMinerSelect(discord.ui.Select):
 
 
 class FarmView(discord.ui.View):
-    def __init__(self, cog_instance):
+    def __init__(self, cog_instance, profile: dict):
         super().__init__(timeout=300)
         self.cog = cog_instance
         self.add_item(FarmDungeonSelect(cog_instance))
+
+        # Thêm chức năng gán Digimon đi farm vào giao diện
+        digimon_list = profile.get("digimon_list", [])
+        if digimon_list:
+            self.add_item(FarmDigiMinerSelect(digimon_list))
 
     @discord.ui.button(label="Manual Mine (5m CD)", style=discord.ButtonStyle.success, emoji="⛏️")
     async def manual_mine(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -698,7 +712,7 @@ class RPGSystemCog(commands.Cog):
         embed.add_field(name="⛏️ Auto-Mine Status", value="🟢 **ON**" if is_auto_mine else "🔴 **OFF**", inline=True)
         embed.add_field(name="🏰 Auto-Dungeon", value=f"🟢 **{self.DUNGEONS.get(auto_dungeon, {}).get('name', 'Unknown')}**" if auto_dungeon else "🔴 **OFF**", inline=False)
         
-        await interaction.followup.send(embed=embed, view=FarmView(self), ephemeral=True)
+        await interaction.followup.send(embed=embed, view=FarmView(self, profile), ephemeral=True)
 
     async def handle_manual_mine(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -801,7 +815,8 @@ class RPGSystemCog(commands.Cog):
     # ========================================================================
     # INVENTORY USE & EVOLUTION 
     # ========================================================================
-    
+    @app_commands.command(name="use", description="Equip gear or consume an item from inventory")
+        # Giữ nguyên phần code bên dưới của bạn
     async def handle_inventory_use(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
@@ -975,45 +990,43 @@ class RPGSystemCog(commands.Cog):
                     async with aiohttp.ClientSession() as s:
                         webhook = discord.Webhook.from_url(url, session=s)
                         msg = await webhook.send(content="🚨 **WORLD BOSS HAS SPAWNED! PREPARE FOR BATTLE!**", embed=embed, view=CombatView(self), username="SYSTEM RAID", wait=True)
-                        active_messages.append({"channel_id": c["channel_id"], "message_id": msg.id})
+                        active_messages.append({"channel_id": c["channel_id"], "message_id": msg.id, "webhook_url": url})
                 except Exception as e:
                     print(f"Announcement failed: {e}")
                     
         if active_messages: await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
         if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
 
-    @tasks.loop(seconds=20) # Tăng lên 20 giây
+    @tasks.loop(seconds=20)
     async def live_boss_update_loop(self):
         bosses = await world_boss_col.find({"is_active": True}).to_list(None)
-        for boss in bosses:
-            embed = self.generate_boss_embed(boss)
-            active_messages = boss.get("active_messages", [])
-            updated_messages = []
+        if not bosses: return
 
-            for msg_info in active_messages:
-                try:
-                    channel = self.bot.get_channel(msg_info["channel_id"])
-                    if not channel:
-                        continue # Bỏ qua nếu không lấy được channel từ cache để tránh gọi API
-                        
-                    if msg_info.get("is_interaction"):
-                        # Dùng get_partial_message thay vì fetch_message để không tốn 1 lần gọi API Get
-                        msg = channel.get_partial_message(msg_info["message_id"])
-                        await msg.edit(embed=embed, view=CombatView(self))
-                        updated_messages.append(msg_info)
-                    else:
-                        webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None)
-                        if webhook:
-                            await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
-                            updated_messages.append(msg_info)
-                except discord.NotFound:
-                    pass 
-                except discord.HTTPException: 
-                    # Lỗi Rate Limit thường rơi vào đây, vẫn giữ lại tin nhắn để lần sau update
-                    updated_messages.append(msg_info) 
+        async with aiohttp.ClientSession() as session: # Dùng chung 1 session cho nhanh
+            for boss in bosses:
+                embed = self.generate_boss_embed(boss)
+                active_messages = boss.get("active_messages", [])
+                updated_messages = []
 
-            if len(active_messages) != len(updated_messages):
-                await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
+                for msg_info in active_messages:
+                    try:
+                        if msg_info.get("is_interaction"):
+                            channel = self.bot.get_channel(msg_info["channel_id"])
+                            if channel:
+                                msg = channel.get_partial_message(msg_info["message_id"])
+                                await msg.edit(embed=embed, view=CombatView(self))
+                                updated_messages.append(msg_info)
+                        else:
+                            webhook_url = msg_info.get("webhook_url")
+                            if webhook_url:
+                                webhook = discord.Webhook.from_url(webhook_url, session=session)
+                                await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
+                                updated_messages.append(msg_info)
+                    except discord.NotFound: pass 
+                    except discord.HTTPException: updated_messages.append(msg_info) 
+
+                if len(active_messages) != len(updated_messages):
+                    await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
 
     @live_boss_update_loop.before_loop
     async def before_live_boss_update(self): await self.bot.wait_until_ready()  
