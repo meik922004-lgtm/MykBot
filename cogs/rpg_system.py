@@ -982,9 +982,7 @@ class RPGSystemCog(commands.Cog):
         
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
-        
-        cross_server_announcement = "🚨 **[SYSTEM RAID]** Raid boss spawned, please use `/combat` to join!"
-        await self.broadcast_system_message(content=cross_server_announcement)   
+       
         await self.broadcast_initial_boss(new_boss)    
 
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
