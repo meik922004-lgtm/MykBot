@@ -100,6 +100,8 @@ class BagView(discord.ui.View):
         self.add_item(DigiSellSelect(digimon_list, current_active_id, cog_instance))
 
 
+
+
 class GearInventorySelect(discord.ui.Select):
     def __init__(self, gear_list: list, cog_instance):
         options = []
@@ -480,6 +482,490 @@ class RPGSystemCog(commands.Cog):
         
         item_display = identifier if not is_dict_gear else f"{target_item.get('name')} ({rarity})"
         await interaction.followup.send(f"🏪 **Successfully listed item {item_display} for {price:.2f} Orb!** (Listing ID: `{listing_id}`)", ephemeral=True)
+        def generate_boss_embed(self, boss_data: dict) -> discord.Embed:
+            max_hp = boss_data.get("max_hp", 1)
+            current_hp = max(0, boss_data.get("current_hp", boss_data.get("hp", 0)))
+            hp_percent = current_hp / max_hp
+            hp_bar = "🟥" * int(hp_percent * 10) + "⬛" * (10 - int(hp_percent * 10))
+
+            embed = discord.Embed(
+                title=f"🚨 BOSS APPEARED: {boss_data['name']} 🚨", 
+                description=f"**Attribute:** {boss_data.get('attr', 'Unknown')}\n\n**HP:** {current_hp:,} / {max_hp:,}\n{hp_bar} ({hp_percent * 100:.1f}%)",
+                color=discord.Color.dark_red()
+            )
+            if boss_data.get("img"): embed.set_thumbnail(url=boss_data["img"])
+
+            damage_log = boss_data.get("damage_log", {})
+            if damage_log:
+                sorted_log = sorted(damage_log.items(), key=lambda x: x[1], reverse=True)[:5] 
+                lb_text = ""
+                medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+                for idx, (uid_str, dmg) in enumerate(sorted_log):
+                    lb_text += f"{medals[idx]} <@{uid_str}>: **{dmg:,}** DMG\n"
+                embed.add_field(name="🏆 DAMAGE LEADERBOARD", value=lb_text, inline=False)
+            else:
+                embed.add_field(name="🏆 DAMAGE LEADERBOARD", value="No attackers yet...", inline=False)
+
+            embed.set_footer(text="Use /combat or buttons below to fight!")
+            return embed
+
+    async def broadcast_initial_boss(self, boss_data: dict):
+        embed = self.generate_boss_embed(boss_data)
+        channels = await boss_channels_col.find({}).to_list(None)
+        active_messages = []
+        
+        for c in channels:
+            if url := c.get("webhook_url"):
+                try:
+                    async with aiohttp.ClientSession() as s:
+                        webhook = discord.Webhook.from_url(url, session=s)
+                        msg = await webhook.send(content="🚨 **WORLD BOSS HAS SPAWNED! PREPARE FOR BATTLE!**", embed=embed, view=CombatView(self), username="SYSTEM RAID", wait=True)
+                        active_messages.append({"channel_id": c["channel_id"], "message_id": msg.id, "webhook_url": url})
+                except Exception as e:
+                    print(f"Announcement failed: {e}")
+                    
+        if active_messages: await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
+        if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
+
+    @tasks.loop(seconds=20)
+    async def live_boss_update_loop(self):
+        bosses = await world_boss_col.find({"is_active": True}).to_list(None)
+        if not bosses: return
+
+        async with aiohttp.ClientSession() as session: # Dùng chung 1 session cho nhanh
+            for boss in bosses:
+                embed = self.generate_boss_embed(boss)
+                active_messages = boss.get("active_messages", [])
+                updated_messages = []
+
+                for msg_info in active_messages:
+                    try:
+                        if msg_info.get("is_interaction"):
+                            channel = self.bot.get_channel(msg_info["channel_id"])
+                            if channel:
+                                msg = channel.get_partial_message(msg_info["message_id"])
+                                await msg.edit(embed=embed, view=CombatView(self))
+                                updated_messages.append(msg_info)
+                        else:
+                            webhook_url = msg_info.get("webhook_url")
+                            if webhook_url:
+                                webhook = discord.Webhook.from_url(webhook_url, session=session)
+                                await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
+                                updated_messages.append(msg_info)
+                    except discord.NotFound: pass 
+                    except discord.HTTPException: updated_messages.append(msg_info) 
+
+                if len(active_messages) != len(updated_messages):
+                    await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
+
+    @live_boss_update_loop.before_loop
+    async def before_live_boss_update(self): await self.bot.wait_until_ready()  
+
+    @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
+    async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
+        if not interaction.user.guild_permissions.administrator: 
+            return await interaction.response.send_message("❌ Admin privileges required.", ephemeral=True)
+        await world_boss_col.update_many({"is_active": True, "party_id": {"$exists": False}}, {"$set": {"is_active": False}})
+        
+        new_boss = {"boss_id": str(uuid.uuid4()), "name": name, "max_hp": hp, "current_hp": hp, "hp": hp, "attr": "Unknown", "img": "", "is_active": True, "damage_log": {}, "active_messages": [], "participants": []}
+        result = await world_boss_col.insert_one(new_boss)
+        new_boss["_id"] = result.inserted_id
+        
+        await interaction.response.send_message(f"⚔️ Spawned Boss **{name}**!", ephemeral=True)
+        await self.broadcast_initial_boss(new_boss)
+
+    @tasks.loop(minutes=1)
+    async def auto_spawn_boss(self):
+        config = await world_boss_col.find_one({"type": "spawn_config"})
+        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
+        if await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}}): return
+        
+        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
+        boss_roster = [
+            {"name": "Devimon", "hp": 25_000_000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
+            {"name": "WarGreymon", "hp": 100_000_000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
+            {"name": "Apocalymon", "hp": 250_000_000, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"}
+        ]
+        chosen = random.choice(boss_roster)
+        new_boss = {"boss_id": str(uuid.uuid4()), "name": chosen["name"], "max_hp": chosen["hp"], "current_hp": chosen["hp"], "hp": chosen["hp"], "attr": chosen["attr"], "img": chosen["img"], "is_active": True, "damage_log": {}, "active_messages": [], "participants": []}
+        
+        result = await world_boss_col.insert_one(new_boss)
+        new_boss["_id"] = result.inserted_id
+        await self.broadcast_initial_boss(new_boss)
+
+    @auto_spawn_boss.before_loop
+    async def before_auto_spawn(self): await self.bot.wait_until_ready()
+
+    # ========================================================================
+    # COMBAT LOGIC COMMAND SYSTEM
+    # ========================================================================
+    
+    @app_commands.command(name="combat", description="Display Boss Combat Interface")
+    async def combat_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        party = await parties_col.find_one({"members.user_id": interaction.user.id})
+        boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
+            
+        if not boss: boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
+        if not boss: return await interaction.followup.send("❌ There are no active Bosses right now!")
+            
+        embed = self.generate_boss_embed(boss)
+        msg = await interaction.followup.send(embed=embed, view=CombatView(self), wait=True)
+        await world_boss_col.update_one({"_id": boss["_id"]}, {"$push": {"active_messages": {"channel_id": interaction.channel.id, "message_id": msg.id, "is_interaction": True}}})
+        if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
+
+    async def toggle_auto_attack(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        
+        # Khởi tạo dict cache nếu chưa có (Khuyến nghị đưa dòng này vào def __init__ của Cog)
+        if not hasattr(self, 'auto_attack_cache'):
+            self.auto_attack_cache = {}
+
+        if user_id in self.auto_attackers:
+            self.auto_attackers.discard(user_id)
+            self.auto_attack_cache.pop(user_id, None) # Xóa cache khi tắt
+            await interaction.followup.send("🛑 **Auto-Attack DEACTIVATED.**", ephemeral=True)
+        else:
+            self.auto_attackers.add(user_id)
+            self.auto_attack_cache[user_id] = 0
+            await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** The system will deal damage and provide in every 20s seconds.", ephemeral=True)
+            # Truyền nguyên object interaction vào task để tận dụng followup.send
+            self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction))
+
+    async def auto_attack_loop(self, user_id: int, user_name: str, interaction: discord.Interaction):
+        # 10 giây tương đương khoảng 2 lượt đánh (so với nhịp 4.5s cũ)
+        HITS_PER_INTERVAL = 2
+        
+        while user_id in self.auto_attackers:
+            await asyncio.sleep(10)
+            if user_id not in self.auto_attackers:
+                break
+
+            # 1. Kéo dữ liệu cơ sở
+            player = await rpg_profiles_col.find_one({"user_id": user_id})
+            party = await parties_col.find_one({"members.user_id": user_id})
+            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
+
+            if not boss or not player or player.get("current_hp", 0) <= 0:
+                self.auto_attackers.discard(user_id)
+                self.auto_attack_cache.pop(user_id, None)
+                try:
+                    await interaction.followup.send("❌ **The battle is over or the Digimon are defeated!** Stop Auto-Attack.", ephemeral=True)
+                except discord.NotFound: pass
+                break
+
+            digimon = self.get_active_digimon(player)
+            stats = self.get_total_stats(player)
+            attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
+
+            # 2. CỘNG DỒN SÁT THƯƠNG VÀO CACHE (Bỏ qua DB)
+            batch_dmg = 0
+            for _ in range(HITS_PER_INTERVAL):
+                raw_dmg = stats["atk"] + random.randint(-5, 10)
+                if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
+                if "skill" in digimon and random.random() < digimon["skill"]["chance"]: raw_dmg *= digimon["skill"]["dmg_mult"]
+                batch_dmg += int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
+
+            self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
+            dmg_to_sync = self.auto_attack_cache[user_id]
+
+            # 3. TRUYỀN DỮ LIỆU DB (Chỉ 1 lần mỗi 10s)
+            result = await world_boss_col.find_one_and_update(
+                {"_id": boss["_id"]}, 
+                {"$inc": {"current_hp": -dmg_to_sync, "hp": -dmg_to_sync, f"damage_log.{str(user_id)}": dmg_to_sync}, 
+                 "$addToSet": {"participants": user_id}},
+                return_document=pymongo.ReturnDocument.AFTER
+            )
+            
+            self.auto_attack_cache[user_id] = 0 # Trống cache sau khi push thành công
+            current_hp = result.get('current_hp', result.get('hp', 0))
+
+            # 4. GỬI THÔNG BÁO ẨN
+            #try:
+              #  msg = f"🔄 **[Đồng bộ 10s]** Bạn vừa dồn **{dmg_to_sync:,} DMG**. (Boss HP: {max(0, current_hp):,})"
+              #  await interaction.followup.send(msg, ephemeral=True)
+            #except discord.NotFound:
+                # Bỏ qua lỗi nếu đã lố 15 phút (Interaction Expired)
+             #   pass
+
+            # 5. Xử lý logic phản đòn và Loot (Đồng bộ với Manual Attack)
+            if current_hp > 0 and random.random() < 0.30:
+                boss_dmg = random.randint(250, 600)
+                if player.get("is_protecting"):
+                    boss_dmg = int(boss_dmg * 0.2)
+                    await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
+                
+                new_hp = max(0, player.get("current_hp", 0) - boss_dmg)
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
+                
+                if new_hp == 0:
+                    try:
+                        await interaction.followup.send(f"💀 **WARNING:** Your Digimon has been defeated by a counterattack.!", ephemeral=True)
+                    except discord.NotFound: pass
+                    self.auto_attackers.discard(user_id)
+                    break
+
+            if current_hp <= 0:
+                await self.distribute_boss_loot(result)
+                await self.trigger_chain_boss_respawn(result.get("participants", []))
+                try:
+                    await interaction.followup.send("🎉 **BOSS DEFEATED!* Auto-Attack chain complete.", ephemeral=True)
+                except discord.NotFound: pass
+                self.auto_attackers.discard(user_id)
+                break
+
+    async def handle_manual_attack(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True) 
+        current_time = int(time.time())
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+
+        if profile and current_time - profile.get("last_manual_atk", 0) < 4:
+            return await interaction.followup.send("⏳ **Cooldown!** Slow down your strikes.", ephemeral=True)
+
+        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"last_manual_atk": current_time}})
+        msg, should_stop = await self.execute_combat_turn(interaction.user.id, interaction.user.display_name)
+
+        if msg: 
+            await interaction.followup.send(msg, ephemeral=True)
+        if should_stop: 
+            self.auto_attackers.discard(interaction.user.id)
+            if hasattr(self, 'auto_attack_cache'):
+                self.auto_attack_cache.pop(interaction.user.id, None)
+
+    async def handle_protect(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        current_time = int(time.time())
+        if profile and current_time - profile.get("last_protect", 0) < 45: return await interaction.followup.send("⏳ Protect Cooldown!", ephemeral=True)
+        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"is_protecting": True, "last_protect": current_time}})
+        await interaction.followup.send("🛡️ **Defensive Guard Active!**", ephemeral=True)
+
+    async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
+        party = await parties_col.find_one({"members.user_id": user_id})
+        boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
+        if not boss: boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
+        if not boss: return ("❌ **No active Boss found.**", True)
+
+        player = await rpg_profiles_col.find_one({"user_id": user_id})
+        digimon = self.get_active_digimon(player)
+        if not player or not digimon: return ("❌ **No Digimon partnered.**", True)
+        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Fainted!** Please Heal.", True)
+
+        stats = self.get_total_stats(player)
+        raw_dmg = stats["atk"] + random.randint(-5, 10)
+        if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
+        
+        skill_msg = ""
+        if "skill" in digimon and random.random() < digimon["skill"]["chance"]:
+            raw_dmg *= digimon["skill"]["dmg_mult"]
+            skill_msg = f"\n🌟 **SKILL!** **{digimon['skill']['name']}**!"
+            
+        attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
+        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
+        
+        result = await world_boss_col.find_one_and_update(
+            {"_id": boss["_id"]}, {"$inc": {"current_hp": -final_dmg, "hp": -final_dmg, f"damage_log.{str(user_id)}": final_dmg}, "$addToSet": {"participants": user_id}},
+            return_document=pymongo.ReturnDocument.AFTER
+        )
+        current_hp = result.get('current_hp', result.get('hp', 0))
+        msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
+
+        if random.random() < 0.30 and current_hp > 0:
+            boss_dmg = random.randint(250, 600)
+            if player.get("is_protecting"):
+                boss_dmg = int(boss_dmg * 0.2)
+                msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
+            else:
+                msg += f"\n🚨 <@{user_id}> **BOSS COUNTERED** for **{boss_dmg} DMG**!"
+                
+            new_hp = max(0, player["current_hp"] - boss_dmg)
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
+            if new_hp == 0: return (msg + "\n💀 **YOUR PARTNER FAINTED!**", True)
+
+        if current_hp <= 0:
+            await self.distribute_boss_loot(result)
+            await self.trigger_chain_boss_respawn(result.get("participants", []))
+            return (msg + "\n🎉 **BOSS DEFEATED!**", True)
+        return (msg, False)
+
+    async def distribute_boss_loot(self, boss_data: dict):
+        await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"is_active": False}})
+        if "party_id" not in boss_data:
+            await world_boss_col.update_one({"type": "spawn_config"}, {"$set": {"next_spawn": int(time.time()) + 3600}}, upsert=True)
+        
+        announcement = f"🎉 **BOSS {boss_data['name']} DEFEATED!**\n\n**🏆 Rewards Summary:**\n"
+        sorted_log = sorted(boss_data.get("damage_log", {}).items(), key=lambda x: x[1], reverse=True)
+        total_hp = boss_data.get("max_hp", 1)
+
+        participant_ids = [int(uid_str) for uid_str, _ in sorted_log]
+        if participant_ids: await rpg_profiles_col.update_many({"user_id": {"$in": participant_ids}}, {"$inc": {"myk_coin": 1}})
+
+        for rank, (uid_str, dmg) in enumerate(sorted_log, 1):
+            dmg_percent = dmg / total_hp
+            orbs_earned = max(1, int(dmg_percent * 10)) + (10 if rank == 1 else 5 if rank <= 3 else 0)
+            reward_str = f"+{orbs_earned} Orbs & 1 MyK"
+            update_query = {"$inc": {"orb": orbs_earned}}
+
+            if rank <= 3 and random.random() < 0.30:
+                reward_str += " & 🍎"
+                update_query.setdefault("$push", {})["inventory"] = "Size Reroll Fruit"
+                
+            if random.random() < (0.20 / rank) + dmg_percent:
+                divine_drop = random.choice(["Divine Blade (Unlocked)", "Divine Aegis (Unlocked)", "Divine Vice (Unlocked)"])
+                reward_str += f" & 👑 Divine Gear"
+                update_query.setdefault("$push", {})
+                if "inventory" in update_query["$push"]: update_query["$push"]["inventory"] = {"$each": ["Size Reroll Fruit", divine_drop]}
+                else: update_query["$push"]["inventory"] = divine_drop
+                
+            await rpg_profiles_col.update_one({"user_id": int(uid_str)}, update_query)
+            if rank <= 10: announcement += f"#{rank} <@{uid_str}>: {dmg:,} DMG -> {reward_str}\n"
+
+        if "party_id" not in boss_data: await self.broadcast_system_message(announcement)
+        else:
+            party = await parties_col.find_one({"_id": ObjectId(boss_data["party_id"])})
+            if party: await handle_cross_server_chat(self.bot, party, msg_override=announcement)
+            
+    async def process_boss_damage(self, interaction: discord.Interaction, boss_id: str, damage_dealt: int):
+        user_id = interaction.user.id
+        boss = await world_boss_col.find_one({"boss_id": boss_id})
+        if not boss: return
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"You have dealt {damage_dealt:,} damage to {boss['name']}.", ephemeral=True)
+        except Exception:
+            pass
+
+        updated_boss = await world_boss_col.find_one({"boss_id": boss_id})
+        current_hp = updated_boss.get("current_hp", updated_boss.get("hp", 0))
+        if updated_boss and current_hp <= 0:
+            await world_boss_col.delete_one({"boss_id": boss_id})
+            await self.trigger_chain_boss_respawn(updated_boss.get("participants", []))
+
+    async def trigger_chain_boss_respawn(self, participants: list):
+        total_participant_atk = 0
+        
+        if participants:
+            async for profile in rpg_profiles_col.find({"user_id": {"$in": participants}}):
+                active_id = profile.get("active_digimon_id")
+                active_digi = next((d for d in profile.get("digimon_list", []) if d["id"] == active_id), None)
+                if active_digi:
+                    total_participant_atk += active_digi.get("atk", 150)
+        
+        if total_participant_atk == 0:
+            total_participant_atk = 3000
+
+        boss_names_pool = ["Omnimon Zwart", "Alphamon Ouryuken", "Beelzemon X", "Gallantmon X", "Mastemon", "Lucemon Larva", "Susanoomon"]
+        random_name = f"Vanguard {random.choice(boss_names_pool)} [Chain Raid]"
+        
+        calculated_hp = random.randint(total_participant_atk * 15, total_participant_atk * 30)
+        calculated_atk = random.randint(int(total_participant_atk * 0.15), int(total_participant_atk * 0.3))
+
+        new_boss = {
+            "boss_id": str(uuid.uuid4()),
+            "name": random_name,
+            "hp": calculated_hp,
+            "current_hp": calculated_hp,
+            "max_hp": calculated_hp,
+            "atk": calculated_atk,
+            "participants": [],
+            "is_active": True,
+            "damage_log": {},
+            "active_messages": [],
+            "spawned_at": datetime.utcnow()
+        }
+        
+        result = await world_boss_col.insert_one(new_boss)
+        new_boss["_id"] = result.inserted_id
+        
+        cross_server_announcement = "🚨 **[SYSTEM RAID]** Raid boss spawned, please use `/combat` to join!"
+        await self.broadcast_system_message(content=cross_server_announcement)   
+        await self.broadcast_initial_boss(new_boss)    
+
+    @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
+    async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+        is_admin = interaction.permissions.administrator if interaction.guild else False
+        if not (is_admin or interaction.user.id in OWNER_IDS): 
+            return await interaction.followup.send("❌ Access Denied!", ephemeral=True)
+            
+        try:
+            webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
+            await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
+            await interaction.followup.send("✅ Success! The Global channel has been set up.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Error: Lack of `Manage Webhooks` permission.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)    
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot or not message.guild: return
+        channel_config = await boss_channels_col.find_one({"guild_id": message.guild.id})
+        if not channel_config or channel_config.get("channel_id") != message.channel.id: return
+            
+        other_channels = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
+        if not other_channels: return
+
+        content = message.content
+        if message.attachments: content += "\n" + "\n".join([att.url for att in message.attachments])
+            
+        formatted_username = f"[{message.guild.name[:15]}] {message.author.display_name}"[:77] + "..." if len(f"[{message.guild.name[:15]}] {message.author.display_name}") > 80 else f"[{message.guild.name[:15]}] {message.author.display_name}"
+        sent_targets = []
+
+        async with aiohttp.ClientSession() as session:
+            for c in other_channels:
+                if url := c.get("webhook_url"):
+                    try:
+                        webhook = discord.Webhook.from_url(url, session=session)
+                        sent_msg = await webhook.send(content=content, username=formatted_username, avatar_url=message.author.display_avatar.url, wait=True)
+                        sent_targets.append({"webhook_url": url, "channel_id": c.get("channel_id"), "message_id": sent_msg.id})
+                    except Exception as e: print(f"⚠️ Relay error: {e}")
+
+        if sent_targets:
+            await cross_messages_col.insert_one({"source_msg_id": message.id, "source_channel_id": message.channel.id, "targets": sent_targets, "created_at": datetime.utcnow()})
+
+    @commands.Cog.listener()
+    async def on_message_edit(self, before, after):
+        if after.author.bot or not after.guild: return
+        log = await cross_messages_col.find_one({"source_msg_id": before.id})
+        if not log: return
+
+        new_content = after.content
+        if after.attachments: new_content += "\n" + "\n".join([att.url for att in after.attachments])
+
+        async with aiohttp.ClientSession() as session:
+            for target in log.get("targets", []):
+                try:
+                    webhook = discord.Webhook.from_url(target["webhook_url"], session=session)
+                    await webhook.edit_message(target["message_id"], content=new_content)
+                except Exception: pass
+
+    @commands.Cog.listener()
+    async def on_message_delete(self, message):
+        if message.author.bot or not message.guild: return
+        log = await cross_messages_col.find_one({"source_msg_id": message.id})
+        if not log: return
+
+        async with aiohttp.ClientSession() as session:
+            for target in log.get("targets", []):
+                try:
+                    webhook = discord.Webhook.from_url(target["webhook_url"], session=session)
+                    await webhook.delete_message(target["message_id"])
+                except Exception: pass
+        await cross_messages_col.delete_one({"_id": log["_id"]})
+
+    async def broadcast_system_message(self, content: str):
+        channels = await boss_channels_col.find({}).to_list(None)
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for c in channels:
+                if url := c.get("webhook_url"):
+                    webhook = discord.Webhook.from_url(url, session=session)
+                    tasks.append(webhook.send(content=content, username="SYSTEM RAID"))
+            if tasks: await asyncio.gather(*tasks, return_exceptions=True)
 
     async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
         await interaction.response.defer(ephemeral=True)
@@ -1138,491 +1624,6 @@ class MarketBuySelect(discord.ui.Select):
     # ========================================================================
     # WORLD BOSS & REAL-TIME LEADERBOARD SYSTEM
     # ========================================================================
-
-    def generate_boss_embed(self, boss_data: dict) -> discord.Embed:
-        max_hp = boss_data.get("max_hp", 1)
-        current_hp = max(0, boss_data.get("current_hp", boss_data.get("hp", 0)))
-        hp_percent = current_hp / max_hp
-        hp_bar = "🟥" * int(hp_percent * 10) + "⬛" * (10 - int(hp_percent * 10))
-
-        embed = discord.Embed(
-            title=f"🚨 BOSS APPEARED: {boss_data['name']} 🚨", 
-            description=f"**Attribute:** {boss_data.get('attr', 'Unknown')}\n\n**HP:** {current_hp:,} / {max_hp:,}\n{hp_bar} ({hp_percent * 100:.1f}%)",
-            color=discord.Color.dark_red()
-        )
-        if boss_data.get("img"): embed.set_thumbnail(url=boss_data["img"])
-
-        damage_log = boss_data.get("damage_log", {})
-        if damage_log:
-            sorted_log = sorted(damage_log.items(), key=lambda x: x[1], reverse=True)[:5] 
-            lb_text = ""
-            medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
-            for idx, (uid_str, dmg) in enumerate(sorted_log):
-                lb_text += f"{medals[idx]} <@{uid_str}>: **{dmg:,}** DMG\n"
-            embed.add_field(name="🏆 DAMAGE LEADERBOARD", value=lb_text, inline=False)
-        else:
-            embed.add_field(name="🏆 DAMAGE LEADERBOARD", value="No attackers yet...", inline=False)
-
-        embed.set_footer(text="Use /combat or buttons below to fight!")
-        return embed
-
-    async def broadcast_initial_boss(self, boss_data: dict):
-        embed = self.generate_boss_embed(boss_data)
-        channels = await boss_channels_col.find({}).to_list(None)
-        active_messages = []
-        
-        for c in channels:
-            if url := c.get("webhook_url"):
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        webhook = discord.Webhook.from_url(url, session=s)
-                        msg = await webhook.send(content="🚨 **WORLD BOSS HAS SPAWNED! PREPARE FOR BATTLE!**", embed=embed, view=CombatView(self), username="SYSTEM RAID", wait=True)
-                        active_messages.append({"channel_id": c["channel_id"], "message_id": msg.id, "webhook_url": url})
-                except Exception as e:
-                    print(f"Announcement failed: {e}")
-                    
-        if active_messages: await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
-        if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
-
-    @tasks.loop(seconds=20)
-    async def live_boss_update_loop(self):
-        bosses = await world_boss_col.find({"is_active": True}).to_list(None)
-        if not bosses: return
-
-        async with aiohttp.ClientSession() as session: # Dùng chung 1 session cho nhanh
-            for boss in bosses:
-                embed = self.generate_boss_embed(boss)
-                active_messages = boss.get("active_messages", [])
-                updated_messages = []
-
-                for msg_info in active_messages:
-                    try:
-                        if msg_info.get("is_interaction"):
-                            channel = self.bot.get_channel(msg_info["channel_id"])
-                            if channel:
-                                msg = channel.get_partial_message(msg_info["message_id"])
-                                await msg.edit(embed=embed, view=CombatView(self))
-                                updated_messages.append(msg_info)
-                        else:
-                            webhook_url = msg_info.get("webhook_url")
-                            if webhook_url:
-                                webhook = discord.Webhook.from_url(webhook_url, session=session)
-                                await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
-                                updated_messages.append(msg_info)
-                    except discord.NotFound: pass 
-                    except discord.HTTPException: updated_messages.append(msg_info) 
-
-                if len(active_messages) != len(updated_messages):
-                    await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
-
-    @live_boss_update_loop.before_loop
-    async def before_live_boss_update(self): await self.bot.wait_until_ready()  
-
-    @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
-    async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
-        if not interaction.user.guild_permissions.administrator: 
-            return await interaction.response.send_message("❌ Admin privileges required.", ephemeral=True)
-        await world_boss_col.update_many({"is_active": True, "party_id": {"$exists": False}}, {"$set": {"is_active": False}})
-        
-        new_boss = {"boss_id": str(uuid.uuid4()), "name": name, "max_hp": hp, "current_hp": hp, "hp": hp, "attr": "Unknown", "img": "", "is_active": True, "damage_log": {}, "active_messages": [], "participants": []}
-        result = await world_boss_col.insert_one(new_boss)
-        new_boss["_id"] = result.inserted_id
-        
-        await interaction.response.send_message(f"⚔️ Spawned Boss **{name}**!", ephemeral=True)
-        await self.broadcast_initial_boss(new_boss)
-
-    @tasks.loop(minutes=1)
-    async def auto_spawn_boss(self):
-        config = await world_boss_col.find_one({"type": "spawn_config"})
-        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
-        if await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}}): return
-        
-        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
-        boss_roster = [
-            {"name": "Devimon", "hp": 25_000_000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
-            {"name": "WarGreymon", "hp": 100_000_000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
-            {"name": "Apocalymon", "hp": 250_000_000, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"}
-        ]
-        chosen = random.choice(boss_roster)
-        new_boss = {"boss_id": str(uuid.uuid4()), "name": chosen["name"], "max_hp": chosen["hp"], "current_hp": chosen["hp"], "hp": chosen["hp"], "attr": chosen["attr"], "img": chosen["img"], "is_active": True, "damage_log": {}, "active_messages": [], "participants": []}
-        
-        result = await world_boss_col.insert_one(new_boss)
-        new_boss["_id"] = result.inserted_id
-        await self.broadcast_initial_boss(new_boss)
-
-    @auto_spawn_boss.before_loop
-    async def before_auto_spawn(self): await self.bot.wait_until_ready()
-
-    # ========================================================================
-    # COMBAT LOGIC COMMAND SYSTEM
-    # ========================================================================
-    
-    @app_commands.command(name="combat", description="Display Boss Combat Interface")
-    async def combat_cmd(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        party = await parties_col.find_one({"members.user_id": interaction.user.id})
-        boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
-            
-        if not boss: boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
-        if not boss: return await interaction.followup.send("❌ There are no active Bosses right now!")
-            
-        embed = self.generate_boss_embed(boss)
-        msg = await interaction.followup.send(embed=embed, view=CombatView(self), wait=True)
-        await world_boss_col.update_one({"_id": boss["_id"]}, {"$push": {"active_messages": {"channel_id": interaction.channel.id, "message_id": msg.id, "is_interaction": True}}})
-        if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
-
-    async def toggle_auto_attack(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        user_id = interaction.user.id
-        
-        # Khởi tạo dict cache nếu chưa có (Khuyến nghị đưa dòng này vào def __init__ của Cog)
-        if not hasattr(self, 'auto_attack_cache'):
-            self.auto_attack_cache = {}
-
-        if user_id in self.auto_attackers:
-            self.auto_attackers.discard(user_id)
-            self.auto_attack_cache.pop(user_id, None) # Xóa cache khi tắt
-            await interaction.followup.send("🛑 **Auto-Attack DEACTIVATED.**", ephemeral=True)
-        else:
-            self.auto_attackers.add(user_id)
-            self.auto_attack_cache[user_id] = 0
-            await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** The system will deal damage and provide in every 20s seconds.", ephemeral=True)
-            # Truyền nguyên object interaction vào task để tận dụng followup.send
-            self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction))
-
-    async def auto_attack_loop(self, user_id: int, user_name: str, interaction: discord.Interaction):
-        # 10 giây tương đương khoảng 2 lượt đánh (so với nhịp 4.5s cũ)
-        HITS_PER_INTERVAL = 2
-        
-        while user_id in self.auto_attackers:
-            await asyncio.sleep(10)
-            if user_id not in self.auto_attackers:
-                break
-
-            # 1. Kéo dữ liệu cơ sở
-            player = await rpg_profiles_col.find_one({"user_id": user_id})
-            party = await parties_col.find_one({"members.user_id": user_id})
-            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
-
-            if not boss or not player or player.get("current_hp", 0) <= 0:
-                self.auto_attackers.discard(user_id)
-                self.auto_attack_cache.pop(user_id, None)
-                try:
-                    await interaction.followup.send("❌ **The battle is over or the Digimon are defeated!** Stop Auto-Attack.", ephemeral=True)
-                except discord.NotFound: pass
-                break
-
-            digimon = self.get_active_digimon(player)
-            stats = self.get_total_stats(player)
-            attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
-
-            # 2. CỘNG DỒN SÁT THƯƠNG VÀO CACHE (Bỏ qua DB)
-            batch_dmg = 0
-            for _ in range(HITS_PER_INTERVAL):
-                raw_dmg = stats["atk"] + random.randint(-5, 10)
-                if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
-                if "skill" in digimon and random.random() < digimon["skill"]["chance"]: raw_dmg *= digimon["skill"]["dmg_mult"]
-                batch_dmg += int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
-
-            self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
-            dmg_to_sync = self.auto_attack_cache[user_id]
-
-            # 3. TRUYỀN DỮ LIỆU DB (Chỉ 1 lần mỗi 10s)
-            result = await world_boss_col.find_one_and_update(
-                {"_id": boss["_id"]}, 
-                {"$inc": {"current_hp": -dmg_to_sync, "hp": -dmg_to_sync, f"damage_log.{str(user_id)}": dmg_to_sync}, 
-                 "$addToSet": {"participants": user_id}},
-                return_document=pymongo.ReturnDocument.AFTER
-            )
-            
-            self.auto_attack_cache[user_id] = 0 # Trống cache sau khi push thành công
-            current_hp = result.get('current_hp', result.get('hp', 0))
-
-            # 4. GỬI THÔNG BÁO ẨN
-            #try:
-              #  msg = f"🔄 **[Đồng bộ 10s]** Bạn vừa dồn **{dmg_to_sync:,} DMG**. (Boss HP: {max(0, current_hp):,})"
-              #  await interaction.followup.send(msg, ephemeral=True)
-            #except discord.NotFound:
-                # Bỏ qua lỗi nếu đã lố 15 phút (Interaction Expired)
-             #   pass
-
-            # 5. Xử lý logic phản đòn và Loot (Đồng bộ với Manual Attack)
-            if current_hp > 0 and random.random() < 0.30:
-                boss_dmg = random.randint(250, 600)
-                if player.get("is_protecting"):
-                    boss_dmg = int(boss_dmg * 0.2)
-                    await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-                
-                new_hp = max(0, player.get("current_hp", 0) - boss_dmg)
-                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
-                
-                if new_hp == 0:
-                    try:
-                        await interaction.followup.send(f"💀 **WARNING:** Your Digimon has been defeated by a counterattack.!", ephemeral=True)
-                    except discord.NotFound: pass
-                    self.auto_attackers.discard(user_id)
-                    break
-
-            if current_hp <= 0:
-                await self.distribute_boss_loot(result)
-                await self.trigger_chain_boss_respawn(result.get("participants", []))
-                try:
-                    await interaction.followup.send("🎉 **BOSS DEFEATED!* Auto-Attack chain complete.", ephemeral=True)
-                except discord.NotFound: pass
-                self.auto_attackers.discard(user_id)
-                break
-
-    async def handle_manual_attack(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True) 
-        current_time = int(time.time())
-        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-
-        if profile and current_time - profile.get("last_manual_atk", 0) < 4:
-            return await interaction.followup.send("⏳ **Cooldown!** Slow down your strikes.", ephemeral=True)
-
-        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"last_manual_atk": current_time}})
-        msg, should_stop = await self.execute_combat_turn(interaction.user.id, interaction.user.display_name)
-
-        if msg: 
-            await interaction.followup.send(msg, ephemeral=True)
-        if should_stop: 
-            self.auto_attackers.discard(interaction.user.id)
-            if hasattr(self, 'auto_attack_cache'):
-                self.auto_attack_cache.pop(interaction.user.id, None)
-
-    async def handle_protect(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        current_time = int(time.time())
-        if profile and current_time - profile.get("last_protect", 0) < 45: return await interaction.followup.send("⏳ Protect Cooldown!", ephemeral=True)
-        await rpg_profiles_col.update_one({"user_id": interaction.user.id}, {"$set": {"is_protecting": True, "last_protect": current_time}})
-        await interaction.followup.send("🛡️ **Defensive Guard Active!**", ephemeral=True)
-
-    async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
-        party = await parties_col.find_one({"members.user_id": user_id})
-        boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
-        if not boss: boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
-        if not boss: return ("❌ **No active Boss found.**", True)
-
-        player = await rpg_profiles_col.find_one({"user_id": user_id})
-        digimon = self.get_active_digimon(player)
-        if not player or not digimon: return ("❌ **No Digimon partnered.**", True)
-        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Fainted!** Please Heal.", True)
-
-        stats = self.get_total_stats(player)
-        raw_dmg = stats["atk"] + random.randint(-5, 10)
-        if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
-        
-        skill_msg = ""
-        if "skill" in digimon and random.random() < digimon["skill"]["chance"]:
-            raw_dmg *= digimon["skill"]["dmg_mult"]
-            skill_msg = f"\n🌟 **SKILL!** **{digimon['skill']['name']}**!"
-            
-        attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
-        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
-        
-        result = await world_boss_col.find_one_and_update(
-            {"_id": boss["_id"]}, {"$inc": {"current_hp": -final_dmg, "hp": -final_dmg, f"damage_log.{str(user_id)}": final_dmg}, "$addToSet": {"participants": user_id}},
-            return_document=pymongo.ReturnDocument.AFTER
-        )
-        current_hp = result.get('current_hp', result.get('hp', 0))
-        msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
-
-        if random.random() < 0.30 and current_hp > 0:
-            boss_dmg = random.randint(250, 600)
-            if player.get("is_protecting"):
-                boss_dmg = int(boss_dmg * 0.2)
-                msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
-                await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-            else:
-                msg += f"\n🚨 <@{user_id}> **BOSS COUNTERED** for **{boss_dmg} DMG**!"
-                
-            new_hp = max(0, player["current_hp"] - boss_dmg)
-            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
-            if new_hp == 0: return (msg + "\n💀 **YOUR PARTNER FAINTED!**", True)
-
-        if current_hp <= 0:
-            await self.distribute_boss_loot(result)
-            await self.trigger_chain_boss_respawn(result.get("participants", []))
-            return (msg + "\n🎉 **BOSS DEFEATED!**", True)
-        return (msg, False)
-
-    async def distribute_boss_loot(self, boss_data: dict):
-        await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"is_active": False}})
-        if "party_id" not in boss_data:
-            await world_boss_col.update_one({"type": "spawn_config"}, {"$set": {"next_spawn": int(time.time()) + 3600}}, upsert=True)
-        
-        announcement = f"🎉 **BOSS {boss_data['name']} DEFEATED!**\n\n**🏆 Rewards Summary:**\n"
-        sorted_log = sorted(boss_data.get("damage_log", {}).items(), key=lambda x: x[1], reverse=True)
-        total_hp = boss_data.get("max_hp", 1)
-
-        participant_ids = [int(uid_str) for uid_str, _ in sorted_log]
-        if participant_ids: await rpg_profiles_col.update_many({"user_id": {"$in": participant_ids}}, {"$inc": {"myk_coin": 1}})
-
-        for rank, (uid_str, dmg) in enumerate(sorted_log, 1):
-            dmg_percent = dmg / total_hp
-            orbs_earned = max(1, int(dmg_percent * 10)) + (10 if rank == 1 else 5 if rank <= 3 else 0)
-            reward_str = f"+{orbs_earned} Orbs & 1 MyK"
-            update_query = {"$inc": {"orb": orbs_earned}}
-
-            if rank <= 3 and random.random() < 0.30:
-                reward_str += " & 🍎"
-                update_query.setdefault("$push", {})["inventory"] = "Size Reroll Fruit"
-                
-            if random.random() < (0.20 / rank) + dmg_percent:
-                divine_drop = random.choice(["Divine Blade (Unlocked)", "Divine Aegis (Unlocked)", "Divine Vice (Unlocked)"])
-                reward_str += f" & 👑 Divine Gear"
-                update_query.setdefault("$push", {})
-                if "inventory" in update_query["$push"]: update_query["$push"]["inventory"] = {"$each": ["Size Reroll Fruit", divine_drop]}
-                else: update_query["$push"]["inventory"] = divine_drop
-                
-            await rpg_profiles_col.update_one({"user_id": int(uid_str)}, update_query)
-            if rank <= 10: announcement += f"#{rank} <@{uid_str}>: {dmg:,} DMG -> {reward_str}\n"
-
-        if "party_id" not in boss_data: await self.broadcast_system_message(announcement)
-        else:
-            party = await parties_col.find_one({"_id": ObjectId(boss_data["party_id"])})
-            if party: await handle_cross_server_chat(self.bot, party, msg_override=announcement)
-            
-    async def process_boss_damage(self, interaction: discord.Interaction, boss_id: str, damage_dealt: int):
-        user_id = interaction.user.id
-        boss = await world_boss_col.find_one({"boss_id": boss_id})
-        if not boss: return
-
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"You have dealt {damage_dealt:,} damage to {boss['name']}.", ephemeral=True)
-        except Exception:
-            pass
-
-        updated_boss = await world_boss_col.find_one({"boss_id": boss_id})
-        current_hp = updated_boss.get("current_hp", updated_boss.get("hp", 0))
-        if updated_boss and current_hp <= 0:
-            await world_boss_col.delete_one({"boss_id": boss_id})
-            await self.trigger_chain_boss_respawn(updated_boss.get("participants", []))
-
-    async def trigger_chain_boss_respawn(self, participants: list):
-        total_participant_atk = 0
-        
-        if participants:
-            async for profile in rpg_profiles_col.find({"user_id": {"$in": participants}}):
-                active_id = profile.get("active_digimon_id")
-                active_digi = next((d for d in profile.get("digimon_list", []) if d["id"] == active_id), None)
-                if active_digi:
-                    total_participant_atk += active_digi.get("atk", 150)
-        
-        if total_participant_atk == 0:
-            total_participant_atk = 3000
-
-        boss_names_pool = ["Omnimon Zwart", "Alphamon Ouryuken", "Beelzemon X", "Gallantmon X", "Mastemon", "Lucemon Larva", "Susanoomon"]
-        random_name = f"Vanguard {random.choice(boss_names_pool)} [Chain Raid]"
-        
-        calculated_hp = random.randint(total_participant_atk * 15, total_participant_atk * 30)
-        calculated_atk = random.randint(int(total_participant_atk * 0.15), int(total_participant_atk * 0.3))
-
-        new_boss = {
-            "boss_id": str(uuid.uuid4()),
-            "name": random_name,
-            "hp": calculated_hp,
-            "current_hp": calculated_hp,
-            "max_hp": calculated_hp,
-            "atk": calculated_atk,
-            "participants": [],
-            "is_active": True,
-            "damage_log": {},
-            "active_messages": [],
-            "spawned_at": datetime.utcnow()
-        }
-        
-        result = await world_boss_col.insert_one(new_boss)
-        new_boss["_id"] = result.inserted_id
-        
-        cross_server_announcement = "🚨 **[SYSTEM RAID]** Raid boss spawned, please use `/combat` to join!"
-        await self.broadcast_system_message(content=cross_server_announcement)   
-        await self.broadcast_initial_boss(new_boss)    
-
-    @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
-    async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        await interaction.response.defer(ephemeral=True)
-        is_admin = interaction.permissions.administrator if interaction.guild else False
-        if not (is_admin or interaction.user.id in OWNER_IDS): 
-            return await interaction.followup.send("❌ Access Denied!", ephemeral=True)
-            
-        try:
-            webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
-            await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
-            await interaction.followup.send("✅ Success! The Global channel has been set up.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Error: Lack of `Manage Webhooks` permission.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)    
-
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author.bot or not message.guild: return
-        channel_config = await boss_channels_col.find_one({"guild_id": message.guild.id})
-        if not channel_config or channel_config.get("channel_id") != message.channel.id: return
-            
-        other_channels = await boss_channels_col.find({"channel_id": {"$ne": message.channel.id}}).to_list(None)
-        if not other_channels: return
-
-        content = message.content
-        if message.attachments: content += "\n" + "\n".join([att.url for att in message.attachments])
-            
-        formatted_username = f"[{message.guild.name[:15]}] {message.author.display_name}"[:77] + "..." if len(f"[{message.guild.name[:15]}] {message.author.display_name}") > 80 else f"[{message.guild.name[:15]}] {message.author.display_name}"
-        sent_targets = []
-
-        async with aiohttp.ClientSession() as session:
-            for c in other_channels:
-                if url := c.get("webhook_url"):
-                    try:
-                        webhook = discord.Webhook.from_url(url, session=session)
-                        sent_msg = await webhook.send(content=content, username=formatted_username, avatar_url=message.author.display_avatar.url, wait=True)
-                        sent_targets.append({"webhook_url": url, "channel_id": c.get("channel_id"), "message_id": sent_msg.id})
-                    except Exception as e: print(f"⚠️ Relay error: {e}")
-
-        if sent_targets:
-            await cross_messages_col.insert_one({"source_msg_id": message.id, "source_channel_id": message.channel.id, "targets": sent_targets, "created_at": datetime.utcnow()})
-
-    @commands.Cog.listener()
-    async def on_message_edit(self, before, after):
-        if after.author.bot or not after.guild: return
-        log = await cross_messages_col.find_one({"source_msg_id": before.id})
-        if not log: return
-
-        new_content = after.content
-        if after.attachments: new_content += "\n" + "\n".join([att.url for att in after.attachments])
-
-        async with aiohttp.ClientSession() as session:
-            for target in log.get("targets", []):
-                try:
-                    webhook = discord.Webhook.from_url(target["webhook_url"], session=session)
-                    await webhook.edit_message(target["message_id"], content=new_content)
-                except Exception: pass
-
-    @commands.Cog.listener()
-    async def on_message_delete(self, message):
-        if message.author.bot or not message.guild: return
-        log = await cross_messages_col.find_one({"source_msg_id": message.id})
-        if not log: return
-
-        async with aiohttp.ClientSession() as session:
-            for target in log.get("targets", []):
-                try:
-                    webhook = discord.Webhook.from_url(target["webhook_url"], session=session)
-                    await webhook.delete_message(target["message_id"])
-                except Exception: pass
-        await cross_messages_col.delete_one({"_id": log["_id"]})
-
-    async def broadcast_system_message(self, content: str):
-        channels = await boss_channels_col.find({}).to_list(None)
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for c in channels:
-                if url := c.get("webhook_url"):
-                    webhook = discord.Webhook.from_url(url, session=session)
-                    tasks.append(webhook.send(content=content, username="SYSTEM RAID"))
-            if tasks: await asyncio.gather(*tasks, return_exceptions=True)
 
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
