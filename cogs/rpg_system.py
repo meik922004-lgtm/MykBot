@@ -483,31 +483,31 @@ class RPGSystemCog(commands.Cog):
         item_display = identifier if not is_dict_gear else f"{target_item.get('name')} ({rarity})"
         await interaction.followup.send(f"🏪 **Successfully listed item {item_display} for {price:.2f} Orb!** (Listing ID: `{listing_id}`)", ephemeral=True)
     def generate_boss_embed(self, boss_data: dict) -> discord.Embed:
-            max_hp = boss_data.get("max_hp", 1)
-            current_hp = max(0, boss_data.get("current_hp", boss_data.get("hp", 0)))
-            hp_percent = current_hp / max_hp
-            hp_bar = "🟥" * int(hp_percent * 10) + "⬛" * (10 - int(hp_percent * 10))
+        max_hp = boss_data.get("max_hp", 1)
+        current_hp = max(0, boss_data.get("current_hp", boss_data.get("hp", 0)))
+        hp_percent = current_hp / max_hp
+        hp_bar = "🟥" * int(hp_percent * 10) + "⬛" * (10 - int(hp_percent * 10))
 
-            embed = discord.Embed(
-                title=f"🚨 BOSS APPEARED: {boss_data['name']} 🚨", 
-                description=f"**Attribute:** {boss_data.get('attr', 'Unknown')}\n\n**HP:** {current_hp:,} / {max_hp:,}\n{hp_bar} ({hp_percent * 100:.1f}%)",
-                color=discord.Color.dark_red()
+        embed = discord.Embed(
+            title=f"🚨 BOSS APPEARED: {boss_data['name']} 🚨", 
+            description=f"**Attribute:** {boss_data.get('attr', 'Unknown')}\n\n**HP:** {current_hp:,} / {max_hp:,}\n{hp_bar} ({hp_percent * 100:.1f}%)",
+            color=discord.Color.dark_red()
             )
-            if boss_data.get("img"): embed.set_thumbnail(url=boss_data["img"])
+        if boss_data.get("img"): embed.set_thumbnail(url=boss_data["img"])
 
-            damage_log = boss_data.get("damage_log", {})
-            if damage_log:
-                sorted_log = sorted(damage_log.items(), key=lambda x: x[1], reverse=True)[:5] 
-                lb_text = ""
-                medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
-                for idx, (uid_str, dmg) in enumerate(sorted_log):
-                    lb_text += f"{medals[idx]} <@{uid_str}>: **{dmg:,}** DMG\n"
-                embed.add_field(name="🏆 DAMAGE LEADERBOARD", value=lb_text, inline=False)
-            else:
-                embed.add_field(name="🏆 DAMAGE LEADERBOARD", value="No attackers yet...", inline=False)
+        damage_log = boss_data.get("damage_log", {})
+        if damage_log:
+            sorted_log = sorted(damage_log.items(), key=lambda x: x[1], reverse=True)[:5] 
+            lb_text = ""
+            medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+            for idx, (uid_str, dmg) in enumerate(sorted_log):
+                lb_text += f"{medals[idx]} <@{uid_str}>: **{dmg:,}** DMG\n"
+            embed.add_field(name="🏆 DAMAGE LEADERBOARD", value=lb_text, inline=False)
+        else:
+            embed.add_field(name="🏆 DAMAGE LEADERBOARD", value="No attackers yet...", inline=False)
 
-            embed.set_footer(text="Use /combat or buttons below to fight!")
-            return embed    
+        embed.set_footer(text="Use /combat or buttons below to fight!")
+        return embed    
 
     async def broadcast_initial_boss(self, boss_data: dict):
         embed = self.generate_boss_embed(boss_data)
@@ -1539,7 +1539,7 @@ class RPGSystemCog(commands.Cog):
         else:
             desc = ""
             for item in listings:
-                desc += f"📦 **{item['item_name']}**\n🆔 ID: `{item['listing_id']}` | 💰 **{item['price']:.2f} Bits** | 👤 Seller: {item['seller_name']}\n\n"
+                desc += f"📦 **{item['item_name']}**\n🆔 ID: `{item['listing_id']}` | 💰 **{item['price']:.2f} orb** | 👤 Seller: {item['seller_name']}\n\n"
             embed.description = desc[:4000]
             
         await interaction.followup.send(embed=embed, view=MarketShopView(self, interaction.user.id), ephemeral=True)
@@ -1558,7 +1558,7 @@ class MarketSellSelect(discord.ui.Select):
                 if item not in seen_strings:
                     seen_strings.add(item)
                     options.append(discord.SelectOption(
-                        label=f"Rao bán: {item} (Thường)", 
+                        label=f"For sale: {item} (regular)", 
                         value=f"str:{item}", 
                         emoji="📦"
                     ))
@@ -1586,7 +1586,7 @@ class MarketSellSelect(discord.ui.Select):
 
 
 class MarketPriceModal(discord.ui.Modal, title="Set a price for the item"):
-    price = discord.ui.TextInput(label="Giá bán bằng Orb", placeholder="Ví dụ: 5 hoặc 12.5", max_length=12)
+    price = discord.ui.TextInput(label="Selling price in Orbs", placeholder="For example: 5 or 12.5", max_length=12)
 
     def __init__(self, item_key: str, cog_instance):
         super().__init__()
@@ -1616,7 +1616,7 @@ class MarketBuySelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ Hiện tại không có vật phẩm nào được bày bán.", ephemeral=True)
+            return await interaction.response.send_message("❌ Currently, no items are available for sale..", ephemeral=True)
         await self.cog.handle_market_buy(interaction, self.values[0])
 
     
