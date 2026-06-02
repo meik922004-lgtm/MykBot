@@ -62,7 +62,7 @@ class DigiBagSelect(discord.ui.Select):
                 description=f"Stage: {digi['stage']} | ATK: {digi['atk']} | HP: {digi['hp']} | Size: {size:.1f}%",
                 value=digi["id"]
             ))
-        super().__init__(placeholder="Chọn Digimon...", options=options)
+        super().__init__(placeholder="Choose Digimon...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "empty":
@@ -103,32 +103,61 @@ class BagView(discord.ui.View):
 class GearInventorySelect(discord.ui.Select):
     def __init__(self, gear_list: list, cog_instance):
         options = []
-        for gear in gear_list[:25]:
-            stats = []
-            
+        
+        # Bước 1: Gom cụm các vật phẩm trùng nhau để đếm số lượng (tránh trùng lặp value)
+        string_counts = {}
+        dict_items = []
+        
+        for gear in gear_list:
             if isinstance(gear, str):
-                cleaned_name = cog_instance.clean_item_name(gear)
-                gear_data = cog_instance.ITEMS.get(cleaned_name, {})
-                if "atk" in gear_data: stats.append(f"ATK +{gear_data['atk']}")
-                if "def" in gear_data: stats.append(f"DEF +{gear_data['def']}")
-                if "hp" in gear_data: stats.append(f"HP +{gear_data['hp']}")
-                stat_desc = " | ".join(stats) if stats else "No Stats"
-                options.append(discord.SelectOption(
-                    label=f"{cleaned_name} (Normal)", description=f"Loại: {gear_data.get('type', 'item').upper()} | {stat_desc}", value=cleaned_name
-                ))
-                
+                string_counts[gear] = string_counts.get(gear, 0) + 1
             elif isinstance(gear, dict):
-                if "atk" in gear: stats.append(f"ATK +{gear['atk']}")
-                if "def" in gear: stats.append(f"DEF +{gear['def']}")
-                if "hp" in gear: stats.append(f"HP +{gear['hp']}")
-                stat_desc = " | ".join(stats) if stats else "No Stats"
-                options.append(discord.SelectOption(
-                    label=f"{gear.get('name', 'Unknown')} ({gear.get('rarity', 'Common')})", description=f"Loại: {gear.get('type', 'N/A').upper()} | {stat_desc}", value=gear.get("id", str(uuid.uuid4()))
-                ))
+                dict_items.append(gear)
+        
+        # Bước 2: Tạo lựa chọn cho các vật phẩm dạng CHUỖI (đã được gộp số lượng)
+        for gear_str, count in string_counts.items():
+            if len(options) >= 25: # Giới hạn tối đa 25 lựa chọn của Discord
+                break
+                
+            cleaned_name = cog_instance.clean_item_name(gear_str)
+            gear_data = cog_instance.ITEMS.get(cleaned_name, {})
+            
+            stats = []
+            if "atk" in gear_data: stats.append(f"ATK +{gear_data['atk']}")
+            if "def" in gear_data: stats.append(f"DEF +{gear_data['def']}")
+            if "hp" in gear_data: stats.append(f"HP +{gear_data['hp']}")
+            stat_desc = " | ".join(stats) if stats else "No Stats"
+            
+            # Nếu số lượng > 1 thì hiển thị thêm chữ x(số lượng)
+            quantity_label = f" x{count}" if count > 1 else ""
+            
+            options.append(discord.SelectOption(
+                label=f"{cleaned_name}{quantity_label} (Normal)",
+                description=f"Loại: {gear_data.get('type', 'item').upper()} | {stat_desc}",
+                value=gear_str # Giữ nguyên giá trị gốc để các hàm xử lý nút bấm/vật phẩm không bị ảnh hưởng
+            ))
+            
+        # Bước 3: Tạo lựa chọn cho các vật phẩm dạng DICTIONARY (Đồ xịn có ID riêng biệt)
+        for gear_dict in dict_items:
+            if len(options) >= 25:
+                break
+                
+            stats = []
+            if "atk" in gear_dict: stats.append(f"ATK +{gear_dict['atk']}")
+            if "def" in gear_dict: stats.append(f"DEF +{gear_dict['def']}")
+            if "hp" in gear_dict: stats.append(f"HP +{gear_dict['hp']}")
+            stat_desc = " | ".join(stats) if stats else "No Stats"
+            
+            options.append(discord.SelectOption(
+                label=f"{gear_dict.get('name', 'Unknown')} ({gear_dict.get('rarity', 'Common')})",
+                description=f"Loại: {gear_dict.get('type', 'N/A').upper()} | {stat_desc}",
+                value=gear_dict.get("id", str(uuid.uuid4())) # ID này luôn là duy nhất (UUID)
+            ))
 
         if not options:
-            options = [discord.SelectOption(label="Kho đồ trống", value="empty")]
-        super().__init__(placeholder="Xem danh sách trang bị...", options=options)
+            options = [discord.SelectOption(label="Kempty storage", value= "empty" )]
+            
+        super().__init__(placeholder="View the equipment list...", options=options)
 class ProfileView(discord.ui.View):
     def __init__(self, profile: dict, cog_instance):
         super().__init__(timeout=300)
