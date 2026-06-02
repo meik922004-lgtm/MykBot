@@ -273,9 +273,9 @@ class ProfileView(discord.ui.View):
 
 
 class MarketShopView(discord.ui.View):
-    def __init__(self, cog_instance, user_id: int):
+    def __init__(self,cog, user_id: int):
         super().__init__(timeout=180)
-        self.cog = cog_instance
+        self.cog = cog
         self.user_id = user_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -499,7 +499,12 @@ class RPGSystemCog(commands.Cog):
         self.live_boss_update_loop.start()
         self.bot.loop.create_task(self.initialize_market_mega_products())
         self.auto_attack_cache = {}
-    def cog_unload(self):
+        self.HIGH_TIER_GEARS = [
+    {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
+    {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
+    {"name": "Ultimate Omegamon Vice", "type": "vice", "atk": 400, "hp": 3000, "rarity": "Mythic"},
+    {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
+    {"name": "Miracle Origin Ring", "type": "vice", "atk": 350, "def": 350, "rarity": "Mythic"}]
         self.auto_spawn_boss.cancel()
         self.farm_system_loop.cancel()
         self.live_boss_update_loop.cancel()
@@ -507,6 +512,8 @@ class RPGSystemCog(commands.Cog):
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
+
+
     async def handle_market_sell_enhanced(self, interaction: discord.Interaction, item_key: str, price_str: str):
         await interaction.response.defer(ephemeral=True)
         try:
