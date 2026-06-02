@@ -637,11 +637,16 @@ class RPGSystemCog(commands.Cog):
                                 webhook = discord.Webhook.from_url(webhook_url, session=session)
                                 await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
                                 updated_messages.append(msg_info)
+                        
+                        # Thêm dòng này: Nghỉ một chút trước khi sửa tin nhắn tiếp theo nếu có nhiều server
+                        await asyncio.sleep(0.5) 
+                        
                     except discord.NotFound: pass 
-                    except discord.HTTPException: updated_messages.append(msg_info) 
-
-                if len(active_messages) != len(updated_messages):
-                    await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"active_messages": updated_messages}})
+                    except discord.HTTPException as e:
+                        if e.status == 429:
+                            # Nếu xui rủi dính 429, giữ lại data để vòng sau cập nhật tiếp
+                            print("Nhắc nhở:The system is experiencing API congestion; this attempt will be automatically skipped..")
+                        updated_messages.append(msg_info)
 
     @live_boss_update_loop.before_loop
     async def before_live_boss_update(self): await self.bot.wait_until_ready()  
