@@ -22,16 +22,16 @@ OWNER_IDS = [1283689737567211581]
 # ========================================================================
 
 NEW_MEGA_POOL = [
-    {"name": "ShineGreymon BM", "stage": "Mega", "atk": 1250, "hp": 15500, "base_price": 850000},
-    {"name": "MirageGaogamon BM", "stage": "Mega", "atk": 1200, "hp": 14800, "base_price": 820000},
-    {"name": "Rosemon BM", "stage": "Mega", "atk": 1150, "hp": 14200, "base_price": 780000},
-    {"name": "Ravemon BM", "stage": "Mega", "atk": 1180, "hp": 14000, "base_price": 790000},
-    {"name": "BlackWarGreymon", "stage": "Mega", "atk": 1300, "hp": 16500, "base_price": 950000},
-    {"name": "MetalSeadramon", "stage": "Mega", "atk": 1220, "hp": 15800, "base_price": 880000},
-    {"name": "Piedmon", "stage": "Mega", "atk": 1260, "hp": 15000, "base_price": 920000},
-    {"name": "Valkyrimon", "stage": "Mega", "atk": 1100, "hp": 13800, "base_price": 720000},
-    {"name": "Vikemon", "stage": "Mega", "atk": 1120, "hp": 16800, "base_price": 750000},
-    {"name": "GranKuwagamon", "stage": "Mega", "atk": 1190, "hp": 14500, "base_price": 770000}
+    {"name": "ShineGreymon BM", "stage": "Mega", "atk": 1250, "hp": 15500, "base_price": 600},
+    {"name": "MirageGaogamon BM", "stage": "Mega", "atk": 1200, "hp": 14800, "base_price": 600},
+    {"name": "Rosemon BM", "stage": "Mega", "atk": 1150, "hp": 14200, "base_price": 600},
+    {"name": "Ravemon BM", "stage": "Mega", "atk": 1180, "hp": 14000, "base_price": 600},
+    {"name": "BlackWarGreymon", "stage": "Mega", "atk": 1300, "hp": 16500, "base_price": 600},
+    {"name": "MetalSeadramon", "stage": "Mega", "atk": 1220, "hp": 15800, "base_price": 600},
+    {"name": "Piedmon", "stage": "Mega", "atk": 1260, "hp": 15000, "base_price": 600},
+    {"name": "Valkyrimon", "stage": "Mega", "atk": 1100, "hp": 13800, "base_price": 600},
+    {"name": "Vikemon", "stage": "Mega", "atk": 1120, "hp": 16800, "base_price": 600},
+    {"name": "GranKuwagamon", "stage": "Mega", "atk": 1190, "hp": 14500, "base_price": 600}
 ]
 
 HIGH_TIER_GEARS = [
@@ -180,54 +180,9 @@ class ProfileView(discord.ui.View):
         await self.cog.handle_evolve(interaction)
 
 
-class MarketBuySelect(discord.ui.Select):
-    def __init__(self, listings: list, cog_instance):
-        self.cog = cog_instance
-        options = []
-        for item in listings[:25]:
-            options.append(discord.SelectOption(
-                label=f"{item['item_name']} - {item['price']:.2f} DB",
-                description=f"Seller: {item['seller_name']} | ID: {item['listing_id']}",
-                value=item['listing_id'],
-                emoji="🛒"
-            ))
-        if not options:
-            options = [discord.SelectOption(label="Marketplace is empty", value="empty")]
-        super().__init__(placeholder="🛒 Choose an item to purchase...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ No items available.", ephemeral=True)
-        await self.cog.handle_market_buy(interaction, self.values[0])
 
 
-class MarketSellSelect(discord.ui.Select):
-    def __init__(self, inventory: list, cog_instance):
-        self.cog = cog_instance
-        options = []
-        unique_items = list(set(inventory))[:25]
-        for item in unique_items:
-            options.append(discord.SelectOption(label=item, value=item, emoji="📦"))
-        if not options:
-            options = [discord.SelectOption(label="Your inventory is empty", value="empty")]
-        super().__init__(placeholder="📦 Choose an item from your bag to sell...", min_values=1, max_values=1, options=options)
 
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ You have nothing to sell.", ephemeral=True)
-        await interaction.response.send_modal(MarketPriceModal(self.values[0], self.cog))
-
-
-class MarketPriceModal(discord.ui.Modal, title="Set Listing Price"):
-    price = discord.ui.TextInput(label="Price in Digibits", placeholder="e.g., 25.50", max_length=12)
-
-    def __init__(self, item_name: str, cog_instance):
-        super().__init__()
-        self.item_name = item_name
-        self.cog = cog_instance
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.handle_market_sell_enhanced(interaction, self.item_name, self.price.value)
 
 
 class MarketShopView(discord.ui.View):
@@ -464,6 +419,109 @@ class RPGSystemCog(commands.Cog):
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
+    async def handle_market_sell_enhanced(self, interaction: discord.Interaction, item_key: str, price_str: str):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            price = round(float(price_str), 2)
+        except ValueError:
+            return await interaction.followup.send("❌ Invalid price format. Please enter a valid number..", ephemeral=True)
+            
+        if price <= 0:
+            return await interaction.followup.send("❌ The listed selling price must be greater than 0 Orb.", ephemeral=True)
+            
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        if not profile:
+            return await interaction.followup.send("❌Your character profile was not found.", ephemeral=True)
+            
+        inventory = profile.get("inventory", [])
+        target_item = None
+        is_dict_gear = False
+        rarity = "Common"
+        
+        # Tách chuỗi khóa định danh
+        prefix, identifier = item_key.split(":", 1)
+        
+        if prefix == "str":
+            if identifier in inventory:
+                target_item = identifier
+        elif prefix == "dict":
+            for item in inventory:
+                if isinstance(item, dict) and item.get("id") == identifier:
+                    target_item = item
+                    is_dict_gear = True
+                    rarity = item.get("rarity", "Mythic")
+                    break
+                    
+        if target_item is None:
+            return await interaction.followup.send("❌ No matching item was found in your inventory.", ephemeral=True)
+            
+        # Rút vật phẩm an toàn ra khỏi kho đồ
+        await rpg_profiles_col.update_one(
+            {"user_id": user_id},
+            {"$pull": {"inventory": target_item}}
+        )
+        
+        listing_id = f"LIT-{random.randint(10000, 99999)}"
+        
+        # Đưa dữ liệu lên chợ Marketplace
+        await market_col.insert_one({
+            "listing_id": listing_id,
+            "seller_id": user_id,
+            "seller_name": interaction.user.name,
+            "item_type": "gear",
+            "item_name": identifier if not is_dict_gear else target_item.get("name"),
+            "full_gear_data": target_item if is_dict_gear else None, # Giữ nguyên gốc chỉ số Atk/Def nếu là đồ hiếm
+            "is_dict_gear": is_dict_gear,
+            "rarity": rarity,
+            "price": price,
+            "created_at": int(time.time())
+        })
+        
+        item_display = identifier if not is_dict_gear else f"{target_item.get('name')} ({rarity})"
+        await interaction.followup.send(f"🏪 **Successfully listed item {item_display} for {price:.2f} Orb!** (Listing ID: `{listing_id}`)", ephemeral=True)
+
+    async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
+        await interaction.response.defer(ephemeral=True)
+        buyer_id = interaction.user.id
+        
+        listing = await market_col.find_one({"listing_id": listing_id})
+        if not listing:
+            return await interaction.followup.send("❌ The item does not exist or has already been purchased by someone else..", ephemeral=True)
+            
+        seller_id = listing["seller_id"]
+        if buyer_id == seller_id:
+            return await interaction.followup.send("❌You cannot buy back items that you yourself have listed for sale..", ephemeral=True)
+            
+        price = listing["price"]
+        buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
+        
+        if not buyer_profile or buyer_profile.get("orb", 0) < price:
+            return await interaction.followup.send(f"❌ Insufficient Orb balance! You need **{price:.2f} Orb** but currently only have **{price:.2f} Orb**.**{buyer_profile.get('orb', 0):.2f} Orb**.", ephemeral=True)
+            
+        # Chuẩn bị dữ liệu vật phẩm để trả về túi đồ người mua
+        item_to_add = listing["full_gear_data"] if listing.get("is_dict_gear") else listing["item_name"]
+        
+        # Thực hiện giao dịch an toàn (Atomic Transaction)
+        # Bước 1: Trừ Orb của người mua và đẩy đồ vào hòm
+        buyer_res = await rpg_profiles_col.update_one(
+            {"user_id": buyer_id, "orb": {"$gte": price}},
+            {"$inc": {"orb": -price}, "$push": {"inventory": item_to_add}}
+        )
+        
+        if buyer_res.modified_count == 0:
+            return await interaction.followup.send("❌ Transaction interrupted or failed! Please try again..", ephemeral=True)
+            
+        # Bước 2: Cộng Orb cho tài khoản người bán
+        await rpg_profiles_col.update_one(
+            {"user_id": seller_id},
+            {"$inc": {"orb": price}}
+        )
+        
+        # Bước 3: Xóa tin đăng bán khỏi hệ thống chợ công cộng
+        await market_col.delete_one({"listing_id": listing_id})
+        
+        await interaction.followup.send(f"🎉 **Shopping successful!** You now own item `{listing['item_name']}` at the price`{price:.2f} Orb`.", ephemeral=True)
 
     def get_active_digimon(self, profile: dict) -> dict:
         digimon_list = profile.get("digimon_list", [])
@@ -541,21 +599,18 @@ class RPGSystemCog(commands.Cog):
         return drop_gear
 
     async def initialize_market_mega_products(self):
-        for mega in NEW_MEGA_POOL:
-            exists = await market_col.find_one({"name": mega["name"]})
-            if not exists:
-                fluctuated_price = int(mega["base_price"] * random.uniform(0.9, 1.25))
-                market_item = {
-                    "item_id": str(uuid.uuid4()),
-                    "name": mega["name"],
-                    "stage": mega["stage"],
-                    "atk": mega["atk"],
-                    "hp": mega["hp"],
-                    "price": fluctuated_price,
-                    "is_limited": True,
-                    "stock": random.randint(3, 7)
-                }
-                await market_col.insert_one(market_item)
+    # Kiểm tra xem đã có sản phẩm hệ thống chưa
+        existing = await market_col.find_one({"is_system": True})
+        if not existing:
+            for mega in NEW_MEGA_POOL:
+                await market_col.insert_one({
+                    "listing_id": str(uuid.uuid4())[:8],
+                    "item_name": mega["name"],
+                    "price": mega["base_price"],
+                    "seller_name": "System Market",
+                    "is_system": True,
+                    "currency": "orb"  # Thiết lập loại tiền tệ bắt buộc là Obs
+                })
 
     # ========================================================================
     # PROFILE & BAG SYSTEM 
@@ -756,7 +811,74 @@ class RPGSystemCog(commands.Cog):
             
         await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"digibit": 0.40}, "$set": {"last_manual_mine": current_time}})
         await interaction.followup.send(f"⛏️ You mined **+0.40 Digibits** manually!", ephemeral=True)
-
+    @app_commands.command(name="sell_gear", description="Secure your inventory of duplicate regular equipment to exchange for Digibits.")
+    @app_commands.describe(item_name="The exact name of the item they usually want to sell.", quantity="Quantity to sell (Enter a number <= 0 to sell all duplicate copies)")
+    async def sell_gear(self, interaction: discord.Interaction, item_name: str, quantity: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not profile:
+            return await interaction.followup.send("❌ Bạn chưa khởi tạo hồ sơ nhân vật.", ephemeral=True)
+            
+        inventory = profile.get("inventory", [])
+        equipped = profile.get("gear", {"weapon": "None", "armor": "None", "vice": "None"})
+        
+        # Làm sạch chuỗi tìm kiếm để đối chiếu chính xác hoàn toàn
+        cleaned_search = self.clean_item_name(item_name)
+        
+        # Thiết lập cơ chế bảo vệ: Danh sách trang bị đang mặc trên người
+        equipped_items = [
+            self.clean_item_name(equipped.get("weapon")),
+            self.clean_item_name(equipped.get("armor")),
+            self.clean_item_name(equipped.get("vice"))
+        ]
+        
+        if cleaned_search in equipped_items:
+            return await interaction.followup.send(f"❌ **Hành động bị chặn an toàn!** Món đồ `{item_name}` hiện đang được bạn trang bị trực tiếp trên người. Hãy tháo ra trước khi thanh lý!", ephemeral=True)
+            
+        # Lọc ra danh sách các vật phẩm dạng Chuỗi trùng khớp trong hòm đồ
+        normal_matches = [item for item in inventory if isinstance(item, str) and self.clean_item_name(item) == cleaned_search]
+        
+        if not normal_matches:
+            return await interaction.followup.send(f"❌ Không tìm thấy trang bị thường (dạng String) nào mang tên `{item_name}` trong túi đồ. (Lưu ý: Lệnh này bảo vệ tuyệt đối và không can thiệp vào đồ hiếm High-Tier).", ephemeral=True)
+            
+        available_count = len(normal_matches)
+        
+        # Nếu nhập số lượng <= 0 thì tự động hiểu là xả sạch toàn bộ đồ thường trùng tên đó
+        to_sell_count = available_count if quantity <= 0 else min(quantity, available_count)
+        
+        # Tính toán giá trị quy đổi dựa trên dữ liệu ITEMS của bạn
+        item_base_data = self.ITEMS.get(cleaned_search, {})
+        price_per_item = 500  # Giá cơ bản của một món đồ rác
+        if "atk" in item_base_data: price_per_item += item_base_data["atk"] * 5
+        if "def" in item_base_data: price_per_item += item_base_data["def"] * 10
+        
+        total_payout = price_per_item * to_sell_count
+        
+        # Tiến hành bóc tách chính xác số lượng trang bị ra khỏi mảng mà không làm ảnh hưởng các vật phẩm khác
+        new_inventory = []
+        removed_count = 0
+        for item in inventory:
+            if isinstance(item, str) and self.clean_item_name(item) == cleaned_search and removed_count < to_sell_count:
+                removed_count += 1
+                continue  # Bỏ qua phần tử này (tương đương loại bỏ khỏi hòm đồ)
+            new_inventory.append(item)
+            
+        # Cập nhật an toàn cơ sở dữ liệu
+        await rpg_profiles_col.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {"inventory": new_inventory},
+                "$inc": {"digibit": total_payout}
+            }
+        )
+        
+        await interaction.followup.send(
+            f"♻️ **Hệ thống thanh lý an toàn:** Đã bán hoàn tất `{to_sell_count}/{available_count}` món `{normal_matches[0]}` thường.\n"
+            f"💰 Tài khoản của bạn nhận lời: **+{total_payout:,} Digibits**.", 
+            ephemeral=True
+        )
     async def handle_toggle_automine(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
@@ -793,8 +915,8 @@ class RPGSystemCog(commands.Cog):
             updates = {"$inc": {}, "$push": {}}
             
             if profile.get("is_auto_mining"):
-                updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 0.2
-                log_msgs.append("⛏️ Mine: +0.2 Bits")
+                updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + 1
+                log_msgs.append("⛏️ Mine: + 1 Bits")
                 
             dungeon = profile.get("auto_dungeon")
             if dungeon:
@@ -817,7 +939,7 @@ class RPGSystemCog(commands.Cog):
                 # Check auto dungeon reward for high tier items
                 high_tier_gear = await self.process_auto_dungeon_rewards(user_id)
                 if high_tier_gear:
-                    log_msgs.append(f"🌟 LỘC LỚN: Tìm thấy {high_tier_gear['name']}")
+                    log_msgs.append(f"🌟BIG FORTUNE: Found{high_tier_gear['name']}")
                     
                 loot_str = f", {cores} Cores" if dungeon == "core_sanctuary" else (f", {cores} Cores, {len(loot_dropped)} Gears" if cores or loot_dropped else "")
                 log_msgs.append(f"🏰 DG: +{runs} Bits{loot_str}")
@@ -936,46 +1058,82 @@ class RPGSystemCog(commands.Cog):
             
         await interaction.followup.send(embed=embed, view=MarketShopView(self, interaction.user.id), ephemeral=True)
 
-    async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
-        await interaction.response.defer(ephemeral=True)
-        buyer_id = interaction.user.id
-        listing = await market_col.find_one({"listing_id": listing_id.upper()})
-        if not listing: return await interaction.followup.send("❌ **Listing Not Found!**", ephemeral=True)
-        if listing.get("seller_id") == buyer_id: return await interaction.followup.send("❌ Cannot buy your own listing.", ephemeral=True)
+class MarketSellSelect(discord.ui.Select):
+    def __init__(self, inventory: list, cog_instance):
+        self.cog = cog_instance
+        options = []
         
-        buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
-        if not buyer_profile or buyer_profile.get("digibit", 0.0) < listing["price"]: 
-            return await interaction.followup.send("❌ **Insufficient Digibits.**", ephemeral=True)
+        # Gom cụm vật phẩm dạng Chuỗi và vật phẩm dạng Dict để tránh trùng lặp hiển thị
+        seen_strings = set()
+        for item in inventory:
+            if len(options) >= 25: # Giới hạn hiển thị của Discord Menu
+                break
+            if isinstance(item, str):
+                if item not in seen_strings:
+                    seen_strings.add(item)
+                    options.append(discord.SelectOption(
+                        label=f"Rao bán: {item} (Thường)", 
+                        value=f"str:{item}", 
+                        emoji="📦"
+                    ))
+            elif isinstance(item, dict):
+                # Đồ hiếm có ID độc bản (UUID)
+                item_id = item.get("id")
+                item_name = item.get("name", "Unknown Gear")
+                rarity = item.get("rarity", "Common")
+                options.append(discord.SelectOption(
+                    label=f"Rao bán: {item_name} ({rarity})", 
+                    value=f"dict:{item_id}", 
+                    emoji="✨"
+                ))
+                
+        if not options:
+            options = [discord.SelectOption(label="Your inventory is empty",value="empty")] 
             
-        price = listing["price"]
-        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"digibit": -price}, "$push": {"inventory": listing.get("raw_gear_name", listing.get("name"))}})
-        
-        if listing.get("seller_id"):
-            await rpg_profiles_col.update_one({"user_id": listing["seller_id"]}, {"$inc": {"digibit": price}})
-            
-        await market_col.delete_one({"_id": listing["_id"]})
-        await interaction.followup.send(f"🛍️ **Purchased {listing.get('item_name', listing.get('name'))} for {price:.2f} Digibits!**", ephemeral=True)
+        super().__init__(placeholder="📦 Select items from your inventory to sell...", min_values=1, max_values=1, options=options)
 
-    async def handle_market_sell_enhanced(self, interaction: discord.Interaction, target: str, price_str: str):
-        await interaction.response.defer(ephemeral=True)
-        try: price = round(float(price_str), 2)
-        except: return await interaction.followup.send("❌ Invalid price format.", ephemeral=True)
-        if price <= 0: return await interaction.followup.send("❌ Price must be > 0.", ephemeral=True)
-        
-        user_id = interaction.user.id
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        if not profile or target not in profile.get("inventory", []):
-            return await interaction.followup.send("❌ Item not found in your inventory bag.", ephemeral=True)
-            
-        await rpg_profiles_col.update_one({"user_id": user_id}, {"$pull": {"inventory": target}})
-        listing_id = f"LIT-{random.randint(1000, 9999)}"
-        
-        await market_col.insert_one({
-            "listing_id": listing_id, "seller_id": user_id, "seller_name": interaction.user.name, 
-            "item_type": "gear", "item_name": target, "raw_gear_name": target, "quantity": 1, 
-            "price": price, "created_at": int(time.time())
-        })
-        await interaction.followup.send(f"🏪 **Successfully listed {target} for {price:.2f} Bits!** (ID: `{listing_id}`)", ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "empty":
+            return await interaction.response.send_message("❌ Bạn không có vật phẩm nào phù hợp để bán.", ephemeral=True)
+        # Truyền thông tin khóa vật phẩm qua Modal
+        await interaction.response.send_modal(MarketPriceModal(self.values[0], self.cog))
+
+
+class MarketPriceModal(discord.ui.Modal, title="Set a price for the item"):
+    price = discord.ui.TextInput(label="Giá bán bằng Orb", placeholder="Ví dụ: 5 hoặc 12.5", max_length=12)
+
+    def __init__(self, item_key: str, cog_instance):
+        super().__init__()
+        self.item_key = item_key  # Định dạng cấu trúc: "str:Tên_Đồ" hoặc "dict:ID_Đồ"
+        self.cog = cog_instance
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.handle_market_sell_enhanced(interaction, self.item_key, self.price.value)
+
+
+class MarketBuySelect(discord.ui.Select):
+    def __init__(self, listings: list, cog_instance):
+        self.cog = cog_instance
+        options = []
+        for item in listings[:25]:
+            is_dict_gear = item.get("is_dict_gear", False)
+            suffix = f" ({item.get('rarity', 'Rare')})" if is_dict_gear else " (Regular)"
+            options.append(discord.SelectOption(
+                label=f"{item['item_name']}{suffix} - {item['price']:.2f} Orb",
+                description=f"Người bán: {item['seller_name']} | ID: {item['listing_id']}",
+                value=item['listing_id'],
+                emoji="🛒"
+            ))
+        if not options:
+            options = [discord.SelectOption(label="The market is currently empty.", value="empty")]
+        super().__init__(placeholder="🛒 Choose an item from the list to buy...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "empty":
+            return await interaction.response.send_message("❌ Hiện tại không có vật phẩm nào được bày bán.", ephemeral=True)
+        await self.cog.handle_market_buy(interaction, self.values[0])
+
+    
 
     # ========================================================================
     # WORLD BOSS & REAL-TIME LEADERBOARD SYSTEM
@@ -1128,7 +1286,7 @@ class RPGSystemCog(commands.Cog):
         else:
             self.auto_attackers.add(user_id)
             self.auto_attack_cache[user_id] = 0
-            await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** Hệ thống sẽ dồn sát thương và thông báo ngầm mỗi 10s.", ephemeral=True)
+            await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** The system will deal damage and provide in every 20s seconds.", ephemeral=True)
             # Truyền nguyên object interaction vào task để tận dụng followup.send
             self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction))
 
@@ -1150,7 +1308,7 @@ class RPGSystemCog(commands.Cog):
                 self.auto_attackers.discard(user_id)
                 self.auto_attack_cache.pop(user_id, None)
                 try:
-                    await interaction.followup.send("❌ **Trận chiến kết thúc hoặc Digimon đã gục!** Dừng Auto-Attack.", ephemeral=True)
+                    await interaction.followup.send("❌ **The battle is over or the Digimon are defeated!** Stop Auto-Attack.", ephemeral=True)
                 except discord.NotFound: pass
                 break
 
@@ -1200,7 +1358,7 @@ class RPGSystemCog(commands.Cog):
                 
                 if new_hp == 0:
                     try:
-                        await interaction.followup.send(f"💀 **CẢNH BÁO:** Digimon của bạn đã bị phản đòn hạ gục!", ephemeral=True)
+                        await interaction.followup.send(f"💀 **WARNING:** Your Digimon has been defeated by a counterattack.!", ephemeral=True)
                     except discord.NotFound: pass
                     self.auto_attackers.discard(user_id)
                     break
@@ -1209,7 +1367,7 @@ class RPGSystemCog(commands.Cog):
                 await self.distribute_boss_loot(result)
                 await self.trigger_chain_boss_respawn(result.get("participants", []))
                 try:
-                    await interaction.followup.send("🎉 **BOSS DEFEATED!** Chuỗi Auto-Attack hoàn tất.", ephemeral=True)
+                    await interaction.followup.send("🎉 **BOSS DEFEATED!* Auto-Attack chain complete.", ephemeral=True)
                 except discord.NotFound: pass
                 self.auto_attackers.discard(user_id)
                 break
@@ -1333,7 +1491,7 @@ class RPGSystemCog(commands.Cog):
 
         try:
             if not interaction.response.is_done():
-                await interaction.response.send_message(f"Bạn đã gây {damage_dealt:,} sát thương lên {boss['name']}.", ephemeral=True)
+                await interaction.response.send_message(f"You have dealt {damage_dealt:,} damage to {boss['name']}.", ephemeral=True)
         except Exception:
             pass
 
@@ -1393,11 +1551,11 @@ class RPGSystemCog(commands.Cog):
         try:
             webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
             await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
-            await interaction.followup.send("✅ Success! Kênh Boss đã được thiết lập.", ephemeral=True)
+            await interaction.followup.send("✅ Success! The Global channel has been set up.", ephemeral=True)
         except discord.Forbidden:
-            await interaction.followup.send("❌ Lỗi: Thiếu quyền `Manage Webhooks`.", ephemeral=True)
+            await interaction.followup.send("❌ Error: Lack of `Manage Webhooks` permission.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Lỗi: {e}", ephemeral=True)    
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)    
 
     @commands.Cog.listener()
     async def on_message(self, message):
