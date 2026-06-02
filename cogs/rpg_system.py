@@ -482,7 +482,7 @@ class RPGSystemCog(commands.Cog):
         
         item_display = identifier if not is_dict_gear else f"{target_item.get('name')} ({rarity})"
         await interaction.followup.send(f"🏪 **Successfully listed item {item_display} for {price:.2f} Orb!** (Listing ID: `{listing_id}`)", ephemeral=True)
-        def generate_boss_embed(self, boss_data: dict) -> discord.Embed:
+    def generate_boss_embed(self, boss_data: dict) -> discord.Embed:
             max_hp = boss_data.get("max_hp", 1)
             current_hp = max(0, boss_data.get("current_hp", boss_data.get("hp", 0)))
             hp_percent = current_hp / max_hp
@@ -507,7 +507,7 @@ class RPGSystemCog(commands.Cog):
                 embed.add_field(name="🏆 DAMAGE LEADERBOARD", value="No attackers yet...", inline=False)
 
             embed.set_footer(text="Use /combat or buttons below to fight!")
-            return embed
+            return embed    
 
     async def broadcast_initial_boss(self, boss_data: dict):
         embed = self.generate_boss_embed(boss_data)
@@ -582,9 +582,9 @@ class RPGSystemCog(commands.Cog):
         
         await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
         boss_roster = [
-            {"name": "Devimon", "hp": 25_000_000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
-            {"name": "WarGreymon", "hp": 100_000_000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
-            {"name": "Apocalymon", "hp": 250_000_000, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"}
+            {"name": "Devimon", "hp": 7_000, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
+            {"name": "WarGreymon", "hp": 7_000, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
+            {"name": "Apocalymon", "hp": 7_000, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"}
         ]
         chosen = random.choice(boss_roster)
         new_boss = {"boss_id": str(uuid.uuid4()), "name": chosen["name"], "max_hp": chosen["hp"], "current_hp": chosen["hp"], "hp": chosen["hp"], "attr": chosen["attr"], "img": chosen["img"], "is_active": True, "damage_log": {}, "active_messages": [], "participants": []}
