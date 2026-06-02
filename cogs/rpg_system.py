@@ -1821,7 +1821,7 @@ class MarketBuySelect(discord.ui.Select):
             return await interaction.response.send_message(
                 "❌ Currently, no items are available for sale.", ephemeral=True
             )
-        await self.handle_market_buy(interaction, self.values[0])
+        await self.cog.handle_market_buy(interaction, self.values[0])
 
 
 async def setup(bot):
