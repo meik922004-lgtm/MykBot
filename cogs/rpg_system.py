@@ -597,22 +597,12 @@ class RPGSystemCog(commands.Cog):
         return embed    
 
     async def broadcast_initial_boss(self, boss_data: dict):
-        embed = self.generate_boss_embed(boss_data)
-        channels = await boss_channels_col.find({}).to_list(None)
-        active_messages = []
-        
-        for c in channels:
-            if url := c.get("webhook_url"):
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        webhook = discord.Webhook.from_url(url, session=s)
-                        msg = await webhook.send(content="🚨 **WORLD BOSS HAS SPAWNED! PREPARE FOR BATTLE!**", embed=embed, view=CombatView(self), username="SYSTEM RAID", wait=True)
-                        active_messages.append({"channel_id": c["channel_id"], "message_id": msg.id, "webhook_url": url})
-                except Exception as e:
-                    print(f"Announcement failed: {e}")
-                    
-        if active_messages: await world_boss_col.update_one({"_id": boss_data["_id"]}, {"$set": {"active_messages": active_messages}})
-        if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
+        # Đã xóa logic gửi thông báo Webhook tự động
+        # Chỉ giữ lại lệnh kích hoạt vòng lặp cập nhật máu Boss (nếu vòng lặp đang ngủ)
+        if not hasattr(self, 'live_boss_update_loop'):
+            return
+        if not self.live_boss_update_loop.is_running(): 
+            self.live_boss_update_loop.start()
 
     @tasks.loop(seconds=20)
     async def live_boss_update_loop(self):
