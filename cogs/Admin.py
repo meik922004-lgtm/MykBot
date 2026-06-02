@@ -2,7 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
-from Database import db 
+from Database import db,news_col
+
 
 # ==========================================
 # 1. VIEW DỊCH THUẬT GIAO DIỆN SỰ KIỆN
@@ -172,7 +173,107 @@ class DigitalTour(commands.Cog):
 
 # ==========================================
 # 3. COG ADMIN (QUẢN TRỊ HỆ THỐNG)
-# ==========================================
+
+
+
+
+class NewsSystemCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        # CHÚ Ý: Thay ID của bạn vào mảng này
+        self.OWNER_IDS = [1283689737567211581] 
+
+    # ========================================================================
+    # LỆNH 1: SETUP NEWS CHANNEL (Dành cho Admin Server)
+    # ========================================================================
+    @app_commands.command(name="setup_news_channel", description="Subscribe to the channel to receive news and updates from Bot.")
+    @app_commands.describe(channel="Select the channel you want the bot to send notifications to.")
+    # ĐÃ XÓA decorator check permission ở đây để tự xử lý linh hoạt bên trong
+    async def setup_news_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        
+        # 1. KIỂM TRA QUYỀN HẠN: Cho phép nếu là Admin server HOẶC là Bot Owner
+        is_admin = interaction.permissions.manage_guild if interaction.guild else False
+        if not (is_admin or interaction.user.id in self.OWNER_IDS):
+            return await interaction.response.send_message("❌ Access denied! You need Server Administrator privileges to use this command..", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = interaction.guild.id
+        channel_id = channel.id
+
+        # 2. Lưu vào Database
+        await news_col.update_one(
+            {"guild_id": guild_id},
+            {"$set": {"channel_id": channel_id}},
+            upsert=True
+        )
+
+        embed = discord.Embed(
+            title="✅ Setup Successful",
+            description=f"This server has been subscribed to receive updates on this channel. {channel.mention}.",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ========================================================================
+    # LỆNH 2: OWNER BROADCAST (Chỉ dành cho Developer/Owner)
+    # ========================================================================
+    @app_commands.command(name="ownerbroadcast", description="Gửi thông báo đến toàn bộ các server đã đăng ký")
+    @app_commands.describe(message="Nội dung thông báo (dùng \n nếu muốn xuống dòng)")
+    async def ownerbroadcast(self, interaction: discord.Interaction, message: str):
+        # Kiểm tra xem người dùng có phải là Owner không
+        if interaction.user.id not in self.OWNER_IDS:
+            return await interaction.response.send_message("❌ Lệnh này chỉ dành cho Developer.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Lấy toàn bộ danh sách channel từ Database
+        # Nếu dùng motor async
+        cursor = news_col.find({})
+        channels_data = await cursor.to_list(length=None) 
+        
+        success_count = 0
+        fail_count = 0
+
+        # Lặp qua từng server để gửi tin
+        for data in channels_data:
+            channel_id = data.get("channel_id")
+            if not channel_id:
+                continue
+                
+            try:
+                # Tìm kênh trong cache, nếu không có thì fetch từ API Discord
+                channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+                
+                if channel:
+                    embed = discord.Embed(
+                        title="📢 Annoucement from MyK",
+                        description=message.replace("\\n", "\n"), # Hỗ trợ xuống dòng nếu nhập \n trong command
+                        color=discord.Color.blue()
+                    )
+                    embed.set_footer(text="News is sent automatically because the server uses /setup_news_channel.")
+                    
+                    await channel.send(embed=embed)
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except discord.Forbidden:
+                # Xảy ra khi Bot bị mất quyền gửi tin nhắn hoặc bị kick khỏi server
+                fail_count += 1
+            except Exception as e:
+                print(f"Lỗi khi gửi broadcast tới kênh {channel_id}: {e}")
+                fail_count += 1
+
+        # Trả kết quả báo cáo cho Owner
+        summary = (
+            f"✅ **Hoàn tất quá trình gửi tin Broadcast!**\n"
+            f"🟢 Thành công: `{success_count}` server\n"
+            f"🔴 Thất bại: `{fail_count}` server (Do bot bị kick hoặc thiếu quyền gửi tin nhắn)"
+        )
+        await interaction.followup.send(summary, ephemeral=True)
+
+async def setup(bot):
+    await bot.add_cog(NewsSystemCog(bot))
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
