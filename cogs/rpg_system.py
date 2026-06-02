@@ -117,6 +117,7 @@ class GearInventorySelect(discord.ui.Select):
         options = []
         string_counts = {}
         dict_items = []
+        self.cog = cog_instance
         
         for gear in gear_list:
             if isinstance(gear, str):
@@ -133,7 +134,7 @@ class GearInventorySelect(discord.ui.Select):
             if "atk" in gear_data: stats.append(f"ATK +{gear_data['atk']}")
             if "def" in gear_data: stats.append(f"DEF +{gear_data['def']}")
             if "hp" in gear_data: stats.append(f"HP +{gear_data['hp']}")
-            stat_desc = " | ".join(stats) if stats else "Vật phẩm tiêu hao/Khác"
+            stat_desc = " | ".join(stats) if stats else "Consumable items/Other"
             
             quantity_label = f" x{count}" if count > 1 else ""
             options.append(discord.SelectOption(
