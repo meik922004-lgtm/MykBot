@@ -728,26 +728,17 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
     @tasks.loop(minutes=2)
     async def farm_system_loop(self):
-        # 1. Query chuẩn theo Database (auto_dungeon phải có giá trị và is_auto_mining phải là True)
-        query = {
-            "auto_dungeon": "digital_dimension",
-        }
+        # 1. Query danh sách người chơi đang farm
+        query = {"auto_dungeon": "digital_dimension"}
         profiles = await rpg_profiles_col.find(query).to_list(length=None)
-        
-        if not profiles:
-            print("DEBUG: No profiles found with auto_dungeon active.")
-            return
-
-        bulk_operations = []
         
         for profile in profiles:
             user_id = profile["user_id"]
             log_msgs = []
-            # Khởi tạo các toán tử update, sử dụng float cho digibit
-            inc_data = {}
-            push_data = {}
-            items_to_push = []
             
+            # --- Các thông số tính toán ---
+            inc_data = {}
+            items_to_push = []
             # Ép kiểu dữ liệu đầu vào để khớp với Double
             is_vip = bool(profile.get("is_vip", False))
             is_premium = bool(profile.get("premium_ui", False))
@@ -760,13 +751,11 @@ class RPGSystemCog(commands.Cog):
             base_db = 60.0
             efficiency_bonus = float(profile.get("mining_efficiency_bonus", 0))
             assistant_bonus_db = float(base_db * (efficiency_bonus * 0.10))
-            
             total_db_gained = float(base_db + assistant_bonus_db)
             bonus_db_from_dupes = 0.0
-            new_gears_count = 0
 
             # --- 2. Hatch Cores ---
-            core_chance = 1 if is_vip else 0.7
+            core_chance = 1.0 if is_vip else 0.7
             cores = float(random.randint(1, 2) if (random.random() < core_chance) else 0)
 
             # --- 3. Điều chỉnh tỷ lệ rớt Trang bị Thường (All types) ---
@@ -813,29 +802,25 @@ class RPGSystemCog(commands.Cog):
             # Nếu không có gì xảy ra, vẫn ghi log để user biết loop chạy
             if not log_msgs:
                 log_msgs.append("🌌 Mining in progress...")
-            
             log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] Farm: +{total_db_gained} DB | " + " | ".join(log_msgs)
-            push_data["farm_logs"] = {"$each": [log_entry], "$slice": -50}
-            # --- 6. Chuẩn bị bulk_write ---
-            # --- 6. Chuẩn bị bulk_write chuẩn xác ---
-            update_query = {}
-            if inc_data:
-                update_query["$inc"] = inc_data
             
-            # Gộp push_data (logs) và inventory vào cùng một object $push
-            final_push = {}
-            if push_data:
-                final_push.update(push_data)
+            # Cấu trúc cập nhật trực tiếp cho từng user
+            update_query = {"$inc": inc_data}
+            push_query = {"farm_logs": {"$each": [log_entry], "$slice": -50}}
+            
             if items_to_push:
-                final_push["inventory"] = {"$each": items_to_push}
+                push_query["inventory"] = {"$each": items_to_push}
             
-            if final_push:
-                update_query["$push"] = final_push
+            update_query["$push"] = push_query
             
-            # Chỉ append nếu thực sự có thay đổi
-            if update_query:
-                bulk_operations.append(UpdateOne({"user_id": user_id}, update_query))
-            print(f"DEBUG: Successfully processed {len(bulk_operations)} farms.")
+            # --- 6. Thực hiện update_one (Upsert để đảm bảo an toàn) ---
+            try:
+                await rpg_profiles_col.update_one(
+                    {"user_id": user_id},
+                    update_query
+                )
+            except Exception as e:
+                print(f"DEBUG: Error updating user {user_id}: {e}")
    #==============================================
    #                  WOLRD BOSS 
    #==============================================
