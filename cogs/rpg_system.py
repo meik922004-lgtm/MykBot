@@ -728,99 +728,114 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
     @tasks.loop(minutes=2)
     async def farm_system_loop(self):
-        # 1. Query danh sách người chơi đang farm
+        # 1. Truy vấn danh sách người chơi đang bật auto_dungeon
         query = {"auto_dungeon": "digital_dimension"}
         profiles = await rpg_profiles_col.find(query).to_list(length=None)
         
+        if not profiles:
+            return # Thoát vòng lặp sớm nếu không có ai đang farm
+
         for profile in profiles:
-            user_id = profile["user_id"]
-            log_msgs = []
-            
-            # --- Các thông số tính toán ---
-            inc_data = {}
-            items_to_push = []
-            # Ép kiểu dữ liệu đầu vào để khớp với Double
+            user_id = profile.get("user_id")
+            if not user_id: continue
+
+            # --- DỮ LIỆU ĐẦU VÀO TỪ DB ---
             is_vip = bool(profile.get("is_vip", False))
             is_premium = bool(profile.get("premium_ui", False))
+            efficiency_bonus = int(profile.get("mining_efficiency_bonus", 0)) # Int32 theo DB
             
-            # --- Tải danh sách tên vật phẩm (Anti-Dupe) ---
+            # --- XỬ LÝ INVENTORY & CHỐNG DUPE ---
             inventory = profile.get("inventory", [])
-            existing_item_names = { (item.get("name") if isinstance(item, dict) else item.replace(" (Unlocked)", "")) for item in inventory }
+            # Tối ưu hóa việc bóc tách tên vật phẩm để tra cứu nhanh (O(1))
+            existing_items = {
+                (item.get("name") if isinstance(item, dict) else item.replace(" (Unlocked)", ""))
+                for item in inventory
+            }
 
-            # --- 1. Tính thưởng Digibit (Ép sang float) ---
-            base_db = 60.0
-            efficiency_bonus = float(profile.get("mining_efficiency_bonus", 0))
-            assistant_bonus_db = float(base_db * (efficiency_bonus * 0.10))
-            total_db_gained = float(base_db + assistant_bonus_db)
+            # --- BIẾN LƯU TRỮ TẠM THỜI THƯỞNG ---
+            log_msgs = []
+            items_to_push = []
             bonus_db_from_dupes = 0.0
 
-            # --- 2. Hatch Cores ---
+            # --- LOGIC 1: TÍNH THƯỞNG DIGIBIT (Double) ---
+            base_db = 60.0
+            assistant_bonus_db = base_db * (efficiency_bonus * 0.10)
+            
+            # --- LOGIC 2: HATCH CORES (Int32) ---
             core_chance = 1.0 if is_vip else 0.7
-            cores = float(random.randint(1, 2) if (random.random() < core_chance) else 0)
+            # Chuyển thành int để khớp với Int32 trong MongoDB
+            gained_cores = int(random.randint(1, 2) if random.random() < core_chance else 0)
 
-            # --- 3. Điều chỉnh tỷ lệ rớt Trang bị Thường (All types) ---
-            drop_chance = 0.04 if is_premium else 0.025 # Tỷ lệ rớt đồ tổng hợp được tối ưu lại
+            # --- LOGIC 3: ROLL ĐỒ THƯỜNG ---
+            drop_chance = 0.04 if is_premium else 0.025
             if random.random() < drop_chance:
                 loot_base_name, loot_type = self.roll_pve_loot()
-                gear_obj = {
-                    "id": str(uuid.uuid4()),
-                    "name": loot_base_name,
-                    "type": loot_type,
-                    "rarity": "Common" if "Rusty" in loot_base_name else "Rare",
-                    "obtained_at": int(time.time())
-                }
                 
-                # Check trùng đồ thường
-                if gear_obj["name"] in existing_item_names:
-                    bonus_db_from_dupes += 15 # Trùng tự động đổi thành 15 DB
+                if loot_base_name in existing_items:
+                    bonus_db_from_dupes += 15.0
                 else:
+                    gear_obj = {
+                        "id": str(uuid.uuid4()),
+                        "name": loot_base_name,
+                        "type": loot_type,
+                        "rarity": "Common" if "Rusty" in loot_base_name else "Rare",
+                        "obtained_at": int(time.time())
+                    }
                     items_to_push.append(gear_obj)
-                    existing_item_names.add(gear_obj["name"])
-                    new_gears_count += 1
+                    existing_items.add(loot_base_name)
 
-            # --- 4. Kiểm tra tỷ lệ rớt Trang bị Hiếm (Mythic) ---
+            # --- LOGIC 4: ROLL ĐỒ MYTHIC HIẾM ---
             high_tier_gear = self.roll_auto_dungeon_high_tier_reward()
             if high_tier_gear:
                 ht_name = high_tier_gear["name"]
-                # Check trùng đồ Mythic
-                if ht_name in existing_item_names:
-                    bonus_db_from_dupes += 100 # Trùng tự động đổi thành 100 DB
+                if ht_name in existing_items:
+                    bonus_db_from_dupes += 100.0
                     log_msgs.append(f"🌟 Dupe: {ht_name} -> Salvaged for +100 DB")
                 else:
                     items_to_push.append(high_tier_gear)
-                    existing_item_names.add(ht_name)
-                    new_gears_count += 1
+                    existing_items.add(ht_name)
                     log_msgs.append(f"🌟 MYTHIC DROP: Found {ht_name}!")
 
-            # --- 5. Tổng hợp dữ liệu ghi nhận lên MongoDB ---
-            total_db_gained += float(bonus_db_from_dupes)
-            inc_data["digibit"] = total_db_gained
-            if cores > 0:
-                inc_data["hatch_core"] = cores
+            # --- TỔNG HỢP TÀI NGUYÊN ---
+            total_db_gained = float(base_db + assistant_bonus_db + bonus_db_from_dupes)
 
-            # --- 5. Format Log ---
-            # Nếu không có gì xảy ra, vẫn ghi log để user biết loop chạy
+            # --- LOGIC 5: ĐỊNH DẠNG LOG ---
             if not log_msgs:
                 log_msgs.append("🌌 Mining in progress...")
             log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] Farm: +{total_db_gained} DB | " + " | ".join(log_msgs)
-            
-            # Cấu trúc cập nhật trực tiếp cho từng user
-            update_query = {"$inc": inc_data}
-            push_query = {"farm_logs": {"$each": [log_entry], "$slice": -50}}
-            
+
+            # --- LOGIC 6: XÂY DỰNG UPDATE DOCUMENT (Rất quan trọng) ---
+            update_query = {"$inc": {}, "$push": {}}
+
+            # Chỉ đưa vào $inc nếu có giá trị thực sự
+            if total_db_gained > 0:
+                update_query["$inc"]["digibit"] = total_db_gained
+            if gained_cores > 0:
+                update_query["$inc"]["hatch_core"] = gained_cores
+                
+            # Đưa log và item vào mảng $push
+            update_query["$push"]["farm_logs"] = {
+                "$each": [log_entry], 
+                "$slice": -50
+            }
             if items_to_push:
-                push_query["inventory"] = {"$each": items_to_push}
-            
-            update_query["$push"] = push_query
-            
-            # --- 6. Thực hiện update_one (Upsert để đảm bảo an toàn) ---
-            try:
-                await rpg_profiles_col.update_one(
-                    {"user_id": user_id},
-                    update_query
-                )
-            except Exception as e:
-                print(f"DEBUG: Error updating user {user_id}: {e}")
+                update_query["$push"]["inventory"] = {
+                    "$each": items_to_push
+                }
+
+            # Xóa các operator rỗng để tránh lỗi MongoDB
+            if not update_query["$inc"]: del update_query["$inc"]
+            if not update_query["$push"]: del update_query["$push"]
+
+            # --- LOGIC 7: THỰC THI LỆNH UPDATE CỤ THỂ CHO TỪNG USER ---
+            if update_query:
+                try:
+                    await rpg_profiles_col.update_one(
+                        {"user_id": user_id},
+                        update_query
+                    )
+                except Exception as e:
+                    print(f"[Farm System] Error updating user {user_id}: {e}")
    #==============================================
    #                  WOLRD BOSS 
    #==============================================
