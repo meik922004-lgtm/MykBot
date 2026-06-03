@@ -588,6 +588,7 @@ class RPGSystemCog(commands.Cog):
         self.auto_spawn_boss.cancel()
         self.farm_system_loop.cancel()
         self.live_boss_update_loop.cancel()
+        self.farm_system_loop.start()
 
     # ========================================================================
     #                       HELPER METHODS
@@ -635,9 +636,8 @@ class RPGSystemCog(commands.Cog):
         assistants = profile.get("mining_assistants", [])
         
         # Kiểm tra xem người chơi có đang bật Auto-Farm không (tùy thuộc vào cách bạn lưu biến này trong loop)
-        is_farming = profile.get("is_farming", False) 
-        status_text = "🟢Automated farming" if is_farming else "🔴 On pause"
-        
+        is_farming = profile.get("auto_dungeon") == "digital_dimension"
+        status_text = "🟢 Automated farming" if is_farming else "🔴 On pause"
         # Thiết kế giao diện Bảng Điều Khiển (Embed)
         embed = discord.Embed(
             title="⛏️ AUTO-FARM & OPERATIONS CENTER🌌",
@@ -813,7 +813,7 @@ class RPGSystemCog(commands.Cog):
 
             if log_msgs:
                 log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] " + " | ".join(log_msgs)
-                updates["$push"]["farm_logs"] = {"$each": [log_entry], "$slice": -10}
+                updates["$push"]["farm_logs"] = {"$each": [log_entry], "$slice": -50}
                 
             if items_to_push:
                 updates["$push"]["inventory"] = {"$each": items_to_push}
