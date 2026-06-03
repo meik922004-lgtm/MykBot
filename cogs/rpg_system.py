@@ -1677,6 +1677,16 @@ class RPGSystemCog(commands.Cog):
             return True
             
         return False
+    
+    async def handle_set_active_digimon(self, interaction, digimon_id):
+        # 1. Cập nhật active_digimon_id trong database
+        await rpg_profiles_col.update_one(
+            {"user_id": interaction.user.id},
+            {"$set": {"active_digimon_id": digimon_id}}
+        )
+        
+        # 2. Phản hồi cho người chơi
+        await interaction.followup.send(f"✅ Digimon with ID {digimon_id} has been activated!", ephemeral=True)
     # ========================================================================
     # MARKET COMMANDS & HANDLERS
     # ========================================================================
