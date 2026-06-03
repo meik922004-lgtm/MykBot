@@ -173,7 +173,7 @@ class GearInventorySelect(discord.ui.Select):
             if not active_digi:
                 return await interaction.followup.send("❌ You need to activate a Digimon before using a Fruit.!", ephemeral=True)
                 
-            new_size = round(random.uniform(0.5, 1.25), 2)
+            new_size = round(random.uniform(1, 1.30), 2)
             active_digi["size"] = new_size
             inventory.remove(target_item)
             
@@ -1681,21 +1681,20 @@ class RPGSystemCog(commands.Cog):
     # MARKET COMMANDS & HANDLERS
     # ========================================================================
     async def initialize_market_mega_products(self):
-        """Tối ưu hóa: Lấy trực tiếp chỉ số ATK và HP cực mạnh từ NEW_MEGA_POOL đưa vào Chợ"""
+        """Khởi tạo Market với dữ liệu trực tiếp từ NEW_MEGA_POOL, khắc phục lỗi rỗng Skill và Attr"""
 
         for mega in NEW_MEGA_POOL:
             mega_name = mega["name"]
             
-            # 1. Lấy trực tiếp chỉ số chuẩn từ NEW_MEGA_POOL bạn vừa cung cấp
+            # Lấy toàn bộ chỉ số trực tiếp từ Dictionary trong NEW_MEGA_POOL
             base_hp = int(mega.get("hp", 15000))
             base_atk = int(mega.get("atk", 1500))
+            attr = mega.get("attr", "Unknown")
+            img = mega.get("img", "")
             
-            # 2. Các chỉ số bổ trợ khác như Hệ (attr), Ảnh (img), Chiêu thức (skill) 
-            # sẽ cố gắng tìm trong file cấu hình DIGIMON_DATA, nếu không có sẽ lấy mặc định
-            system_stats = self.DIGIMON_DATA.get("mega", {}).get(mega_name, {})
-            attr = system_stats.get("attr", "Vaccine") # Mặc định nếu thiếu
-            img = system_stats.get("img", "")
-            skill = system_stats.get("skill", "Mega Burst")
+            # Khởi tạo Object skill chuẩn, đề phòng trường hợp nhập thiếu sẽ có fallback
+            fallback_skill = {"name": "Basic Strike", "dmg_mult": 1.5, "chance": 0.1}
+            skill = mega.get("skill", fallback_skill)
 
             await market_col.update_one(
                 {"item_name": mega_name, "is_system": True},
@@ -1713,12 +1712,12 @@ class RPGSystemCog(commands.Cog):
                         "name": mega_name,
                         "stage": "Mega",
                         "attr": attr,
-                        "hp": base_hp,          # Đã sửa: Nạp HP cực mạnh từ pool
-                        "atk": base_atk,        # Đã sửa: Nạp ATK cực mạnh từ pool
-                        "current_hp": base_hp, # Đã sửa: Đầy máu ngay khi mua
-                        "size": 1.25,            # Kích thước mặc định 125%
+                        "hp": base_hp,
+                        "atk": base_atk,
+                        "current_hp": base_hp,
+                        "size": 1.0,  # Nên để size 1.0 lúc mua, tránh việc scale chỉ số ảo quá cao
                         "img": img,
-                        "skill": skill,
+                        "skill": skill,  # Sẽ lưu đúng định dạng Object (Dictionary)
                         "trained_hp": 0,
                         "trained_atk": 0,
                         "obtained_at": int(time.time())
