@@ -251,11 +251,11 @@ class ProfileView(discord.ui.View):
     async def hatch_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_hatch_action(interaction)
 
-    @discord.ui.button(label="🏋️ Train ATK (1k Bits)", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🏋️ Train ATK (500 Bits)", style=discord.ButtonStyle.secondary, row=0)
     async def train_atk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_train_action(interaction, "atk")
 
-    @discord.ui.button(label="🏋️ Train HP (1k Bits)", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🏋️ Train HP (500 Bits)", style=discord.ButtonStyle.secondary, row=0)
     async def train_hp_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_train_action(interaction, "hp")
 
@@ -980,8 +980,8 @@ class RPGSystemCog(commands.Cog):
             dmg_percent = dmg / total_hp
             orbs_earned = max(1, int(dmg_percent * 10)) + (10 if rank == 1 else 5 if rank <= 3 else 0)
             
-            reward_str = f"+{orbs_earned} Orbs & +1 MyK"
-            update_query = {"$inc": {"orb": orbs_earned}}
+            reward_str = f"+{orbs_earned} Orb & +1 MyK"
+            update_query = {"$inc": {"Orb": orbs_earned}}
 
             if rank <= 3 and random.random() < 0.30:
                 reward_str += "\n🍎 Size Reroll Fruit"
@@ -1227,7 +1227,7 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="⚔️ ATK", value=str(stats['atk']), inline=True)
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
             
-        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} Orbs**", inline=False)
+        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} Orb**", inline=False)
         embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
         await message.edit(embed=embed, view=ProfileView(profile, self))
 
@@ -1291,7 +1291,7 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="⚔️ ATK", value=str(stats['atk']), inline=True)
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
             
-        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} Orbs**", inline=False)
+        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} Orb**", inline=False)
         embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
         
         await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
@@ -1359,7 +1359,7 @@ class RPGSystemCog(commands.Cog):
         if res.modified_count == 0:
             return await interaction.followup.send("❌ Insufficient Digibits (500 Bits required).", ephemeral=True)
             
-        await interaction.followup.send(f"🏋️ Huấn luyện thành công! **+{20 if stat == 'atk' else 100} {stat.upper()}** cho {active_digi['name']}.", ephemeral=True)
+        await interaction.followup.send(f"🏋️ Trained successfully! **+{20 if stat == 'atk' else 100} {stat.upper()}** cho {active_digi['name']}.", ephemeral=True)
         await self.refresh_profile_message(interaction.message, user_id)
 
     async def handle_inventory_use(self, interaction: discord.Interaction, item_name: str):
@@ -1539,7 +1539,7 @@ class RPGSystemCog(commands.Cog):
                     "seller_name": "System Market",
                     "seller_id": "system",
                     "is_system": True,
-                    "currency": "orb",
+                    "currency": "Orb",
                     "listing_type": "digimon",  # Phân loại rõ ràng để điều hướng kho lưu trữ
                     "item_data": {
                         "id": str(uuid.uuid4()),
@@ -1572,16 +1572,16 @@ class RPGSystemCog(commands.Cog):
             
         # 2. Kiểm tra số dư Orb của người mua
         buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
-        if not buyer_profile or buyer_profile.get("orbs", 0) < price:
+        if not buyer_profile or buyer_profile.get("Orb", 0) < price:
             return await interaction.followup.send("❌ You don't have enough Orb to complete this transaction.!", ephemeral=True)
             
         # 3. Thực hiện khấu trừ và luân chuyển tài chính
         # Trừ tiền người mua
-        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"orbs": -price}})
+        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"Orb": -price}})
         
         # Cộng tiền cho người bán (Chỉ thực hiện nếu đây là giao dịch giữa người chơi với nhau)
         if not is_system and seller_id != "system":
-            await rpg_profiles_col.update_one({"user_id": seller_id}, {"$inc": {"orbs": price}})
+            await rpg_profiles_col.update_one({"user_id": seller_id}, {"$inc": {"Orb": price}})
         
         # 4. Điều hướng phần thưởng (Gia tăng phân loại Digimon / Item)
         if listing_type == "digimon":
