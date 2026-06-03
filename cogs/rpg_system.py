@@ -1698,6 +1698,7 @@ class RPGSystemCog(commands.Cog):
         return False
     
     async def handle_set_active_digimon(self, interaction, digimon_id):
+        await interaction.response.defer(ephemeral=True)
         # 1. Cập nhật active_digimon_id trong database
         await rpg_profiles_col.update_one(
             {"user_id": interaction.user.id},
@@ -1711,6 +1712,7 @@ class RPGSystemCog(commands.Cog):
     # ========================================================================
     async def initialize_market_mega_products(self):
         """Tối ưu hóa: Dễ dàng thêm Digimon mới vào NEW_MEGA_POOL về sau mà không sợ lỗi trùng lặp"""
+
         for mega in NEW_MEGA_POOL:
             await market_col.update_one(
                 {"item_name": mega["name"], "is_system": True},
