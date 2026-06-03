@@ -56,7 +56,7 @@ class GearInventorySelect(discord.ui.Select):
         self.cog = cog_instance
         
         inventory = profile.get("inventory", [])
-        gear = profile.get("gear", {}) # Lấy dữ liệu đồ đang mặc
+        gear = profile.get("gear", {}) 
         
         # 1. Đưa các trang bị ĐANG MẶC vào đầu danh sách để dễ Gỡ (Unequip)
         for slot in ["weapon", "armor", "vice"]:
@@ -66,7 +66,7 @@ class GearInventorySelect(discord.ui.Select):
                 options.append(discord.SelectOption(
                     label=f"[Wearing] {item_name}",
                     description=f"Click to remove from slot {slot.upper()}",
-                    value=f"unequip_{slot}", # Giá trị đặc biệt để nhận diện lệnh tháo
+                    value=f"unequip_{slot}", 
                     emoji="🔓"
                 ))
 
@@ -74,11 +74,11 @@ class GearInventorySelect(discord.ui.Select):
         string_counts = {}
         dict_items = []
         
-        for gear in inventory:
-            if isinstance(gear, str):
-                string_counts[gear] = string_counts.get(gear, 0) + 1
-            elif isinstance(gear, dict):
-                dict_items.append(gear)
+        for gear_item in inventory:
+            if isinstance(gear_item, str):
+                string_counts[gear_item] = string_counts.get(gear_item, 0) + 1
+            elif isinstance(gear_item, dict):
+                dict_items.append(gear_item)
         
         for gear_str, count in string_counts.items():
             if len(options) >= 25: break
@@ -132,16 +132,13 @@ class GearInventorySelect(discord.ui.Select):
         inventory = profile.get("inventory", [])
         gear = profile.get("gear", {})
 
-        # ==================================================
-        # XỬ LÝ LỆNH: THÁO TRANG BỊ (UNEQUIP)
-        # ==================================================
         if selected_value.startswith("unequip_"):
             slot = selected_value.replace("unequip_", "")
             item_to_remove = gear.get(slot)
             
             if item_to_remove:
-                inventory.append(item_to_remove) # Trả đồ về túi
-                gear[slot] = "None"          # Xóa khỏi slot đang mặc
+                inventory.append(item_to_remove) 
+                gear[slot] = "None"          
                 
                 await rpg_profiles_col.update_one(
                     {"user_id": user_id},
@@ -150,11 +147,8 @@ class GearInventorySelect(discord.ui.Select):
                 item_name = item_to_remove if isinstance(item_to_remove, str) else item_to_remove.get("name")
                 return await interaction.followup.send(f"🔓 I have removed **{item_name}** from position **[{slot.upper()}]** and put it in the storage!", ephemeral=True)
             else:
-                return await interaction.followup.send("❌ LError: This location is not equipped.", ephemeral=True)
+                return await interaction.followup.send("❌ Error: This location is not equipped.", ephemeral=True)
 
-        # ==================================================
-        # XỬ LÝ LỆNH: DÙNG/MẶC TRANG BỊ
-        # ==================================================
         target_item = None
         is_dict = False
         for item in inventory:
@@ -171,7 +165,6 @@ class GearInventorySelect(discord.ui.Select):
             
         item_name = target_item if isinstance(target_item, str) else target_item.get("name", "Unknown")
         
-        # Trường hợp 1: Dùng trái cây (Fruit)
         if "Fruit" in item_name:
             active_id = profile.get("active_digimon_id")
             digimon_list = profile.get("digimon_list", [])
@@ -190,7 +183,6 @@ class GearInventorySelect(discord.ui.Select):
             )
             return await interaction.followup.send(f"🍎 **{item_name}** has been used on **{active_digi['name']}**!\n📏 New size: **{new_size * 100:.1f}%**", ephemeral=True)
             
-        # Trường hợp 2: Mặc trang bị (Gear)
         cleaned_name = self.cog.clean_item_name(item_name)
         gear_base_data = self.cog.ITEMS.get(cleaned_name, {}) if not is_dict else target_item
         gear_type = gear_base_data.get("type")
@@ -198,7 +190,6 @@ class GearInventorySelect(discord.ui.Select):
         if gear_type in ["weapon", "armor", "vice"]:
             old_gear = gear.get(gear_type)
             
-            # Đổi đồ: Nhét đồ cũ vào túi trước
             if old_gear and old_gear != "None":
                 inventory.append(old_gear)
                 
@@ -232,30 +223,68 @@ class DigiBagSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "none": return
-        # Gọi hàm xử lý active Digimon trong cog của bạn
         await self.cog.handle_set_active_digimon(interaction, self.values[0])
 
+class BulkSellDigiSelect(discord.ui.Select):
+    def __init__(self, digimon_list, active_id, cog_instance):
+        self.cog = cog_instance
+        options = []
+        
+        for d in digimon_list:
+            is_active = "✅ [Active] " if d["id"] == active_id else ""
+            options.append(discord.SelectOption(
+                label=f"{is_active}{d['name']}",
+                value=d["id"],
+                description=f"Stage: {d['stage']} | Size: {d.get('size', 1)*100:.0f}%"
+            ))
+        
+        if not options:
+            options = [discord.SelectOption(label="Empty bag", value="none")]
+            super().__init__(placeholder="💰No Digimon for sale...", options=options, disabled=True)
+        else:
+            # Giới hạn số lượng chọn tối đa bằng số Digimon đang có (tối đa 25 theo giới hạn của Discord)
+            max_vals = min(len(options), 25)
+            super().__init__(
+                placeholder="💰 Choose one or more Digimon to sell in bulk...",
+                options=options,
+                min_values=1,
+                max_values=max_vals
+            )
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none": 
+            return
+        # Gọi hàm xử lý bán hàng loạt ở Cog
+        await self.cog.handle_bulk_sell_digimon(interaction, self.values)
+
+# --- UI MỚI CHO TÚI DIGIMON CHỨA CẢ MENU CHỌN VÀ NÚT BÁN ---
+class DigiBagView(discord.ui.View):
+    def __init__(self, digimon_list, active_id, cog_instance, timeout=180):
+        super().__init__(timeout=timeout)
+        self.cog = cog_instance
+        
+        # Menu 1: Chọn 1 Digimon để kích hoạt làm bạn đồng hành
+        self.add_item(DigiBagSelect(digimon_list, active_id, cog_instance))
+        
+        # Menu 2: Chọn nhiều Digimon để bán lấy Digibits
+        self.add_item(BulkSellDigiSelect(digimon_list, active_id, cog_instance))
+
 class InventoryView(discord.ui.View):
-    # Chúng ta cho phép nó nhận một menu tùy chọn hoặc tự tạo GearInventorySelect nếu không có
     def __init__(self, select_menu=None, profile=None, cog_instance=None, timeout=180):
         super().__init__(timeout=timeout)
         if select_menu:
             self.add_item(select_menu)
         elif profile and cog_instance:
-            # Nếu truyền profile và cog, tự động tạo GearInventorySelect
             self.add_item(GearInventorySelect(profile, cog_instance))   
 
 def generate_inventory_embed(profile: dict) -> discord.Embed:
-    """Hàm tạo Embed hiển thị Block List túi đồ và đồ đang mặc"""
     embed = discord.Embed(title="🎒 Inventory", color=discord.Color.blue())
     
-    # --- 1. Block: Đồ đang mặc ---
     gear = profile.get("gear", {})
     w_name = gear.get("weapon")
     a_name = gear.get("armor")
     v_name = gear.get("vice")
     
-    # Xử lý lấy tên nếu đồ là dạng Dict (đồ hiếm)
     w_display = w_name if isinstance(w_name, str) else w_name.get("name", "Empty") if w_name else "Empty"
     a_display = a_name if isinstance(a_name, str) else a_name.get("name", "Empty") if a_name else "Empty"
     v_display = v_name if isinstance(v_name, str) else v_name.get("name", "Empty") if v_name else "Empty"
@@ -263,12 +292,10 @@ def generate_inventory_embed(profile: dict) -> discord.Embed:
     gear_text = f"⚔️ **Weapon:** {w_display}\n🛡️ **Armor:** {a_display}\n📿 **Vice:** {v_display}"
     embed.add_field(name="👕 Equipment currently worn", value=gear_text, inline=False)
     
-    # --- 2. Block: Đồ trong túi ---
     inventory = profile.get("inventory", [])
     if not inventory:
         embed.add_field(name="📦Storage", value="*Your equipment storage is empty.*", inline=False)
     else:
-        # Gom nhóm đồ thừa
         string_counts = {}
         dict_items = []
         for item in inventory:
@@ -278,17 +305,14 @@ def generate_inventory_embed(profile: dict) -> discord.Embed:
                 dict_items.append(item)
                 
         inv_text = ""
-        # Render đồ thường (cộng dồn số lượng)
         for name, count in string_counts.items():
             qty = f" (x{count})" if count > 1 else ""
             inv_text += f"🔹 {name}{qty}\n"
             
-        # Render đồ hiếm (Dictionary)
         for item in dict_items:
             rarity = item.get("rarity", "Rare")
             inv_text += f"🌟 {item.get('name', 'Unknown')} `[{rarity}]`\n"
             
-        # Giới hạn text hiển thị để tránh lỗi quá dài của Discord Embed
         if len(inv_text) > 1024:
             inv_text = inv_text[:1000] + "\n... (And more)"
             
@@ -322,9 +346,9 @@ class ProfileView(discord.ui.View):
     @discord.ui.button(label="🧬 Evolve", style=discord.ButtonStyle.danger, row=1)
     async def evolve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_evolve(interaction)
-    @discord.ui.button(label="Digimon bag", style=discord.ButtonStyle.secondary, emoji="🐾")
+
+    @discord.ui.button(label="Digimon bag", style=discord.ButtonStyle.secondary, emoji="🐾", row=1)
     async def open_digi_bag(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1. Defer ngay lập tức để giữ tương tác (tránh lỗi 404)
         await interaction.response.defer(ephemeral=True)
         
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
@@ -333,15 +357,10 @@ class ProfileView(discord.ui.View):
         
         digi_list = profile.get("digimon_list", [])
         
-        # 2. Kiểm tra danh sách rỗng (tránh lỗi 400 Invalid Form Body)
         if not digi_list:
             return await interaction.followup.send("❌ Your bag is empty! You need to catch some Digimon first.", ephemeral=True)
         
-        # 3. Chỉ lấy tối đa 25 con (tránh lỗi giới hạn của Discord)
         options = digi_list[:25]
-        
-        # Tạo Menu với danh sách đã lọc
-        digi_menu = DigiBagSelect(options, profile.get("active_digimon_id"), self.cog)
         
         embed = discord.Embed(
             title="🐾 Your Digimon Bag", 
@@ -349,20 +368,32 @@ class ProfileView(discord.ui.View):
             color=discord.Color.gold()
         )
         
-        view = InventoryView(select_menu=digi_menu) 
+        # SỬ DỤNG DigiBagView ĐỂ HIỂN THỊ CẢ MENU CHỌN VÀ NÚT BÁN
+        view = DigiBagView(options, profile.get("active_digimon_id"), self.cog) 
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒")
+    @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒", row=2)
     async def open_inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Lệnh mở UI Kho đồ mới
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
         if not profile:
-            return await interaction.followup.send("❌No Data.", ephemeral=True)
+            return await interaction.followup.send("❌ No Data.", ephemeral=True)
             
         embed = generate_inventory_embed(profile)
         view = InventoryView(profile=profile, cog_instance=self.cog)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    # --- THÊM NÚT DAILY CHECK ---
+    @discord.ui.button(label="📅 Daily Check", style=discord.ButtonStyle.success, row=2)
+    async def daily_check_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_daily_check(interaction)
+
+    # --- THÊM NÚT REFRESH ---
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.secondary, row=2)
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.cog.refresh_profile_message(interaction.message, interaction.user.id)
+
 
 class MarketBuySelect(discord.ui.Select):
     def __init__(self, listings: list, cog_instance):
@@ -423,73 +454,7 @@ class CombatView(discord.ui.View):
     async def protect_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_protect(interaction)
 
-class FarmDungeonSelect(discord.ui.Select):
-    def __init__(self, cog_instance):
-        self.cog = cog_instance
-        options = [
-            discord.SelectOption(label="🌌 Enter Digital Dimension (All-in-One)", value="digital_dimension", emoji="🌌"),
-            discord.SelectOption(label="🛑 Stop Auto-Farm", value="stop", emoji="⏹️")
-        ]
-        super().__init__(placeholder="⚙️ Toggle Auto-Farm status...", min_values=1, max_values=1, options=options)
 
-    async def callback(self, interaction: discord.Interaction):
-        await self.cog.handle_toggle_auto_dungeon(interaction, self.values[0])
-
-class FarmDigiMinerSelect(discord.ui.Select):
-    def __init__(self, eligible_digimon: list):
-        options = []
-        for d in eligible_digimon[:25]:
-            options.append(discord.SelectOption(
-                label=d["name"],
-                description=f"Stage: {d['stage']} | Assistant Support",
-                value=d["id"]
-            ))
-        max_vals = min(6, len(options)) if options else 1
-        super().__init__(
-            placeholder="Select up to 6 Digimon to boost digibits...",
-            min_values=1,
-            max_values=max_vals,
-            options=options if options else [discord.SelectOption(label="No valid Digimon", value="none")]
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if "none" in self.values:
-            return await interaction.response.send_message("There are no valid Digimon to choose from.", ephemeral=True)
-            
-        stage_multipliers = {"rookie": 1, "champion": 2, "ultimate": 3, "mega": 4}
-        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile:
-            return await interaction.response.send_message("Character data not found.", ephemeral=True)
-            
-        selected_digis = [d for d in profile.get("digimon_list", []) if d["id"] in self.values]
-        total_efficiency = sum(stage_multipliers.get(d.get("stage", "rookie").lower(), 1) for d in selected_digis)
-        
-        await rpg_profiles_col.update_one(
-            {"user_id": interaction.user.id},
-            {"$set": {
-                "mining_assistants": self.values,
-                "mining_efficiency_bonus": total_efficiency
-            }}
-        )
-        await interaction.response.send_message(
-            f"⚡ Distributed {len(selected_digis)} Digimon to the operations! +{total_efficiency * 10}% extra DB from Auto-Farm.", 
-            # Giờ đây bonus này sẽ nhân thêm vàng/DB trực tiếp trong loop
-            ephemeral=True
-        )
-
-class FarmView(discord.ui.View):
-    def __init__(self, cog_instance, profile: dict):
-        super().__init__(timeout=300)
-        self.cog = cog_instance
-        self.add_item(FarmDungeonSelect(cog_instance))
-
-        digimon_list = profile.get("digimon_list", [])
-        if digimon_list:
-            self.add_item(FarmDigiMinerSelect(digimon_list))
-
-    @discord.ui.button(label="View Farm Logs", style=discord.ButtonStyle.secondary, emoji="📜")
-    async def view_logs(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_view_logs(interaction)
 # ========================================================================
 #                            MAIN COG SYSTEM
 # ========================================================================
@@ -595,179 +560,6 @@ class RPGSystemCog(commands.Cog):
     #                       HELPER METHODS
     # ========================================================================
 
-    #========================================
-    #                 AUTO FARM
-    #========================================
-    async def handle_toggle_auto_dungeon(self, interaction: discord.Interaction, dungeon_value: str):
-        await interaction.response.defer(ephemeral=True)
-        
-        user_id = interaction.user.id
-        
-        if dungeon_value == "stop":
-            # Dừng auto-farm
-            await rpg_profiles_col.update_one(
-                {"user_id": user_id},
-                {"$set": {"auto_dungeon": None}}
-            )
-            await interaction.followup.send("⏹️ Auto-farm has been stopped.", ephemeral=True)
-        else:
-            # Bật auto-farm (ví dụ: "digital_dimension")
-            await rpg_profiles_col.update_one(
-                {"user_id": user_id},
-                {"$set": {"auto_dungeon": dungeon_value}}
-            )
-            await interaction.followup.send(f"🌌 Auto-farm activated for: {dungeon_value}", ephemeral=True)
-    @app_commands.command(name="farm", description="🌌 Auto farm resource")
-    async def farm_command(self, interaction: discord.Interaction):
-        # Defer trước để tránh lỗi quá hạn 3 giây của Discord khi truy vấn DB
-        await interaction.response.defer(ephemeral=True)
-        
-        user_id = interaction.user.id
-        # Đọc dữ liệu hồ sơ từ MongoDB
-        profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        
-        if not profile:
-            return await interaction.followup.send(
-                "❌ You don't have an RPG profile yet! Please create a character first..", 
-                ephemeral=True
-            )
-            
-        # Lấy thông tin trạng thái để hiển thị lên bảng điều khiển (Dashboard)
-        efficiency_bonus = profile.get("mining_efficiency_bonus", 0)
-        assistants = profile.get("mining_assistants", [])
-        
-        # Kiểm tra xem người chơi có đang bật Auto-Farm không (tùy thuộc vào cách bạn lưu biến này trong loop)
-        is_farming = profile.get("auto_dungeon") == "digital_dimension"
-        status_text = "🟢 Automated farming" if is_farming else "🔴 On pause"
-        # Thiết kế giao diện Bảng Điều Khiển (Embed)
-        embed = discord.Embed(
-            title="⛏️ AUTO-FARM & OPERATIONS CENTER🌌",
-            description="This is where the resource gathering and distribution of Digimon miners is managed..",
-            color=discord.Color.dark_purple()
-        )
-        
-        embed.add_field(name="🛰️ System status", value=f"**{status_text}**", inline=True)
-        embed.add_field(name="⚡ Increased performance", value=f"**+{efficiency_bonus * 10}% DB**", inline=True)
-        embed.add_field(name="👥 Number of assistants", value=f"**{len(assistants)}/6 Digimon**", inline=True)
-        
-        # Hiển thị danh sách tên các Digimon đang phụ trách đào mỏ
-        if assistants:
-            digimon_list = profile.get("digimon_list", [])
-            assistant_names = [d["name"] for d in digimon_list if d["id"] in assistants]
-            embed.add_field(name="🛠️ List of working assistants", value=f"• " + "\n• ".join(assistant_names), inline=False)
-        else:
-            embed.add_field(name="🛠️List of working assistants", value="*No Digimon have been working..*", inline=False)
-            
-        embed.set_footer(text="Use the menu and buttons below to control.")
-        
-        # Khởi tạo FarmView (Truyền self đóng vai trò cog_instance, và dữ liệu profile vừa đọc)
-        view = FarmView(self, profile)
-        
-        # Gửi bảng điều khiển kèm UI lên cho người dùng
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-    
-    def roll_pve_loot(self) -> tuple[str, str]:
-        """Tự động phân bổ loại trang bị rớt ra và trả về (Tên_Vật_Phẩm, Loại_Vật_Phẩm)"""
-        is_high_tier = random.random() < 0.12 # 12% tỷ lệ ra đồ Rare trong nhóm đồ thường
-        loot_type = random.choice(["weapon", "armor", "vice"])
-        
-        if loot_type == "weapon": 
-            loot_base = "Chrome Dagger" if is_high_tier else "Rusty Sword"
-        elif loot_type == "armor": 
-            loot_base = "Divine Aegis" if is_high_tier else "Rusty Armor"
-        else: 
-            loot_base = "Chrome Vice" if is_high_tier else "Rusty Vice"
-            
-        return loot_base, loot_type
-
-    def roll_auto_dungeon_high_tier_reward(self) -> dict:
-        if random.random() <= 0.015:  # 1.5% tỷ lệ rơi đồ Mythic cực hiếm
-            chosen_gear_template = random.choice(self.HIGH_TIER_GEARS)
-            return {
-                "id": str(uuid.uuid4()),
-                "name": chosen_gear_template["name"],
-                "type": chosen_gear_template["type"],
-                "rarity": chosen_gear_template["rarity"],
-                "atk": chosen_gear_template.get("atk", 0),
-                "def": chosen_gear_template.get("def", 0),
-                "hp": chosen_gear_template.get("hp", 0),
-                "obtained_at": int(time.time())
-            }
-        return None
-   
-    async def handle_view_logs(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile:
-            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
-            
-        logs = profile.get("farm_logs", [])
-        
-        embed = discord.Embed(title="📜 Farm Logs", color=discord.Color.dark_gray())
-        
-        if not logs:
-            embed.description = "*Currently, there is no recorded data from the system crash..*"
-        else:
-            # 1. Đảo ngược danh sách để các dòng Log MỚI NHẤT hiển thị lên ĐẦU
-            recent_logs = list(reversed(logs))
-            
-            # 2. Giới hạn chỉ lấy tối đa khoảng 15-20 dòng log gần nhất để giao diện gọn gàng
-            recent_logs = recent_logs[:20] 
-            
-            # 3. Gộp log lại thành một chuỗi văn bản
-            log_text = "\n".join(recent_logs)
-            
-            # 4. Phòng hờ: Nếu độ dài chuỗi vẫn quá dài, chủ động cắt chuỗi ở mức an toàn (ví dụ 3500 ký tự)
-            if len(log_text) > 3500:
-                log_text = log_text[:3500] + "\n... (Older log data has been compressed.)"
-                
-            embed.description = f"```markdown\n{log_text}\n```"
-            
-        embed.set_footer(text=f"Displays up to 20 most recent logs • Total number of stored logs: {len(logs)}")
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    @tasks.loop(hours=24)
-    async def farm_system_loop(self):
-        # 1. Tìm tất cả những người chơi đang bật chế độ treo farm
-        query = {"auto_dungeon": "digital_dimension"}
-        profiles = await rpg_profiles_col.find(query).to_list(length=None)
-        
-        if not profiles:
-            print("DEBUG: Không có ai đang treo farm.")
-            return
-
-        for profile in profiles:
-            user_id = profile.get("user_id")
-            if not user_id: 
-                continue
-
-            # 2. Số lượng tài nguyên cộng cố định mỗi ngày
-            daily_db = 600000.0     # Ép kiểu float cho Double trong DB
-            daily_cores = int(100)  # Ép kiểu int cho Int32 trong DB
-            
-            # 3. Tạo dòng log hiển thị cho người chơi
-            log_entry = f"[{datetime.utcnow().strftime('%d/%m %H:%M')}] Daily Farm: +600,000 DB | +100 Hatch Cores"
-            
-            # 4. Tạo lệnh update (Tăng đồng thời cả DB và Hatch Core, sau đó đẩy log)
-            update_query = {
-                "$inc": {
-                    "digibit": daily_db,
-                    "hatch_core": daily_cores
-                },
-                "$push": {
-                    "farm_logs": {
-                        "$each": [log_entry],
-                        "$slice": -50  # Giữ lại tối đa 50 log gần nhất
-                    }
-                }
-            }
-            
-            # 5. Thực hiện cập nhật trực tiếp cho từng user
-            try:
-                await rpg_profiles_col.update_one({"user_id": user_id}, update_query)
-                print(f"DEBUG: Đã cộng thành công 600k DB & 100 Cores cho user {user_id}")
-            except Exception as e:
-                print(f"DEBUG: Lỗi không thể cộng tài nguyên cho user {user_id}: {e}")
    #==============================================
    #                  WOLRD BOSS 
    #==============================================
@@ -1295,6 +1087,13 @@ class RPGSystemCog(commands.Cog):
             if digi.get("id") == active_id: return digi
         return {}
 
+    def get_active_digimon(self, profile: dict) -> dict:
+        digimon_list = profile.get("digimon_list", [])
+        active_id = profile.get("active_digimon_id")
+        for digi in digimon_list:
+            if digi.get("id") == active_id: return digi
+        return {}
+
     def update_active_digimon(self, profile: dict, new_data: dict) -> list:
         digimon_list = profile.get("digimon_list", [])
         active_id = profile.get("active_digimon_id")
@@ -1328,7 +1127,6 @@ class RPGSystemCog(commands.Cog):
         return {"hp": total_hp, "atk": total_atk, "def": total_def, "crit_rate": total_crit_rate, "crit_dmg": total_crit_dmg}
 
     async def refresh_profile_message(self, message: discord.Message, user_id: int):
-        """Hàm phụ trợ: Tự động tải lại và làm mới nội dung Embed Profile ngay lập tức khi click nút"""
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         digimon = self.get_active_digimon(profile)
         stats = self.get_total_stats(profile)
@@ -1360,16 +1158,15 @@ class RPGSystemCog(commands.Cog):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         
         is_new = False
-        # 1. Khởi tạo profile tự động có sẵn 15 Hatch Core nếu chưa từng đăng ký
+        # ĐÃ LOẠI BỎ HOÀN TOÀN CÁC THÀNH PHẦN LIÊN QUAN TỚI FARM Ở ĐÂY
         if not profile:
             is_new = True
             profile = {
                 "user_id": user_id, "ign": interaction.user.display_name, "gold": 0, "digibit": 0.0, "hatch_core": 15, "myk_coin": 0, "premium_ui": False,
                 "current_hp": 0, "gear": {"weapon": "None", "armor": "None", "vice": "None"}, "inventory": [], "is_vip": False, 
-                "digimon_list": [], "active_digimon_id": None, "is_auto_mining": False, "auto_dungeon": None, "farm_logs": []
+                "digimon_list": [], "active_digimon_id": None
             }
 
-        # 2. Tự động Hatch 1 Digimon khởi đầu hoàn toàn miễn phí nếu túi rỗng
         if not profile.get("digimon_list"):
             is_vip = profile.get("is_vip", False)
             available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
@@ -1397,7 +1194,6 @@ class RPGSystemCog(commands.Cog):
         elif is_new:
             await rpg_profiles_col.insert_one(profile)
 
-        # Kết xuất hiển thị
         digimon = self.get_active_digimon(profile)
         stats, gear = self.get_total_stats(profile), profile.get("gear", {})
         is_premium = profile.get("premium_ui", False)
@@ -1419,7 +1215,6 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
 
     async def handle_hatch_action(self, interaction: discord.Interaction):
-        """Hàm gộp xử lý ấp trứng từ nút bấm"""
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
@@ -1454,7 +1249,6 @@ class RPGSystemCog(commands.Cog):
         await self.refresh_profile_message(interaction.message, user_id)
 
     async def handle_train_action(self, interaction: discord.Interaction, stat: str):
-        """Hàm gộp xử lý Huấn luyện chỉ số từ nút bấm"""
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
@@ -1485,15 +1279,13 @@ class RPGSystemCog(commands.Cog):
         await self.refresh_profile_message(interaction.message, user_id)
 
     async def handle_inventory_use(self, interaction: discord.Interaction, item_name: str):
-        """SỬA LỖI: Hỗ trợ tìm kiếm thông minh đối chiếu cả String thường lẫn Object Dictionary trong hòm đồ"""
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
-        if not profile: return await interaction.followup.send("❌Profile does not exist.", ephemeral=True)
+        if not profile: return await interaction.followup.send("❌ Profile does not exist.", ephemeral=True)
         
         inventory = profile.get("inventory", [])
         
-        # Vòng lặp giải quyết lỗi: Quét tìm vật phẩm bất kể cấu trúc dữ liệu cũ hay mới
         found_item = None
         for item in inventory:
             if isinstance(item, dict) and item.get("name") == item_name:
@@ -1507,7 +1299,7 @@ class RPGSystemCog(commands.Cog):
             return await interaction.followup.send(f"❌ No item `{item_name}` was found in your inventory.", ephemeral=True)
 
         if item_name == "Size Reroll Fruit":
-            inventory.remove(found_item) # Xóa chính xác phần tử tìm được
+            inventory.remove(found_item) 
             digimon = self.get_active_digimon(profile)
             if not digimon: return await interaction.followup.send("❌ No Digimon activated.", ephemeral=True)
 
@@ -1519,13 +1311,12 @@ class RPGSystemCog(commands.Cog):
             new_list = self.update_active_digimon(profile, {"size": new_size, "hp": actual_hp, "atk": actual_atk})
             
             await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"inventory": inventory, "digimon_list": new_list, "current_hp": actual_hp + digimon.get("trained_hp", 0)}})
-            await interaction.followup.send(f"🍎Using fruit successfully! New roll size: **{new_size * 100:.1f}%**!", ephemeral=True)
+            await interaction.followup.send(f"🍎 Using fruit successfully! New roll size: **{new_size * 100:.1f}%**!", ephemeral=True)
         else:
             cleaned_base = self.clean_item_name(item_name)
             if cleaned_base not in self.ITEMS: return await interaction.followup.send("❌ Invalid item data.", ephemeral=True)
             
             slot_type = self.ITEMS[cleaned_base]["type"]
-            # Lưu trữ chuỗi tên trang bị lên vị trí gear slot
             await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {f"gear.{slot_type}": item_name}})
             await interaction.followup.send(f"🛡️ **Successfully gear:** {item_name} -> Type `{slot_type.upper()}`", ephemeral=True)
     
@@ -1537,14 +1328,11 @@ class RPGSystemCog(commands.Cog):
         if not profile or not self.get_active_digimon(profile):
             return await interaction.followup.send("❌ No Digimon found.", ephemeral=True)
 
-        # Lấy Max HP
         max_hp = self.get_total_stats(profile)["hp"]
         
-        # Nếu máu đã đầy thì không cần hồi
         if profile.get("current_hp", 0) >= max_hp:
             return await interaction.followup.send("✨ Digimon's HP is full, no recovery needed.!", ephemeral=True)
 
-        # Sử dụng hàm tiện ích lõi
         success = await self.attempt_auto_heal(user_id, profile, max_hp)
         
         if not success:
@@ -1552,7 +1340,117 @@ class RPGSystemCog(commands.Cog):
             remaining = 120 - (int(time.time()) - last_heal_time)
             return await interaction.followup.send(f"⏳ **Cooldown!** Please wait. {max(0, remaining)}s.", ephemeral=True)
 
-        await interaction.followup.send("✨ **Healed!* The Digimon's HP has been fully restored.", ephemeral=True)
+        await interaction.followup.send("✨ **Healed!** The Digimon's HP has been fully restored.", ephemeral=True)
+
+
+    # ====================================================================================
+    # LÔ-GÍC XỬ LÝ MỚI: HÀM DAILY CHECK & HÀM BÁN DIGIMON (ADD VÀO COG)
+    # ====================================================================================
+
+    async def handle_daily_check(self, interaction: discord.Interaction):
+        """Xử lý điểm danh hàng ngày: Cộng 1000 Digibits và 100 Hatch Cores"""
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not profile:
+            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
+            
+        today = datetime.date.today().isoformat()
+        last_check = profile.get("last_daily_check")
+        
+        # Kiểm tra xem hôm nay người chơi đã điểm danh chưa
+        if last_check == today:
+            return await interaction.followup.send("❌ You've already checked in today! Please come back tomorrow..", ephemeral=True)
+            
+        new_streak = profile.get("daily_streak", 0) + 1
+        
+        # Cập nhật trực tiếp vào cơ sở dữ liệu tài sản của người chơi
+        await rpg_profiles_col.update_one(
+            {"user_id": user_id},
+            {
+                "$inc": {"digibit": 1000, "hatch_core": 100},
+                "$set": {"last_daily_check": today, "daily_streak": new_streak}
+            }
+        )
+        
+        await interaction.followup.send(
+            f"🎉 **Attendance check successful.!**\n"
+            f"📅 Congratulations on your attendance! **{new_streak}** day!\n"
+            f"🎁 Rewards received: **+1,000 Digibits** and **+100 Hatch Cores**!",
+            ephemeral=True
+        )
+        # Làm mới lại UI Profile ngay lập tức
+        try:
+            await self.refresh_profile_message(interaction.message, user_id)
+        except Exception:
+            pass
+
+    async def handle_bulk_sell_digimon(self, interaction: discord.Interaction, selected_ids: list):
+        """Xử lý bán hàng loạt các Digimon được chọn từ Select Menu"""
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not profile:
+            return await interaction.followup.send("❌Character data not found.", ephemeral=True)
+            
+        digi_list = profile.get("digimon_list", [])
+        active_id = profile.get("active_digimon_id")
+        
+        # 🛡️ KIỂM TRA AN TOÀN: Người chơi không được phép bán hết toàn bộ Digimon
+        if len(selected_ids) >= len(digi_list):
+            return await interaction.followup.send(
+                "❌ **Action blocked!* You cannot sell all Digimon in your inventory. You must keep at least one companion.", 
+                ephemeral=True
+            )
+            
+        # Phân loại: Giữ lại những con không bị chọn, thu thập tên những con bị bán
+        remaining_digi_list = [d for d in digi_list if d["id"] not in selected_ids]
+        sold_digimon_names = [d["name"] for d in digi_list if d["id"] in selected_ids]
+        
+        # Tính toán phần thưởng kinh tế: 1,000 Bits cho mỗi Digimon bị xóa
+        total_reward_bits = len(selected_ids) * 1000.0
+        
+        # Kiểm tra xem con Digimon đang kích hoạt (Active) có nằm trong danh sách bị bán hay không
+        is_active_sold = active_id in selected_ids
+        
+        updates = {
+            "$set": {
+                "digimon_list": remaining_digi_list
+            },
+            "$inc": {"digibit": total_reward_bits}
+        }
+        
+        # 🐾 NẾU BÁN MẤT CON ACTIVE: Tự động chuyển sang con đầu tiên còn lại trong túi
+        if is_active_sold:
+            new_active = remaining_digi_list[0]
+            updates["$set"]["active_digimon_id"] = new_active["id"]
+            # Đồng bộ lại máu Root theo lượng máu của con Digimon mới được đôn lên làm Active
+            updates["$set"]["current_hp"] = new_active.get("hp", 100)
+            
+        # Cập nhật một lần duy nhất vào Database
+        await rpg_profiles_col.update_one({"user_id": user_id}, updates)
+        
+        # Tạo chuỗi văn bản hiển thị danh sách tên các con đã bán
+        sold_names_str = ", ".join(sold_digimon_names)
+        
+        status_msg = (
+            f"💰 **Successful bulk sales!**\n"
+            f"🗑️ Liberation **{len(selected_ids)}** Digimon: `[{sold_names_str}]`.\n"
+            f"💵 Gain: **+{total_reward_bits:.0f} Digibits**!"
+        )
+        
+        if is_active_sold:
+            status_msg += f"\n🐾 *Because the previous Digimon companion has been sold., **{remaining_digi_list[0]['name']}** đã tự động lên thay thế!*"
+            
+        await interaction.followup.send(status_msg, ephemeral=True)
+        
+        # Cập nhật lại giao diện Profile chính phía ngoài để hiển thị số tiền mới
+        try:
+            await self.refresh_profile_message(interaction.message, user_id)
+        except Exception:
+            pass
 
     async def handle_evolve(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -1661,31 +1559,52 @@ class RPGSystemCog(commands.Cog):
     # MARKET COMMANDS & HANDLERS
     # ========================================================================
     async def initialize_market_mega_products(self):
-        """Tối ưu hóa: Dễ dàng thêm Digimon mới vào NEW_MEGA_POOL về sau mà không sợ lỗi trùng lặp"""
+        """Tối ưu hóa: Lấy trực tiếp chỉ số ATK và HP cực mạnh từ NEW_MEGA_POOL đưa vào Chợ"""
 
         for mega in NEW_MEGA_POOL:
+            mega_name = mega["name"]
+            
+            # 1. Lấy trực tiếp chỉ số chuẩn từ NEW_MEGA_POOL bạn vừa cung cấp
+            base_hp = int(mega.get("hp", 15000))
+            base_atk = int(mega.get("atk", 1500))
+            
+            # 2. Các chỉ số bổ trợ khác như Hệ (attr), Ảnh (img), Chiêu thức (skill) 
+            # sẽ cố gắng tìm trong file cấu hình DIGIMON_DATA, nếu không có sẽ lấy mặc định
+            system_stats = self.DIGIMON_DATA.get("mega", {}).get(mega_name, {})
+            attr = system_stats.get("attr", "Vaccine") # Mặc định nếu thiếu
+            img = system_stats.get("img", "")
+            skill = system_stats.get("skill", "Mega Burst")
+
             await market_col.update_one(
-                {"item_name": mega["name"], "is_system": True},
+                {"item_name": mega_name, "is_system": True},
                 {"$setOnInsert": {
                     "listing_id": str(uuid.uuid4())[:8],
-                    "item_name": mega["name"],
+                    "item_name": mega_name,
                     "price": float(mega["base_price"]),
                     "seller_name": "System Market",
                     "seller_id": "system",
                     "is_system": True,
                     "currency": "orb",
-                    "listing_type": "digimon",  # Phân loại rõ ràng để điều hướng kho lưu trữ
+                    "listing_type": "digimon",  
                     "item_data": {
                         "id": str(uuid.uuid4()),
-                        "name": mega["name"],
+                        "name": mega_name,
                         "stage": "Mega",
+                        "attr": attr,
+                        "hp": base_hp,          # Đã sửa: Nạp HP cực mạnh từ pool
+                        "atk": base_atk,        # Đã sửa: Nạp ATK cực mạnh từ pool
+                        "current_hp": base_hp, # Đã sửa: Đầy máu ngay khi mua
+                        "size": 1.25,            # Kích thước mặc định 125%
+                        "img": img,
+                        "skill": skill,
+                        "trained_hp": 0,
+                        "trained_atk": 0,
                         "obtained_at": int(time.time())
                     },
                     "created_at": int(time.time())
                 }},
-                upsert=True # Nếu chưa có tên quái thú này trên chợ hệ thống -> tự động chèn thêm
+                upsert=True 
             )
-
     async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
         await interaction.response.defer(ephemeral=True)
         
