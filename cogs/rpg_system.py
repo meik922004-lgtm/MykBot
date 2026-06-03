@@ -236,15 +236,10 @@ class DigiBagSelect(discord.ui.Select):
         await self.cog.handle_set_active_digimon(interaction, self.values[0])
 
 class InventoryView(discord.ui.View):
-    def __init__(self, profile: dict, cog_instance, view_type="gear"):
-        super().__init__(timeout=180)
-        
-        if view_type == "gear":
-            self.add_item(GearInventorySelect(profile, cog_instance))
-        elif view_type == "digimon":
-            digimon_list = profile.get("digimon_list", [])
-            active_id = profile.get("active_digimon_id", "")
-            self.add_item(DigiBagSelect(digimon_list, active_id, cog_instance))
+    # Chỉ nhận 1 tham số select_menu là đủ
+    def __init__(self, select_menu: discord.ui.Select, timeout=180):
+        super().__init__(timeout=timeout)
+        self.add_item(select_menu)
 
 def generate_inventory_embed(profile: dict) -> discord.Embed:
     """Hàm tạo Embed hiển thị Block List túi đồ và đồ đang mặc"""
