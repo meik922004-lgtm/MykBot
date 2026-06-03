@@ -874,6 +874,10 @@ class RPGSystemCog(commands.Cog):
                 self.auto_attackers.discard(user_id)
                 break
 
+    def get_attribute_multiplier(self, attacker_attr: str, defender_attr: str) -> float:
+        if attacker_attr == defender_attr: return 1.0
+        adv = {"Vaccine": "Virus", "Virus": "Data", "Data": "Vaccine"}
+        return 1.25 if adv.get(attacker_attr) == defender_attr else 0.8           
     async def handle_manual_attack(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True) 
         current_time = int(time.time())
