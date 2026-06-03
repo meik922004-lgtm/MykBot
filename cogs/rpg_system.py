@@ -13,6 +13,7 @@ from Database import rpg_profiles_col, world_boss_col, boss_channels_col, partie
 import pymongo
 from pymongo import UpdateOne
 
+farm_logs_buffer = {}
 cross_messages_col = rpg_profiles_col.database["cross_chat_logs"]
 market_col = rpg_profiles_col.database["rpg_marketplace"]
 OWNER_IDS = [1283689737567211581]
@@ -49,72 +50,31 @@ auto_attack_cache = {}
 # ========================================================================
 # UI INTERFACE CLASSES (VIEWS, SELECTS & MODALS)
 # ========================================================================
-
-class DigiBagSelect(discord.ui.Select):
-    def __init__(self, digimon_list: list, current_active_id: str, cog_instance):
-        self.cog = cog_instance
-        options = []
-        for digi in digimon_list[:25]:
-            is_active = "✅ (Active)" if digi["id"] == current_active_id else ""
-            size = digi.get("size", 1.0) * 100 
-            options.append(discord.SelectOption(
-                label=f"{digi['name']} {is_active}".strip(),
-                description=f"Stage: {digi['stage']} | ATK: {digi['atk']} | HP: {digi['hp']} | Size: {size:.1f}%",
-                value=digi["id"]
-            ))
-        super().__init__(placeholder="Choose Digimon...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ **Your Digimon Bag is empty!**", ephemeral=True)
-        await self.cog.handle_switch_digimon(interaction, self.values[0])
-
-class DigiSellSelect(discord.ui.Select):
-    def __init__(self, digimon_list: list, current_active_id: str, cog_instance):
-        self.cog = cog_instance
-        options = []
-        extra_digis = [d for d in digimon_list if d["id"] != current_active_id]
-        
-        for digi in extra_digis[:25]:
-            # Lấy thông tin size (quy đổi thành %) và stats an toàn
-            size_pct = digi.get("size", 1.0) * 100 
-            atk = digi.get("atk", 0)
-            hp = digi.get("hp", 0)
-            
-            options.append(discord.SelectOption(
-                label=f"Sell: {digi['name']}",
-                # Thêm Size và Stats trực tiếp vào dòng mô tả của Select Menu
-                description=f"Size: {size_pct:.1f}% | ATK: {atk} | HP: {hp} -> Get 2.0 DB",
-                value=digi["id"],
-                emoji="♻️"
-            ))
-        if not options:
-            options = [discord.SelectOption(label="No extra Digimon to sell", value="empty")]
-        super().__init__(placeholder="♻️ Select an extra Digimon to sell (2 DB)...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ **No redundant Digimon available to sell!**", ephemeral=True)
-        await self.cog.handle_sell_digimon(interaction, self.values[0])
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "empty":
-            return await interaction.response.send_message("❌ **No redundant Digimon available to sell!**", ephemeral=True)
-        await self.cog.handle_sell_digimon(interaction, self.values[0])
-
-class BagView(discord.ui.View):
-    def __init__(self, digimon_list: list, current_active_id: str, cog_instance):
-        super().__init__(timeout=120)
-        self.add_item(DigiBagSelect(digimon_list, current_active_id, cog_instance))
-        self.add_item(DigiSellSelect(digimon_list, current_active_id, cog_instance))
-
 class GearInventorySelect(discord.ui.Select):
-    def __init__(self, gear_list: list, cog_instance):
+    def __init__(self, profile: dict, cog_instance):
         options = []
+        self.cog = cog_instance
+        
+        inventory = profile.get("inventory", [])
+        equipped = profile.get("equipped", {}) # Lấy dữ liệu đồ đang mặc
+        
+        # 1. Đưa các trang bị ĐANG MẶC vào đầu danh sách để dễ Gỡ (Unequip)
+        for slot in ["weapon", "armor", "vice"]:
+            item = equipped.get(slot)
+            if item and item != "None":
+                item_name = item if isinstance(item, str) else item.get("name", "Unknown")
+                options.append(discord.SelectOption(
+                    label=f"[Đang mặc] {item_name}",
+                    description=f"Click to remove from slot {slot.upper()}",
+                    value=f"unequip_{slot}", # Giá trị đặc biệt để nhận diện lệnh tháo
+                    emoji="🔓"
+                ))
+
+        # 2. Gom nhóm và đưa các vật phẩm TRONG TÚI vào danh sách
         string_counts = {}
         dict_items = []
-        self.cog = cog_instance
         
-        for gear in gear_list:
+        for gear in inventory:
             if isinstance(gear, str):
                 string_counts[gear] = string_counts.get(gear, 0) + 1
             elif isinstance(gear, dict):
@@ -129,7 +89,7 @@ class GearInventorySelect(discord.ui.Select):
             if "atk" in gear_data: stats.append(f"ATK +{gear_data['atk']}")
             if "def" in gear_data: stats.append(f"DEF +{gear_data['def']}")
             if "hp" in gear_data: stats.append(f"HP +{gear_data['hp']}")
-            stat_desc = " | ".join(stats) if stats else "Consumable items/Other"
+            stat_desc = " | ".join(stats) if stats else "Consumable"
             
             quantity_label = f" x{count}" if count > 1 else ""
             options.append(discord.SelectOption(
@@ -153,11 +113,10 @@ class GearInventorySelect(discord.ui.Select):
             ))
 
         if not options:
-            options = [discord.SelectOption(label="Empty storage", value="empty")]
+            options = [discord.SelectOption(label="The warehouse is empty.", value="empty")]
             
-        super().__init__(placeholder="View the equipment list...", options=options)
+        super().__init__(placeholder="🎒 Choose equipment to Wear, Use, or Remove..", options=options)
 
-    # === BỔ SUNG PHƯƠNG THỨC CALLBACK XỬ LÝ TƯƠNG TÁC CHÍNH ===
     async def callback(self, interaction: discord.Interaction):
         selected_value = self.values[0]
         if selected_value == "empty":
@@ -171,8 +130,31 @@ class GearInventorySelect(discord.ui.Select):
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
             
         inventory = profile.get("inventory", [])
-        
-        # Tìm kiếm item được chọn trong DB (hỗ trợ cả String lẫn Dict)
+        equipped = profile.get("equipped", {})
+
+        # ==================================================
+        # XỬ LÝ LỆNH: THÁO TRANG BỊ (UNEQUIP)
+        # ==================================================
+        if selected_value.startswith("unequip_"):
+            slot = selected_value.replace("unequip_", "")
+            item_to_remove = equipped.get(slot)
+            
+            if item_to_remove:
+                inventory.append(item_to_remove) # Trả đồ về túi
+                equipped[slot] = "None"          # Xóa khỏi slot đang mặc
+                
+                await rpg_profiles_col.update_one(
+                    {"user_id": user_id},
+                    {"$set": {"inventory": inventory, "equipped": equipped}}
+                )
+                item_name = item_to_remove if isinstance(item_to_remove, str) else item_to_remove.get("name")
+                return await interaction.followup.send(f"🔓 I have removed **{item_name}** from position **[{slot.upper()}]** and put it in the storage!", ephemeral=True)
+            else:
+                return await interaction.followup.send("❌ LError: This location is not equipped.", ephemeral=True)
+
+        # ==================================================
+        # XỬ LÝ LỆNH: DÙNG/MẶC TRANG BỊ
+        # ==================================================
         target_item = None
         is_dict = False
         for item in inventory:
@@ -185,50 +167,41 @@ class GearInventorySelect(discord.ui.Select):
                 break
                 
         if target_item is None:
-            return await interaction.followup.send("❌ The item no longer exists in your inventory.!", ephemeral=True)
+            return await interaction.followup.send("❌ This item is no longer in your inventory!", ephemeral=True)
             
         item_name = target_item if isinstance(target_item, str) else target_item.get("name", "Unknown")
         
-        # --------------------------------------------------
-        # TRƯỜNG HỢP 1: SỬ DỤNG FRUIT (Size Reroll Fruit)
-        # --------------------------------------------------
+        # Trường hợp 1: Dùng trái cây (Fruit)
         if "Fruit" in item_name:
             active_id = profile.get("active_digimon_id")
             digimon_list = profile.get("digimon_list", [])
             active_digi = next((d for d in digimon_list if d["id"] == active_id), None)
             
             if not active_digi:
-                return await interaction.followup.send("❌ You need to activate a companion Digimon before using a Fruit!", ephemeral=True)
+                return await interaction.followup.send("❌ You need to activate a Digimon before using a Fruit.!", ephemeral=True)
                 
-            # Reroll ngẫu nhiên kích thước từ 0.5 (50%) đến 1.5 (250%)
             new_size = round(random.uniform(0.5, 1.25), 2)
             active_digi["size"] = new_size
-            
-            # Trừ vật phẩm khỏi túi đồ
             inventory.remove(target_item)
             
             await rpg_profiles_col.update_one(
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "digimon_list": digimon_list}}
             )
-            return await interaction.followup.send(f"🍎 You have used **{item_name}** on **{active_digi['name']}**!\n📏 New size updated: **{new_size * 100:.1f}%**", ephemeral=True)
+            return await interaction.followup.send(f"🍎 **{item_name}** has been used on **{active_digi['name']}**!\n📏 New size: **{new_size * 100:.1f}%**", ephemeral=True)
             
-        # --------------------------------------------------
-        # TRƯỜNG HỢP 2: TRANG BỊ GEARS (Weapon, Armor, Vice)
-        # --------------------------------------------------
+        # Trường hợp 2: Mặc trang bị (Gear)
         cleaned_name = self.cog.clean_item_name(item_name)
         gear_base_data = self.cog.ITEMS.get(cleaned_name, {}) if not is_dict else target_item
         gear_type = gear_base_data.get("type")
         
         if gear_type in ["weapon", "armor", "vice"]:
-            equipped = profile.get("equipped", {})
             old_equipped = equipped.get(gear_type)
             
-            # Nếu vị trí trang bị đó đang có đồ cũ -> Tháo đồ cũ trả lại vào túi
-            if old_equipped:
+            # Đổi đồ: Nhét đồ cũ vào túi trước
+            if old_equipped and old_equipped != "None":
                 inventory.append(old_equipped)
                 
-            # Mặc trang bị mới vào slot tương ứng và xóa khỏi túi đồ
             equipped[gear_type] = target_item
             inventory.remove(target_item)
             
@@ -236,10 +209,67 @@ class GearInventorySelect(discord.ui.Select):
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "equipped": equipped}}
             )
-            return await interaction.followup.send(f"✅ Item **{item_name}** has been successfully fitted into the slot. **[{gear_type.upper()}]**!", ephemeral=True)
+            return await interaction.followup.send(f"✅**{item_name}** has been placed in position**[{gear_type.upper()}]**!", ephemeral=True)
             
-        # Nếu chọn vật phẩm thông thường khác
-        await interaction.followup.send(f"📦 Item **{item_name}** cannot be used or equipped directly here.", ephemeral=True)
+        await interaction.followup.send(f"📦Item **{item_name}** cannot be used directly here..", ephemeral=True)
+
+class InventoryView(discord.ui.View):
+    def __init__(self, profile: dict, cog_instance):
+        super().__init__(timeout=180)
+        # Nạp Select Menu (truyền toàn bộ profile vào)
+        self.add_item(GearInventorySelect(profile, cog_instance))
+
+def generate_inventory_embed(profile: dict) -> discord.Embed:
+    """Hàm tạo Embed hiển thị Block List túi đồ và đồ đang mặc"""
+    embed = discord.Embed(title="🎒 Inventory", color=discord.Color.blue())
+    
+    # --- 1. Block: Đồ đang mặc ---
+    equipped = profile.get("equipped", {})
+    w_name = equipped.get("weapon")
+    a_name = equipped.get("armor")
+    v_name = equipped.get("vice")
+    
+    # Xử lý lấy tên nếu đồ là dạng Dict (đồ hiếm)
+    w_display = w_name if isinstance(w_name, str) else w_name.get("name", "Empty") if w_name else "Trống"
+    a_display = a_name if isinstance(a_name, str) else a_name.get("name", "Empty") if a_name else "Trống"
+    v_display = v_name if isinstance(v_name, str) else v_name.get("name", "Empty") if v_name else "Trống"
+    
+    equipped_text = f"⚔️ **Weapon:** {w_display}\n🛡️ **Armor:** {a_display}\n📿 **Vice:** {v_display}"
+    embed.add_field(name="👕 Equipment currently worn", value=equipped_text, inline=False)
+    
+    # --- 2. Block: Đồ trong túi ---
+    inventory = profile.get("inventory", [])
+    if not inventory:
+        embed.add_field(name="📦Storage", value="*Your equipment storage is empty.*", inline=False)
+    else:
+        # Gom nhóm đồ thừa
+        string_counts = {}
+        dict_items = []
+        for item in inventory:
+            if isinstance(item, str):
+                string_counts[item] = string_counts.get(item, 0) + 1
+            else:
+                dict_items.append(item)
+                
+        inv_text = ""
+        # Render đồ thường (cộng dồn số lượng)
+        for name, count in string_counts.items():
+            qty = f" (x{count})" if count > 1 else ""
+            inv_text += f"🔹 {name}{qty}\n"
+            
+        # Render đồ hiếm (Dictionary)
+        for item in dict_items:
+            rarity = item.get("rarity", "Rare")
+            inv_text += f"🌟 {item.get('name', 'Unknown')} `[{rarity}]`\n"
+            
+        # Giới hạn text hiển thị để tránh lỗi quá dài của Discord Embed
+        if len(inv_text) > 1024:
+            inv_text = inv_text[:1000] + "\n... (Và còn nhiều nữa)"
+            
+        embed.add_field(name="📦 Trong túi", value=inv_text, inline=False)
+        
+    embed.set_footer(text="Sử dụng menu bên dưới để Mặc, Gỡ hoặc Dùng vật phẩm.")
+    return embed
 
 class ProfileView(discord.ui.View):
     def __init__(self, profile: dict, cog_instance):
@@ -266,7 +296,28 @@ class ProfileView(discord.ui.View):
     @discord.ui.button(label="🧬 Evolve", style=discord.ButtonStyle.danger, row=1)
     async def evolve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_evolve(interaction)
+    @discord.ui.button(label="Digimon bag ", style=discord.ButtonStyle.secondary, emoji="🐾")
+    async def open_digi_bag(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Lệnh mở Bag Digimon (Code cũ của bạn)
+        await interaction.response.defer(ephemeral=True)
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        digimon_list = profile.get("digimon_list", [])
+        
+        embed = discord.Embed(title="🐾 Your Digimon Bag", description="Choose a partner or sell extra Digimon.", color=discord.Color.gold())
+        await interaction.followup.send(embed=embed, view=InventoryView(digimon_list, profile.get("active_digimon_id" ), self.cog), ephemeral=True)
 
+    @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒")
+    async def open_inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Lệnh mở UI Kho đồ mới
+        await interaction.response.defer(ephemeral=True)
+        profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        if not profile:
+            return await interaction.followup.send("❌No Data.", ephemeral=True)
+            
+        embed = generate_inventory_embed(profile)
+        view = InventoryView(profile, self.cog)
+        
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 class MarketBuySelect(discord.ui.Select):
     def __init__(self, listings: list, cog_instance):
         self.cog = cog_instance
@@ -508,6 +559,55 @@ class RPGSystemCog(commands.Cog):
     #========================================
     #                 AUTO FARM
     #========================================
+    @app_commands.command(name="farm", description="🌌 Auto farm resource")
+    async def farm_command(self, interaction: discord.Interaction):
+        # Defer trước để tránh lỗi quá hạn 3 giây của Discord khi truy vấn DB
+        await interaction.response.defer(ephemeral=True)
+        
+        user_id = interaction.user.id
+        # Đọc dữ liệu hồ sơ từ MongoDB
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not profile:
+            return await interaction.followup.send(
+                "❌ You don't have an RPG profile yet! Please create a character first..", 
+                ephemeral=True
+            )
+            
+        # Lấy thông tin trạng thái để hiển thị lên bảng điều khiển (Dashboard)
+        efficiency_bonus = profile.get("mining_efficiency_bonus", 0)
+        assistants = profile.get("mining_assistants", [])
+        
+        # Kiểm tra xem người chơi có đang bật Auto-Farm không (tùy thuộc vào cách bạn lưu biến này trong loop)
+        is_farming = profile.get("is_farming", False) 
+        status_text = "🟢Automated farming" if is_farming else "🔴 On pause"
+        
+        # Thiết kế giao diện Bảng Điều Khiển (Embed)
+        embed = discord.Embed(
+            title="⛏️ AUTO-FARM & OPERATIONS CENTER🌌",
+            description="This is where the resource gathering and distribution of Digimon miners is managed..",
+            color=discord.Color.dark_purple()
+        )
+        
+        embed.add_field(name="🛰️ System status", value=f"**{status_text}**", inline=True)
+        embed.add_field(name="⚡ Increased performance", value=f"**+{efficiency_bonus * 10}% DB**", inline=True)
+        embed.add_field(name="👥 Number of assistants", value=f"**{len(assistants)}/6 Digimon**", inline=True)
+        
+        # Hiển thị danh sách tên các Digimon đang phụ trách đào mỏ
+        if assistants:
+            digimon_list = profile.get("digimon_list", [])
+            assistant_names = [d["name"] for d in digimon_list if d["id"] in assistants]
+            embed.add_field(name="🛠️ List of working assistants", value=f"• " + "\n• ".join(assistant_names), inline=False)
+        else:
+            embed.add_field(name="🛠️List of working assistants", value="*No Digimon have been working..*", inline=False)
+            
+        embed.set_footer(text="Use the menu and buttons below to control.")
+        
+        # Khởi tạo FarmView (Truyền self đóng vai trò cog_instance, và dữ liệu profile vừa đọc)
+        view = FarmView(self, profile)
+        
+        # Gửi bảng điều khiển kèm UI lên cho người dùng
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
     def roll_pve_loot(self) -> tuple[str, str]:
         """Tự động phân bổ loại trang bị rớt ra và trả về (Tên_Vật_Phẩm, Loại_Vật_Phẩm)"""
         is_high_tier = random.random() < 0.12 # 12% tỷ lệ ra đồ Rare trong nhóm đồ thường
@@ -539,12 +639,35 @@ class RPGSystemCog(commands.Cog):
    
     async def handle_view_logs(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
+        if not profile:
+            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
+            
         logs = profile.get("farm_logs", [])
-        embed = discord.Embed(title="📜 System Farm Logs", color=discord.Color.dark_gray())
-        embed.description = "No automated farming data yet." if not logs else "```\n" + "\n".join(logs) + "\n ```"
+        
+        embed = discord.Embed(title="📜 Farm Logs", color=discord.Color.dark_gray())
+        
+        if not logs:
+            embed.description = "*Currently, there is no recorded data from the system crash..*"
+        else:
+            # 1. Đảo ngược danh sách để các dòng Log MỚI NHẤT hiển thị lên ĐẦU
+            recent_logs = list(reversed(logs))
+            
+            # 2. Giới hạn chỉ lấy tối đa khoảng 15-20 dòng log gần nhất để giao diện gọn gàng
+            recent_logs = recent_logs[:20] 
+            
+            # 3. Gộp log lại thành một chuỗi văn bản
+            log_text = "\n".join(recent_logs)
+            
+            # 4. Phòng hờ: Nếu độ dài chuỗi vẫn quá dài, chủ động cắt chuỗi ở mức an toàn (ví dụ 3500 ký tự)
+            if len(log_text) > 3500:
+                log_text = log_text[:3500] + "\n... (Older log data has been compressed.)"
+                
+            embed.description = f"```markdown\n{log_text}\n```"
+            
+        embed.set_footer(text=f"Displays up to 20 most recent logs • Total number of stored logs: {len(logs)}")
         await interaction.followup.send(embed=embed, ephemeral=True)
-
     @tasks.loop(minutes=2)
     async def farm_system_loop(self):
         # Hệ thống chỉ chạy cho những ai đang ở trạng thái farm tại "digital_dimension"
@@ -878,6 +1001,7 @@ class RPGSystemCog(commands.Cog):
         if attacker_attr == defender_attr: return 1.0
         adv = {"Vaccine": "Virus", "Virus": "Data", "Data": "Vaccine"}
         return 1.25 if adv.get(attacker_attr) == defender_attr else 0.8           
+    
     async def handle_manual_attack(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True) 
         current_time = int(time.time())
