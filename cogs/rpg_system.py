@@ -236,10 +236,14 @@ class DigiBagSelect(discord.ui.Select):
         await self.cog.handle_set_active_digimon(interaction, self.values[0])
 
 class InventoryView(discord.ui.View):
-    # Chỉ nhận 1 tham số select_menu là đủ
-    def __init__(self, select_menu: discord.ui.Select, timeout=180):
+    # Chúng ta cho phép nó nhận một menu tùy chọn hoặc tự tạo GearInventorySelect nếu không có
+    def __init__(self, select_menu=None, profile=None, cog_instance=None, timeout=180):
         super().__init__(timeout=timeout)
-        self.add_item(select_menu)
+        if select_menu:
+            self.add_item(select_menu)
+        elif profile and cog_instance:
+            # Nếu truyền profile và cog, tự động tạo GearInventorySelect
+            self.add_item(GearInventorySelect(profile, cog_instance))   
 
 def generate_inventory_embed(profile: dict) -> discord.Embed:
     """Hàm tạo Embed hiển thị Block List túi đồ và đồ đang mặc"""
@@ -326,11 +330,7 @@ class ProfileView(discord.ui.View):
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
         
         # Chỉ tạo Menu Digimon
-        digi_menu = DigiBagSelect(
-            profile.get("digimon_list", []), 
-            profile.get("active_digimon_id"), 
-            self.cog
-        )
+        digi_menu = DigiBagSelect(profile.get("digimon_list", []), profile.get("active_digimon_id"), self.cog)
         
         embed = discord.Embed(
             title="🐾 Your Digimon Bag", 
@@ -340,7 +340,7 @@ class ProfileView(discord.ui.View):
         
         # Nạp menu Digimon vào view
         # Bạn có thể dùng chung class InventoryView nếu nó chỉ là cái khung
-        view = InventoryView(digi_menu) 
+        view = InventoryView(select_menu=digi_menu) 
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒")
@@ -352,8 +352,7 @@ class ProfileView(discord.ui.View):
             return await interaction.followup.send("❌No Data.", ephemeral=True)
             
         embed = generate_inventory_embed(profile)
-        view = InventoryView(profile, self.cog)
-        
+        view = InventoryView(profile=profile, cog_instance=self.cog)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 class MarketBuySelect(discord.ui.Select):
