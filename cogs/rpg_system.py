@@ -29,7 +29,7 @@ NEW_MEGA_POOL = [
     {"name": "Ravemon BM", "stage": "Mega", "atk": 1500, "hp": 14000, "base_price": 600},
     {"name": "BlackWarGreymon", "stage": "Mega", "atk": 1600, "hp": 16500, "base_price": 600},
     {"name": "MetalSeadramon", "stage": "Mega", "atk": 1485, "hp": 15800, "base_price": 600},
-    {"name": "Piedmon", "stage": "Mega", "atk": 1960, "hp": 15000, "base_price": 600},
+    {"name": "Piedmon", "stage": "Mega", "atk": 1560, "hp": 15000, "base_price": 600},
     {"name": "Valkyrimon", "stage": "Mega", "atk": 1500, "hp": 13800, "base_price": 600},
     {"name": "Vikemon", "stage": "Mega", "atk": 1540, "hp": 16800, "base_price": 600},
     {"name": "GranKuwagamon", "stage": "Mega", "atk": 1535, "hp": 14500, "base_price": 600}
