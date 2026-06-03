@@ -540,7 +540,6 @@ class RPGSystemCog(commands.Cog):
         self.bot = bot
         self.auto_attackers = set()
         self.auto_spawn_boss.start()
-        self.farm_system_loop.start()
         self.live_boss_update_loop.start()
         self.bot.loop.create_task(self.initialize_market_mega_products())
         self.auto_attack_cache = {}
@@ -551,10 +550,8 @@ class RPGSystemCog(commands.Cog):
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Ring", "type": "vice", "atk": 350, "def": 350, "rarity": "Mythic"}]
         self.auto_spawn_boss.cancel()
-        self.farm_system_loop.cancel()
         self.live_boss_update_loop.cancel()
-        if not self.farm_system_loop.is_running():
-            self.farm_system_loop.start()
+        
 
     # ========================================================================
     #                       HELPER METHODS
