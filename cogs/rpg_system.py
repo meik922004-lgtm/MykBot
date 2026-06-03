@@ -1488,7 +1488,7 @@ class RPGSystemCog(commands.Cog):
             {"$inc": {"hatch_core": -5}}
         )
         if res.modified_count == 0:
-            return await interaction.followup.send("❌ Bạn không đủ Hatch Core (Yêu cầu 5 lõi).", ephemeral=True)
+            return await interaction.followup.send("❌ You don't have enough Hatch Cores (5 cores required).", ephemeral=True)
 
         is_vip = profile.get("is_vip", False)
         available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
