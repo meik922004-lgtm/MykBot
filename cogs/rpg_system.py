@@ -213,11 +213,38 @@ class GearInventorySelect(discord.ui.Select):
             
         await interaction.followup.send(f"📦Item **{item_name}** cannot be used directly here..", ephemeral=True)
 
+class DigiBagSelect(discord.ui.Select):
+    def __init__(self, digimon_list, active_id, cog_instance):
+        self.cog = cog_instance
+        options = []
+        for d in digimon_list:
+            is_active = "✅ " if d["id"] == active_id else ""
+            options.append(discord.SelectOption(
+                label=f"{is_active}{d['name']}",
+                value=d["id"],
+                description=f"Stage: {d['stage']} | Size: {d.get('size', 1)*100:.0f}%"
+            ))
+        
+        if not options:
+            options = [discord.SelectOption(label="Empty bag", value="none")]
+            
+        super().__init__(placeholder="🐾 Choose a Digimon to activate..", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none": return
+        # Gọi hàm xử lý active Digimon trong cog của bạn
+        await self.cog.handle_set_active_digimon(interaction, self.values[0])
+
 class InventoryView(discord.ui.View):
-    def __init__(self, profile: dict, cog_instance):
+    def __init__(self, profile: dict, cog_instance, view_type="gear"):
         super().__init__(timeout=180)
-        # Nạp Select Menu (truyền toàn bộ profile vào)
-        self.add_item(GearInventorySelect(profile, cog_instance))
+        
+        if view_type == "gear":
+            self.add_item(GearInventorySelect(profile, cog_instance))
+        elif view_type == "digimon":
+            digimon_list = profile.get("digimon_list", [])
+            active_id = profile.get("active_digimon_id", "")
+            self.add_item(DigiBagSelect(digimon_list, active_id, cog_instance))
 
 def generate_inventory_embed(profile: dict) -> discord.Embed:
     """Hàm tạo Embed hiển thị Block List túi đồ và đồ đang mặc"""
@@ -302,16 +329,23 @@ class ProfileView(discord.ui.View):
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
         if not profile:
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
-            
+        
+        # Chỉ tạo Menu Digimon
+        digi_menu = DigiBagSelect(
+            profile.get("digimon_list", []), 
+            profile.get("active_digimon_id"), 
+            self.cog
+        )
+        
         embed = discord.Embed(
             title="🐾 Your Digimon Bag", 
-            description="Manage your Digimon here..", 
+            description="Manage your Digimon here.", 
             color=discord.Color.gold()
         )
         
-        # SỬA LẠI DÒNG NÀY (Chỉ truyền 2 tham số: profile và self.cog)
-        view = InventoryView(profile, self.cog)
-        
+        # Nạp menu Digimon vào view
+        # Bạn có thể dùng chung class InventoryView nếu nó chỉ là cái khung
+        view = InventoryView(digi_menu) 
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒")
@@ -326,6 +360,7 @@ class ProfileView(discord.ui.View):
         view = InventoryView(profile, self.cog)
         
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
 class MarketBuySelect(discord.ui.Select):
     def __init__(self, listings: list, cog_instance):
         self.cog = cog_instance
@@ -368,7 +403,6 @@ class MarketShopView(discord.ui.View):
         # Tự động nạp menu lựa chọn mua hàng dựa theo dữ liệu thực tế
         self.add_item(MarketBuySelect(listings, cog_instance))
 
-
 class CombatView(discord.ui.View):
     def __init__(self, cog_instance):
         super().__init__(timeout=None)
@@ -386,7 +420,6 @@ class CombatView(discord.ui.View):
     async def protect_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_protect(interaction)
 
-
 class FarmDungeonSelect(discord.ui.Select):
     def __init__(self, cog_instance):
         self.cog = cog_instance
@@ -398,7 +431,6 @@ class FarmDungeonSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         await self.cog.handle_toggle_auto_dungeon(interaction, self.values[0])
-
 
 class FarmDigiMinerSelect(discord.ui.Select):
     def __init__(self, eligible_digimon: list):
@@ -442,7 +474,6 @@ class FarmDigiMinerSelect(discord.ui.Select):
             ephemeral=True
         )
 
-
 class FarmView(discord.ui.View):
     def __init__(self, cog_instance, profile: dict):
         super().__init__(timeout=300)
@@ -459,7 +490,6 @@ class FarmView(discord.ui.View):
 # ========================================================================
 #                            MAIN COG SYSTEM
 # ========================================================================
-
 class RPGSystemCog(commands.Cog):
     ITEMS = {
         "Rusty Sword": {"type": "weapon", "atk": 15}, "Rusty Armor": {"type": "armor", "hp": 150, "def": 10}, "Rusty Vice": {"type": "vice", "crit_rate": 5, "crit_dmg": 1.2},
@@ -612,6 +642,7 @@ class RPGSystemCog(commands.Cog):
         
         # Gửi bảng điều khiển kèm UI lên cho người dùng
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    
     def roll_pve_loot(self) -> tuple[str, str]:
         """Tự động phân bổ loại trang bị rớt ra và trả về (Tên_Vật_Phẩm, Loại_Vật_Phẩm)"""
         is_high_tier = random.random() < 0.12 # 12% tỷ lệ ra đồ Rare trong nhóm đồ thường
@@ -1752,5 +1783,6 @@ class RPGSystemCog(commands.Cog):
 
         # Truyền trực tiếp list hàng hóa lấy từ DB vào View để xử lý đồng bộ
         await interaction.followup.send(embed=embed, view=MarketShopView(listings, self), ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
