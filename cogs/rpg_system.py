@@ -1770,6 +1770,11 @@ class RPGSystemCog(commands.Cog):
     @app_commands.command(name="market", description="Open Digital Marketplace Shop")
     async def market_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        count = await market_col.count_documents({})
+        
+        # Nếu chợ trống, tự động nạp hàng hóa hệ thống vào
+        if count == 0:
+            await self.initialize_market_mega_products()
         # Lấy tối đa 25 sản phẩm mới nhất để vừa khít giới hạn hiển thị của Select Menu
         listings = await market_col.find({}).sort("created_at", -1).to_list(25)
 
