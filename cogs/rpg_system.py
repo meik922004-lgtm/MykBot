@@ -56,11 +56,11 @@ class GearInventorySelect(discord.ui.Select):
         self.cog = cog_instance
         
         inventory = profile.get("inventory", [])
-        equipped = profile.get("equipped", {}) # Lấy dữ liệu đồ đang mặc
+        gear = profile.get("gear", {}) # Lấy dữ liệu đồ đang mặc
         
         # 1. Đưa các trang bị ĐANG MẶC vào đầu danh sách để dễ Gỡ (Unequip)
         for slot in ["weapon", "armor", "vice"]:
-            item = equipped.get(slot)
+            item = gear.get(slot)
             if item and item != "None":
                 item_name = item if isinstance(item, str) else item.get("name", "Unknown")
                 options.append(discord.SelectOption(
@@ -130,22 +130,22 @@ class GearInventorySelect(discord.ui.Select):
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
             
         inventory = profile.get("inventory", [])
-        equipped = profile.get("equipped", {})
+        gear = profile.get("gear", {})
 
         # ==================================================
         # XỬ LÝ LỆNH: THÁO TRANG BỊ (UNEQUIP)
         # ==================================================
         if selected_value.startswith("unequip_"):
             slot = selected_value.replace("unequip_", "")
-            item_to_remove = equipped.get(slot)
+            item_to_remove = gear.get(slot)
             
             if item_to_remove:
                 inventory.append(item_to_remove) # Trả đồ về túi
-                equipped[slot] = "None"          # Xóa khỏi slot đang mặc
+                gear[slot] = "None"          # Xóa khỏi slot đang mặc
                 
                 await rpg_profiles_col.update_one(
                     {"user_id": user_id},
-                    {"$set": {"inventory": inventory, "equipped": equipped}}
+                    {"$set": {"inventory": inventory, "gear": gear}}
                 )
                 item_name = item_to_remove if isinstance(item_to_remove, str) else item_to_remove.get("name")
                 return await interaction.followup.send(f"🔓 I have removed **{item_name}** from position **[{slot.upper()}]** and put it in the storage!", ephemeral=True)
@@ -196,18 +196,18 @@ class GearInventorySelect(discord.ui.Select):
         gear_type = gear_base_data.get("type")
         
         if gear_type in ["weapon", "armor", "vice"]:
-            old_equipped = equipped.get(gear_type)
+            old_gear = gear.get(gear_type)
             
             # Đổi đồ: Nhét đồ cũ vào túi trước
-            if old_equipped and old_equipped != "None":
-                inventory.append(old_equipped)
+            if old_gear and old_gear != "None":
+                inventory.append(old_gear)
                 
-            equipped[gear_type] = target_item
+            gear[gear_type] = target_item
             inventory.remove(target_item)
             
             await rpg_profiles_col.update_one(
                 {"user_id": user_id},
-                {"$set": {"inventory": inventory, "equipped": equipped}}
+                {"$set": {"inventory": inventory, "gear": gear}}
             )
             return await interaction.followup.send(f"✅**{item_name}** has been placed in position**[{gear_type.upper()}]**!", ephemeral=True)
             
@@ -250,18 +250,18 @@ def generate_inventory_embed(profile: dict) -> discord.Embed:
     embed = discord.Embed(title="🎒 Inventory", color=discord.Color.blue())
     
     # --- 1. Block: Đồ đang mặc ---
-    equipped = profile.get("equipped", {})
-    w_name = equipped.get("weapon")
-    a_name = equipped.get("armor")
-    v_name = equipped.get("vice")
+    gear = profile.get("gear", {})
+    w_name = gear.get("weapon")
+    a_name = gear.get("armor")
+    v_name = gear.get("vice")
     
     # Xử lý lấy tên nếu đồ là dạng Dict (đồ hiếm)
     w_display = w_name if isinstance(w_name, str) else w_name.get("name", "Empty") if w_name else "Empty"
     a_display = a_name if isinstance(a_name, str) else a_name.get("name", "Empty") if a_name else "Empty"
     v_display = v_name if isinstance(v_name, str) else v_name.get("name", "Empty") if v_name else "Empty"
     
-    equipped_text = f"⚔️ **Weapon:** {w_display}\n🛡️ **Armor:** {a_display}\n📿 **Vice:** {v_display}"
-    embed.add_field(name="👕 Equipment currently worn", value=equipped_text, inline=False)
+    gear_text = f"⚔️ **Weapon:** {w_display}\n🛡️ **Armor:** {a_display}\n📿 **Vice:** {v_display}"
+    embed.add_field(name="👕 Equipment currently worn", value=gear_text, inline=False)
     
     # --- 2. Block: Đồ trong túi ---
     inventory = profile.get("inventory", [])
@@ -1558,7 +1558,7 @@ class RPGSystemCog(commands.Cog):
             slot_type = self.ITEMS[cleaned_base]["type"]
             # Lưu trữ chuỗi tên trang bị lên vị trí gear slot
             await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {f"gear.{slot_type}": item_name}})
-            await interaction.followup.send(f"🛡️ **Successfully equipped:** {item_name} -> Type `{slot_type.upper()}`", ephemeral=True)
+            await interaction.followup.send(f"🛡️ **Successfully gear:** {item_name} -> Type `{slot_type.upper()}`", ephemeral=True)
     
     async def handle_heal(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
