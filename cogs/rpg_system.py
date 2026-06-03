@@ -1453,7 +1453,8 @@ class RPGSystemCog(commands.Cog):
         if not profile:
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
             
-        today = datetime.date.today().isoformat()
+        today = datetime.now().date().isoformat()
+
         last_check = profile.get("last_daily_check")
         
         # Kiểm tra xem hôm nay người chơi đã điểm danh chưa
