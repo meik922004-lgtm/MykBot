@@ -588,7 +588,8 @@ class RPGSystemCog(commands.Cog):
         self.auto_spawn_boss.cancel()
         self.farm_system_loop.cancel()
         self.live_boss_update_loop.cancel()
-        self.farm_system_loop.start()
+        if not self.farm_system_loop.is_running():
+            self.farm_system_loop.start()
 
     # ========================================================================
     #                       HELPER METHODS
