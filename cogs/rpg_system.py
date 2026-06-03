@@ -369,7 +369,7 @@ class MarketBuySelect(discord.ui.Select):
             
             options.append(
                 discord.SelectOption(
-                    label=f"{item['item_name']} ({rarity}) - {item['price']:.2f} Orb",
+                    label=f"{item['item_name']} ({rarity}) - {item['price']:.2f} orb",
                     description=f"Seller: {item['seller_name']} | ID: {item['listing_id']}",
                     value=item["listing_id"],
                     emoji=emoji,
@@ -1134,8 +1134,8 @@ class RPGSystemCog(commands.Cog):
             dmg_percent = dmg / total_hp
             orbs_earned = max(1, int(dmg_percent * 10)) + (10 if rank == 1 else 5 if rank <= 3 else 0)
             
-            reward_str = f"+{orbs_earned} Orb & +1 MyK"
-            update_query = {"$inc": {"Orb": orbs_earned}}
+            reward_str = f"+{orbs_earned} orb & +1 MyK"
+            update_query = {"$inc": {"orb": orbs_earned}}
 
             if rank <= 3 and random.random() < 0.30:
                 reward_str += "\n🍎 Size Reroll Fruit"
@@ -1381,7 +1381,7 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="⚔️ ATK", value=str(stats['atk']), inline=True)
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
             
-        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} Orb**", inline=False)
+        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} orb**", inline=False)
         embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
         await message.edit(embed=embed, view=ProfileView(profile, self))
 
@@ -1445,7 +1445,7 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="⚔️ ATK", value=str(stats['atk']), inline=True)
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
             
-        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} Orb**", inline=False)
+        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} orb**", inline=False)
         embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
         
         await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
@@ -1693,7 +1693,7 @@ class RPGSystemCog(commands.Cog):
                     "seller_name": "System Market",
                     "seller_id": "system",
                     "is_system": True,
-                    "currency": "Orb",
+                    "currency": "orb",
                     "listing_type": "digimon",  # Phân loại rõ ràng để điều hướng kho lưu trữ
                     "item_data": {
                         "id": str(uuid.uuid4()),
@@ -1724,18 +1724,18 @@ class RPGSystemCog(commands.Cog):
         if not is_system and buyer_id == seller_id:
             return await interaction.followup.send("❌ You cannot buy items yourself!", ephemeral=True)
             
-        # 2. Kiểm tra số dư Orb của người mua
+        # 2. Kiểm tra số dư orb của người mua
         buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
-        if not buyer_profile or buyer_profile.get("Orb", 0) < price:
-            return await interaction.followup.send("❌ You don't have enough Orb to complete this transaction.!", ephemeral=True)
+        if not buyer_profile or buyer_profile.get("orb", 0) < price:
+            return await interaction.followup.send("❌ You don't have enough orb to complete this transaction.!", ephemeral=True)
             
         # 3. Thực hiện khấu trừ và luân chuyển tài chính
         # Trừ tiền người mua
-        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"Orb": -price}})
+        await rpg_profiles_col.update_one({"user_id": buyer_id}, {"$inc": {"orb": -price}})
         
         # Cộng tiền cho người bán (Chỉ thực hiện nếu đây là giao dịch giữa người chơi với nhau)
         if not is_system and seller_id != "system":
-            await rpg_profiles_col.update_one({"user_id": seller_id}, {"$inc": {"Orb": price}})
+            await rpg_profiles_col.update_one({"user_id": seller_id}, {"$inc": {"orb": price}})
         
         # 4. Điều hướng phần thưởng (Gia tăng phân loại Digimon / Item)
         if listing_type == "digimon":
@@ -1756,7 +1756,7 @@ class RPGSystemCog(commands.Cog):
         # 5. Xóa vật phẩm khỏi marketplace sau khi giao dịch hoàn tất
         await market_col.delete_one({"listing_id": listing_id})
         
-        await interaction.followup.send(f"🛍️ **Transaction successful!** {success_msg} (Cost: {price:.2f} Orb)", ephemeral=True)
+        await interaction.followup.send(f"🛍️ **Transaction successful!** {success_msg} (Cost: {price:.2f} orb)", ephemeral=True)
 
     @app_commands.command(name="market", description="Open Digital Marketplace Shop")
     async def market_cmd(self, interaction: discord.Interaction):
@@ -1773,7 +1773,7 @@ class RPGSystemCog(commands.Cog):
             for item in listings:
                 # Gắn nhãn hiển thị loại mặt hàng trực quan trên Embed
                 type_tag = "🧬 [DIGIMON]" if item.get("listing_type") == "digimon" else "⚔️ [EQUIP]"
-                desc += f"{type_tag} **{item['item_name']}**\n🆔 ID: `{item['listing_id']}` | 💰 **{item['price']:.2f} Orb** | 👤 Seller: {item['seller_name']}\n\n"
+                desc += f"{type_tag} **{item['item_name']}**\n🆔 ID: `{item['listing_id']}` | 💰 **{item['price']:.2f} orb** | 👤 Seller: {item['seller_name']}\n\n"
             embed.description = desc[:4000]
 
         # Truyền trực tiếp list hàng hóa lấy từ DB vào View để xử lý đồng bộ
