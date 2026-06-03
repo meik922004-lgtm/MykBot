@@ -343,7 +343,7 @@ class ProfileView(discord.ui.View):
     async def heal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_heal(interaction)
 
-    @discord.ui.button(label="🧬 Evolve", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="🧬 Evolve (6k digibit)", style=discord.ButtonStyle.danger, row=1)
     async def evolve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_evolve(interaction)
 
@@ -1597,7 +1597,7 @@ class RPGSystemCog(commands.Cog):
         if current_stage == "mega":
             return await interaction.followup.send("❌ Max Level (Mega) reached.", ephemeral=True)
 
-        TRAIN_COST = 1000
+        TRAIN_COST = 6000
         if profile.get("digibit", 0) < TRAIN_COST:
             return await interaction.followup.send(f"❌ You need **{TRAIN_COST:,} Digibits** to evolve.", ephemeral=True)
 
