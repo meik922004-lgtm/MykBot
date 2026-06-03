@@ -1716,7 +1716,7 @@ class RPGSystemCog(commands.Cog):
             
         buyer_id = interaction.user.id
         seller_id = item.get("seller_id")
-        price = item["price"]
+        price = float(item["price"])
         is_system = item.get("is_system", False)
         listing_type = item.get("listing_type", "item") # Mặc định là item nếu dòng cũ không có
         
@@ -1756,7 +1756,7 @@ class RPGSystemCog(commands.Cog):
         # 5. Xóa vật phẩm khỏi marketplace sau khi giao dịch hoàn tất
         await market_col.delete_one({"listing_id": listing_id})
         
-        await interaction.followup.send(f"🛍️ **Transaction successful!** {success_msg} (Cost: {price:.2f} orb)", ephemeral=True)
+        await interaction.followup.send(f"🛍️ **Transaction successful!** {success_msg} (Cost: {price:.0f} orb)", ephemeral=True)
 
     @app_commands.command(name="market", description="Open Digital Marketplace Shop")
     async def market_cmd(self, interaction: discord.Interaction):
