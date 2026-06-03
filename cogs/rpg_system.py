@@ -731,19 +731,18 @@ class RPGSystemCog(commands.Cog):
         # 1. Query chuẩn theo Database (auto_dungeon phải có giá trị và is_auto_mining phải là True)
         query = {
             "auto_dungeon": "digital_dimension",
-            "is_auto_mining": True 
         }
         profiles = await rpg_profiles_col.find(query).to_list(length=None)
         
         if not profiles:
-            return # Không có ai đang farm, thoát loop
+            print("DEBUG: No profiles found with auto_dungeon active.")
+            return
 
         bulk_operations = []
         
         for profile in profiles:
             user_id = profile["user_id"]
             log_msgs = []
-            
             # Khởi tạo các toán tử update, sử dụng float cho digibit
             inc_data = {}
             push_data = {}
@@ -762,7 +761,7 @@ class RPGSystemCog(commands.Cog):
             efficiency_bonus = float(profile.get("mining_efficiency_bonus", 0))
             assistant_bonus_db = float(base_db * (efficiency_bonus * 0.10))
             
-            total_db_gained = base_db + assistant_bonus_db
+            total_db_gained = float(base_db + assistant_bonus_db)
             bonus_db_from_dupes = 0.0
             new_gears_count = 0
 
@@ -815,21 +814,21 @@ class RPGSystemCog(commands.Cog):
             if not log_msgs:
                 log_msgs.append("🌌 Mining in progress...")
             
-            log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] " + " | ".join(log_msgs)
+            log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] Farm: +{total_db_gained} DB | " + " | ".join(log_msgs)
             push_data["farm_logs"] = {"$each": [log_entry], "$slice": -50}
-            
             # --- 6. Chuẩn bị bulk_write ---
             update_query = {}
             if inc_data: update_query["$inc"] = inc_data
             if push_data: update_query["$push"] = push_data
             if items_to_push: update_query["$push"]["inventory"] = {"$each": items_to_push}
             
-            if update_query:
-                bulk_operations.append(UpdateOne({"user_id": user_id}, update_query))
+            # --- Thực hiện cập nhật ---
+            update_query = {"$inc": inc_data, "$push": push_data}
+            bulk_operations.append(UpdateOne({"user_id": user_id}, update_query))
 
         if bulk_operations:
             await rpg_profiles_col.bulk_write(bulk_operations, ordered=False)
-   
+            print(f"DEBUG: Successfully processed {len(bulk_operations)} farms.")
    #==============================================
    #                  WOLRD BOSS 
    #==============================================
