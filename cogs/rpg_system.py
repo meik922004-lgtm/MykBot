@@ -817,17 +817,24 @@ class RPGSystemCog(commands.Cog):
             log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] Farm: +{total_db_gained} DB | " + " | ".join(log_msgs)
             push_data["farm_logs"] = {"$each": [log_entry], "$slice": -50}
             # --- 6. Chuẩn bị bulk_write ---
+            # --- 6. Chuẩn bị bulk_write chuẩn xác ---
             update_query = {}
-            if inc_data: update_query["$inc"] = inc_data
-            if push_data: update_query["$push"] = push_data
-            if items_to_push: update_query["$push"]["inventory"] = {"$each": items_to_push}
+            if inc_data:
+                update_query["$inc"] = inc_data
             
-            # --- Thực hiện cập nhật ---
-            update_query = {"$inc": inc_data, "$push": push_data}
-            bulk_operations.append(UpdateOne({"user_id": user_id}, update_query))
-
-        if bulk_operations:
-            await rpg_profiles_col.bulk_write(bulk_operations, ordered=False)
+            # Gộp push_data (logs) và inventory vào cùng một object $push
+            final_push = {}
+            if push_data:
+                final_push.update(push_data)
+            if items_to_push:
+                final_push["inventory"] = {"$each": items_to_push}
+            
+            if final_push:
+                update_query["$push"] = final_push
+            
+            # Chỉ append nếu thực sự có thay đổi
+            if update_query:
+                bulk_operations.append(UpdateOne({"user_id": user_id}, update_query))
             print(f"DEBUG: Successfully processed {len(bulk_operations)} farms.")
    #==============================================
    #                  WOLRD BOSS 
