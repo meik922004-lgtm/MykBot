@@ -587,6 +587,25 @@ class RPGSystemCog(commands.Cog):
     #========================================
     #                 AUTO FARM
     #========================================
+    async def handle_toggle_auto_dungeon(self, interaction: discord.Interaction, dungeon_value: str):
+        await interaction.response.defer(ephemeral=True)
+        
+        user_id = interaction.user.id
+        
+        if dungeon_value == "stop":
+            # Dừng auto-farm
+            await rpg_profiles_col.update_one(
+                {"user_id": user_id},
+                {"$set": {"auto_dungeon": None}}
+            )
+            await interaction.followup.send("⏹️ Auto-farm has been stopped.", ephemeral=True)
+        else:
+            # Bật auto-farm (ví dụ: "digital_dimension")
+            await rpg_profiles_col.update_one(
+                {"user_id": user_id},
+                {"$set": {"auto_dungeon": dungeon_value}}
+            )
+            await interaction.followup.send(f"🌌 Auto-farm activated for: {dungeon_value}", ephemeral=True)
     @app_commands.command(name="farm", description="🌌 Auto farm resource")
     async def farm_command(self, interaction: discord.Interaction):
         # Defer trước để tránh lỗi quá hạn 3 giây của Discord khi truy vấn DB
