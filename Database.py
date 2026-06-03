@@ -25,6 +25,4 @@ rpg_profiles_col = db["rpg_profiles"]
 world_boss_col = db["world_boss"]
 boss_channels_col = db["boss_channels"]
 cross_messages_col = db["cross_chat_logs"]
-
-db = client["dababase0"]
 news_col = rpg_profiles_col.database["server_configs"]
