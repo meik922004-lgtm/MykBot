@@ -1080,6 +1080,106 @@ class RPGSystemCog(commands.Cog):
     #===============================================================
     #                          RPB PROFILE 
     #==============================================================
+    @app_commands.command(name="rpg_profile", description="View profiles and manage Digimon.")
+    async def rpg_profile(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+
+        is_new = False
+        # 1. Khởi tạo profile tự động có sẵn 15 Hatch Core nếu chưa từng đăng ký
+        if not profile:
+            is_new = True
+            profile = {
+                "user_id": user_id, "ign": interaction.user.display_name, "gold": 0, "digibit": 0.0, "hatch_core": 15, "myk_coin": 0, "premium_ui": False,
+                "current_hp": 0, "gear": {"weapon": "None", "armor": "None", "vice": "None"}, "inventory": [], "is_vip": False, 
+                "digimon_list": [], "active_digimon_id": None, "is_auto_mining": False, "auto_dungeon": None, "farm_logs": []
+            }
+
+        # 2. Tự động Hatch 1 Digimon khởi đầu hoàn toàn miễn phí nếu túi rỗng
+        if not profile.get("digimon_list"):
+            is_vip = profile.get("is_vip", False)
+            available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
+            hatched_name = random.choice(available)
+            base_stats = self.DIGIMON_DATA["rookie"][hatched_name]
+            size_pct = round(random.uniform(1.00 if is_vip else 0.85, 1.30 if is_vip else 1.25), 3)
+
+            actual_hp, actual_atk = int(base_stats["hp"] * size_pct), int(base_stats["atk"] * size_pct)
+            new_digi_id = str(uuid.uuid4())
+
+            starter_digimon = {
+                "id": new_digi_id, "name": hatched_name, "stage": "Rookie", "attr": base_stats["attr"], 
+                "size": size_pct, "hp": actual_hp, "atk": actual_atk, "img": base_stats["img"], "trained_hp": 0, "trained_atk": 0
+            }
+            profile["digimon_list"].append(starter_digimon)
+            profile["active_digimon_id"] = new_digi_id
+            profile["current_hp"] = actual_hp
+
+            if is_new:
+                await rpg_profiles_col.insert_one(profile)
+            else:
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"digimon_list": profile["digimon_list"], "active_digimon_id": new_digi_id, "current_hp": actual_hp}})
+
+            await interaction.channel.send(f"🎉 Congratulations to new player {interaction.user.mention}! You have been awarded **15 Hatch Cores** and the system has automatically hatched your starter Digimon: **{hatched_name}** ({size_pct*100:.1f}%)!")
+        elif is_new:
+            await rpg_profiles_col.insert_one(profile)
+
+        # Kết xuất hiển thị
+        digimon = self.get_active_digimon(profile)
+        stats, gear = self.get_total_stats(profile), profile.get("gear", {})
+        is_premium = profile.get("premium_ui", False)
+
+        embed = discord.Embed(title=f"{'🌟 PREMIUM TAMER' if is_premium else '📱 Tamer'} {profile.get('ign')}", color=discord.Color.gold() if is_premium else discord.Color.teal())
+        if digimon:
+            size_display = f"{digimon.get('size', 1.0) * 100:.1f}%"
+            embed.set_thumbnail(url=digimon.get("img", ""))
+            skill_info = f"\n**Skill:** {digimon.get('skill', {}).get('name')}" if "skill" in digimon else ""
+            train_info = f"\n**Trained:** +{digimon.get('trained_atk', 0)} ATK | +{digimon.get('trained_hp', 0)} HP"
+            embed.description = f"**Partner:** {digimon.get('name')} ({digimon.get('stage')})\n**Attr:** {digimon.get('attr')}\n**Size:** `{size_display}`{skill_info}{train_info}"
+            embed.add_field(name="❤️ HP", value=f"{profile.get('current_hp')}/{stats['hp']}", inline=True)
+            embed.add_field(name="⚔️ ATK", value=str(stats['atk']), inline=True)
+            embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
+
+        embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} orb**", inline=False)
+        embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
+
+        await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
+
+    async def handle_hatch_action(self, interaction: discord.Interaction):
+        """Hàm gộp xử lý ấp trứng từ nút bấm"""
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+
+        res = await rpg_profiles_col.update_one(
+            {"user_id": user_id, "hatch_core": {"$gte": 5}},
+            {"$inc": {"hatch_core": -5}}
+        )
+        if res.modified_count == 0:
+            return await interaction.followup.send("❌ You don't have enough Hatch Cores (5 cores required).", ephemeral=True)
+
+        is_vip = profile.get("is_vip", False)
+        available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
+        hatched_name = random.choice(available)
+        base_stats = self.DIGIMON_DATA["rookie"][hatched_name]
+        size_pct = round(random.uniform(1.00 if is_vip else 0.85, 1.30 if is_vip else 1.25), 3)
+
+        actual_hp, actual_atk = int(base_stats["hp"] * size_pct), int(base_stats["atk"] * size_pct)
+        new_digi_id = str(uuid.uuid4())
+
+        digimon_stats = {
+            "id": new_digi_id, "name": hatched_name, "stage": "Rookie", "attr": base_stats["attr"], 
+            "size": size_pct, "hp": actual_hp, "atk": actual_atk, "img": base_stats["img"], "trained_hp": 0, "trained_atk": 0
+        }
+
+        updates = {"$push": {"digimon_list": digimon_stats}}
+        if not profile.get("active_digimon_id"):
+            updates["$set"] = {"active_digimon_id": new_digi_id, "current_hp": actual_hp}
+
+        await rpg_profiles_col.update_one({"user_id": user_id}, updates)
+        await interaction.followup.send(f"🥚Egg hatching successful! Received **{hatched_name}** ({size_pct * 100:.1f}%)", ephemeral=True)
+        await self.refresh_profile_message(interaction.message, user_id)
+
     def get_active_digimon(self, profile: dict) -> dict:
         digimon_list = profile.get("digimon_list", [])
         active_id = profile.get("active_digimon_id")
@@ -1661,7 +1761,7 @@ class RPGSystemCog(commands.Cog):
     async def market_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         count = await market_col.count_documents({})
-        
+
         # Nếu chợ trống, tự động nạp hàng hóa hệ thống vào
         if count == 0:
             await self.initialize_market_mega_products()
@@ -1669,7 +1769,7 @@ class RPGSystemCog(commands.Cog):
         listings = await market_col.find({}).sort("created_at", -1).to_list(25)
 
         embed = discord.Embed(title="🏪 Digital Marketplace Shop", color=discord.Color.purple())
-        
+
         if not listings:
             embed.description = "*Market is currently empty. Please check back later.*"
         else:
