@@ -728,41 +728,47 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
     @tasks.loop(minutes=2)
     async def farm_system_loop(self):
-        # Hệ thống chỉ chạy cho những ai đang ở trạng thái farm tại "digital_dimension"
-        profiles = await rpg_profiles_col.find({"auto_dungeon": "digital_dimension"}).to_list(None)
+        # 1. Query chuẩn theo Database (auto_dungeon phải có giá trị và is_auto_mining phải là True)
+        query = {
+            "auto_dungeon": "digital_dimension",
+            "is_auto_mining": True 
+        }
+        profiles = await rpg_profiles_col.find(query).to_list(length=None)
+        
+        if not profiles:
+            return # Không có ai đang farm, thoát loop
+
         bulk_operations = []
         
         for profile in profiles:
             user_id = profile["user_id"]
             log_msgs = []
-            updates = {"$inc": {}, "$push": {}}
+            
+            # Khởi tạo các toán tử update, sử dụng float cho digibit
+            inc_data = {}
+            push_data = {}
             items_to_push = []
             
-            is_vip = profile.get("is_vip", False)
-            is_premium = profile.get("premium_ui", False)
+            # Ép kiểu dữ liệu đầu vào để khớp với Double
+            is_vip = bool(profile.get("is_vip", False))
+            is_premium = bool(profile.get("premium_ui", False))
             
-            # --- Tải danh sách tên vật phẩm để kiểm tra trùng lặp (Anti-Dupe) ---
+            # --- Tải danh sách tên vật phẩm (Anti-Dupe) ---
             inventory = profile.get("inventory", [])
-            existing_item_names = set()
-            for item in inventory:
-                if isinstance(item, dict):
-                    existing_item_names.add(item.get("name"))
-                elif isinstance(item, str):
-                    existing_item_names.add(item.replace(" (Unlocked)", ""))
+            existing_item_names = { (item.get("name") if isinstance(item, dict) else item.replace(" (Unlocked)", "")) for item in inventory }
 
-            # --- 1. Xử lý phần thưởng Digibit (Mặc định +10) ---
-            base_db = 60
-            efficiency_bonus = profile.get("mining_efficiency_bonus", 0)
-            assistant_bonus_db = int(base_db * (efficiency_bonus * 0.10)) # Thêm vàng từ Digimon trợ thủ
+            # --- 1. Tính thưởng Digibit (Ép sang float) ---
+            base_db = 60.0
+            efficiency_bonus = float(profile.get("mining_efficiency_bonus", 0))
+            assistant_bonus_db = float(base_db * (efficiency_bonus * 0.10))
             
             total_db_gained = base_db + assistant_bonus_db
-            bonus_db_from_dupes = 0
+            bonus_db_from_dupes = 0.0
             new_gears_count = 0
 
-            # --- 2. Điều chỉnh tỷ lệ rớt Hatch Cores mới ---
-            # Người chơi thường có 40% ra 1 Core, VIP có 75% ra 1-2 Cores mỗi loop
-            core_chance = 0.75 if is_vip else 0.40
-            cores = random.randint(1, 2) if (random.random() < core_chance) else 0
+            # --- 2. Hatch Cores ---
+            core_chance = 1 if is_vip else 0.7
+            cores = float(random.randint(1, 2) if (random.random() < core_chance) else 0)
 
             # --- 3. Điều chỉnh tỷ lệ rớt Trang bị Thường (All types) ---
             drop_chance = 0.04 if is_premium else 0.025 # Tỷ lệ rớt đồ tổng hợp được tối ưu lại
@@ -799,31 +805,27 @@ class RPGSystemCog(commands.Cog):
                     log_msgs.append(f"🌟 MYTHIC DROP: Found {ht_name}!")
 
             # --- 5. Tổng hợp dữ liệu ghi nhận lên MongoDB ---
-            total_db_gained += bonus_db_from_dupes
-            updates["$inc"]["digibit"] = updates["$inc"].get("digibit", 0) + total_db_gained
+            total_db_gained += float(bonus_db_from_dupes)
+            inc_data["digibit"] = total_db_gained
             if cores > 0:
-                updates["$inc"]["hatch_core"] = updates["$inc"].get("hatch_core", 0) + cores
+                inc_data["hatch_core"] = cores
 
-            # Thiết lập định dạng Log gọn gàng, trực quan
-            loot_str = ""
-            if cores > 0: loot_str += f", {cores} Cores"
-            if new_gears_count > 0: loot_str += f", {new_gears_count} New Gears"
-            if bonus_db_from_dupes > 0: loot_str += f" (+{bonus_db_from_dupes} DB from Auto-Salvage)"
+            # --- 5. Format Log ---
+            # Nếu không có gì xảy ra, vẫn ghi log để user biết loop chạy
+            if not log_msgs:
+                log_msgs.append("🌌 Mining in progress...")
             
-            log_msgs.append(f"🌌 Farm: +{total_db_gained} DB{loot_str}")
-
-            if log_msgs:
-                log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] " + " | ".join(log_msgs)
-                updates["$push"]["farm_logs"] = {"$each": [log_entry], "$slice": -50}
-                
-            if items_to_push:
-                updates["$push"]["inventory"] = {"$each": items_to_push}
-                
-            if not updates["$inc"]: del updates["$inc"]
-            if not updates["$push"]: del updates["$push"]
+            log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] " + " | ".join(log_msgs)
+            push_data["farm_logs"] = {"$each": [log_entry], "$slice": -50}
             
-            if updates: 
-                bulk_operations.append(UpdateOne({"user_id": user_id}, updates))
+            # --- 6. Chuẩn bị bulk_write ---
+            update_query = {}
+            if inc_data: update_query["$inc"] = inc_data
+            if push_data: update_query["$push"] = push_data
+            if items_to_push: update_query["$push"]["inventory"] = {"$each": items_to_push}
+            
+            if update_query:
+                bulk_operations.append(UpdateOne({"user_id": user_id}, update_query))
 
         if bulk_operations:
             await rpg_profiles_col.bulk_write(bulk_operations, ordered=False)
