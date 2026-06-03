@@ -1491,7 +1491,7 @@ class RPGSystemCog(commands.Cog):
         await rpg_profiles_col.update_one(
             {"user_id": user_id},
             {
-                "$inc": {"digibit": 1000, "hatch_core": 100},
+                "$inc": {"digibit": 5000, "hatch_core": 250},
                 "$set": {"last_daily_check": today, "daily_streak": new_streak}
             }
         )
