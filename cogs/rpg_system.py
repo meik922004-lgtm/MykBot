@@ -1224,9 +1224,16 @@ class RPGSystemCog(commands.Cog):
                 break
         return digimon_list
 
-    def clean_item_name(self, item_name: str) -> str:
-        if not item_name: return "None"
-        return item_name.replace(" (Unlocked)", "").replace(" (Locked)", "")
+    def clean_item_name(self, item_name):
+    # Nếu là dictionary, lấy trường 'name' hoặc giá trị phù hợp
+        if isinstance(item_name, dict):
+            item_name = item_name.get("name", "Unknown")
+        
+    # Nếu là chuỗi, thực hiện replace như bình thường
+        if isinstance(item_name, str):
+            return item_name.replace(" (Unlocked)", "").replace(" (Locked)", "")
+        
+        return str(item_name) # Trả về chuỗi đại diện nếu là kiểu khác
 
     def get_total_stats(self, profile: dict) -> dict:
         digimon = self.get_active_digimon(profile)
