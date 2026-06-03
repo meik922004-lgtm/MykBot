@@ -726,116 +726,48 @@ class RPGSystemCog(commands.Cog):
             
         embed.set_footer(text=f"Displays up to 20 most recent logs • Total number of stored logs: {len(logs)}")
         await interaction.followup.send(embed=embed, ephemeral=True)
-    @tasks.loop(minutes=2)
+    @tasks.loop(hours=24)
     async def farm_system_loop(self):
-        # 1. Truy vấn danh sách người chơi đang bật auto_dungeon
+        # 1. Tìm tất cả những người chơi đang bật chế độ treo farm
         query = {"auto_dungeon": "digital_dimension"}
         profiles = await rpg_profiles_col.find(query).to_list(length=None)
         
         if not profiles:
-            return # Thoát vòng lặp sớm nếu không có ai đang farm
+            print("DEBUG: Không có ai đang treo farm.")
+            return
 
         for profile in profiles:
             user_id = profile.get("user_id")
-            if not user_id: continue
+            if not user_id: 
+                continue
 
-            # --- DỮ LIỆU ĐẦU VÀO TỪ DB ---
-            is_vip = bool(profile.get("is_vip", False))
-            is_premium = bool(profile.get("premium_ui", False))
-            efficiency_bonus = int(profile.get("mining_efficiency_bonus", 0)) # Int32 theo DB
+            # 2. Số lượng tài nguyên cộng cố định mỗi ngày
+            daily_db = 600000.0     # Ép kiểu float cho Double trong DB
+            daily_cores = int(100)  # Ép kiểu int cho Int32 trong DB
             
-            # --- XỬ LÝ INVENTORY & CHỐNG DUPE ---
-            inventory = profile.get("inventory", [])
-            # Tối ưu hóa việc bóc tách tên vật phẩm để tra cứu nhanh (O(1))
-            existing_items = {
-                (item.get("name") if isinstance(item, dict) else item.replace(" (Unlocked)", ""))
-                for item in inventory
-            }
-
-            # --- BIẾN LƯU TRỮ TẠM THỜI THƯỞNG ---
-            log_msgs = []
-            items_to_push = []
-            bonus_db_from_dupes = 0.0
-
-            # --- LOGIC 1: TÍNH THƯỞNG DIGIBIT (Double) ---
-            base_db = 60.0
-            assistant_bonus_db = base_db * (efficiency_bonus * 0.10)
+            # 3. Tạo dòng log hiển thị cho người chơi
+            log_entry = f"[{datetime.utcnow().strftime('%d/%m %H:%M')}] Daily Farm: +600,000 DB | +100 Hatch Cores"
             
-            # --- LOGIC 2: HATCH CORES (Int32) ---
-            core_chance = 1.0 if is_vip else 0.7
-            # Chuyển thành int để khớp với Int32 trong MongoDB
-            gained_cores = int(random.randint(1, 2) if random.random() < core_chance else 0)
-
-            # --- LOGIC 3: ROLL ĐỒ THƯỜNG ---
-            drop_chance = 0.04 if is_premium else 0.025
-            if random.random() < drop_chance:
-                loot_base_name, loot_type = self.roll_pve_loot()
-                
-                if loot_base_name in existing_items:
-                    bonus_db_from_dupes += 15.0
-                else:
-                    gear_obj = {
-                        "id": str(uuid.uuid4()),
-                        "name": loot_base_name,
-                        "type": loot_type,
-                        "rarity": "Common" if "Rusty" in loot_base_name else "Rare",
-                        "obtained_at": int(time.time())
+            # 4. Tạo lệnh update (Tăng đồng thời cả DB và Hatch Core, sau đó đẩy log)
+            update_query = {
+                "$inc": {
+                    "digibit": daily_db,
+                    "hatch_core": daily_cores
+                },
+                "$push": {
+                    "farm_logs": {
+                        "$each": [log_entry],
+                        "$slice": -50  # Giữ lại tối đa 50 log gần nhất
                     }
-                    items_to_push.append(gear_obj)
-                    existing_items.add(loot_base_name)
-
-            # --- LOGIC 4: ROLL ĐỒ MYTHIC HIẾM ---
-            high_tier_gear = self.roll_auto_dungeon_high_tier_reward()
-            if high_tier_gear:
-                ht_name = high_tier_gear["name"]
-                if ht_name in existing_items:
-                    bonus_db_from_dupes += 100.0
-                    log_msgs.append(f"🌟 Dupe: {ht_name} -> Salvaged for +100 DB")
-                else:
-                    items_to_push.append(high_tier_gear)
-                    existing_items.add(ht_name)
-                    log_msgs.append(f"🌟 MYTHIC DROP: Found {ht_name}!")
-
-            # --- TỔNG HỢP TÀI NGUYÊN ---
-            total_db_gained = float(base_db + assistant_bonus_db + bonus_db_from_dupes)
-
-            # --- LOGIC 5: ĐỊNH DẠNG LOG ---
-            if not log_msgs:
-                log_msgs.append("🌌 Mining in progress...")
-            log_entry = f"[{datetime.utcnow().strftime('%H:%M')}] Farm: +{total_db_gained} DB | " + " | ".join(log_msgs)
-
-            # --- LOGIC 6: XÂY DỰNG UPDATE DOCUMENT (Rất quan trọng) ---
-            update_query = {"$inc": {}, "$push": {}}
-
-            # Chỉ đưa vào $inc nếu có giá trị thực sự
-            if total_db_gained > 0:
-                update_query["$inc"]["digibit"] = total_db_gained
-            if gained_cores > 0:
-                update_query["$inc"]["hatch_core"] = gained_cores
-                
-            # Đưa log và item vào mảng $push
-            update_query["$push"]["farm_logs"] = {
-                "$each": [log_entry], 
-                "$slice": -50
-            }
-            if items_to_push:
-                update_query["$push"]["inventory"] = {
-                    "$each": items_to_push
                 }
-
-            # Xóa các operator rỗng để tránh lỗi MongoDB
-            if not update_query["$inc"]: del update_query["$inc"]
-            if not update_query["$push"]: del update_query["$push"]
-
-            # --- LOGIC 7: THỰC THI LỆNH UPDATE CỤ THỂ CHO TỪNG USER ---
-            if update_query:
-                try:
-                    await rpg_profiles_col.update_one(
-                        {"user_id": user_id},
-                        update_query
-                    )
-                except Exception as e:
-                    print(f"[Farm System] Error updating user {user_id}: {e}")
+            }
+            
+            # 5. Thực hiện cập nhật trực tiếp cho từng user
+            try:
+                await rpg_profiles_col.update_one({"user_id": user_id}, update_query)
+                print(f"DEBUG: Đã cộng thành công 600k DB & 100 Cores cho user {user_id}")
+            except Exception as e:
+                print(f"DEBUG: Lỗi không thể cộng tài nguyên cho user {user_id}: {e}")
    #==============================================
    #                  WOLRD BOSS 
    #==============================================
