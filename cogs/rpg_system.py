@@ -230,9 +230,9 @@ def generate_inventory_embed(profile: dict) -> discord.Embed:
     v_name = equipped.get("vice")
     
     # Xử lý lấy tên nếu đồ là dạng Dict (đồ hiếm)
-    w_display = w_name if isinstance(w_name, str) else w_name.get("name", "Empty") if w_name else "Trống"
-    a_display = a_name if isinstance(a_name, str) else a_name.get("name", "Empty") if a_name else "Trống"
-    v_display = v_name if isinstance(v_name, str) else v_name.get("name", "Empty") if v_name else "Trống"
+    w_display = w_name if isinstance(w_name, str) else w_name.get("name", "Empty") if w_name else "Empty"
+    a_display = a_name if isinstance(a_name, str) else a_name.get("name", "Empty") if a_name else "Empty"
+    v_display = v_name if isinstance(v_name, str) else v_name.get("name", "Empty") if v_name else "Empty"
     
     equipped_text = f"⚔️ **Weapon:** {w_display}\n🛡️ **Armor:** {a_display}\n📿 **Vice:** {v_display}"
     embed.add_field(name="👕 Equipment currently worn", value=equipped_text, inline=False)
@@ -264,11 +264,11 @@ def generate_inventory_embed(profile: dict) -> discord.Embed:
             
         # Giới hạn text hiển thị để tránh lỗi quá dài của Discord Embed
         if len(inv_text) > 1024:
-            inv_text = inv_text[:1000] + "\n... (Và còn nhiều nữa)"
+            inv_text = inv_text[:1000] + "\n... (And more)"
             
-        embed.add_field(name="📦 Trong túi", value=inv_text, inline=False)
+        embed.add_field(name="📦 In bag", value=inv_text, inline=False)
         
-    embed.set_footer(text="Sử dụng menu bên dưới để Mặc, Gỡ hoặc Dùng vật phẩm.")
+    embed.set_footer(text="Use the menu below to Equip, Remove, or Use items..")
     return embed
 
 class ProfileView(discord.ui.View):
@@ -296,15 +296,23 @@ class ProfileView(discord.ui.View):
     @discord.ui.button(label="🧬 Evolve", style=discord.ButtonStyle.danger, row=1)
     async def evolve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_evolve(interaction)
-    @discord.ui.button(label="Digimon bag ", style=discord.ButtonStyle.secondary, emoji="🐾")
+    @discord.ui.button(label="Digimon bag", style=discord.ButtonStyle.secondary, emoji="🐾")
     async def open_digi_bag(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Lệnh mở Bag Digimon (Code cũ của bạn)
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        digimon_list = profile.get("digimon_list", [])
+        if not profile:
+            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
+            
+        embed = discord.Embed(
+            title="🐾 Your Digimon Bag", 
+            description="Manage your Digimon here..", 
+            color=discord.Color.gold()
+        )
         
-        embed = discord.Embed(title="🐾 Your Digimon Bag", description="Choose a partner or sell extra Digimon.", color=discord.Color.gold())
-        await interaction.followup.send(embed=embed, view=InventoryView(digimon_list, profile.get("active_digimon_id" ), self.cog), ephemeral=True)
+        # SỬA LẠI DÒNG NÀY (Chỉ truyền 2 tham số: profile và self.cog)
+        view = InventoryView(profile, self.cog)
+        
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒")
     async def open_inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
