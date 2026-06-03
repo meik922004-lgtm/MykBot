@@ -465,10 +465,8 @@ class RPGSystemCog(commands.Cog):
         "Divine Blade": {"type": "weapon", "atk": 120}, "Divine Aegis": {"type": "armor", "hp": 800, "def": 60}, "Divine Vice": {"type": "vice", "crit_rate": 20, "crit_dmg": 2.0}
     }
 
-    # Chỉ còn 1 Dungeon duy nhất đại diện cho toàn bộ hệ thống Farm
-    DUNGEONS = {
-        "digital_dimension": {"name": "Digital Dimension", "description": "The ultimate dimensional zone for all farming activities."}
-    }
+
+    
 
     DIGIMON_DATA = {
         "rookie": {
@@ -874,7 +872,7 @@ class RPGSystemCog(commands.Cog):
             {"$set": {"is_active": False}},
             return_document=pymongo.ReturnDocument.BEFORE
         )
-        if not actual_boss: return  # Nếu đã có thread khác xử lý thành công, thoát ngay.
+        if not actual_boss: return  # Đã có process khác nhận lệnh này
 
         if "party_id" not in boss_data:
             await world_boss_col.update_one({"type": "spawn_config"}, {"$set": {"next_spawn": int(time.time()) + 3600}}, upsert=True)
@@ -882,53 +880,79 @@ class RPGSystemCog(commands.Cog):
         sorted_log = sorted(boss_data.get("damage_log", {}).items(), key=lambda x: x[1], reverse=True)
         total_hp = boss_data.get("max_hp", 1)
 
-        participant_ids = [int(uid_str) for uid_str, _ in sorted_log]
-        if participant_ids: 
-            await rpg_profiles_col.update_many({"user_id": {"$in": participant_ids}}, {"$inc": {"myk_coin": 1}})
-
         for rank, (uid_str, dmg) in enumerate(sorted_log, 1):
             user_id = int(uid_str)
             dmg_percent = dmg / total_hp
-            orbs_earned = max(1, int(dmg_percent * 10)) + (10 if rank == 1 else 5 if rank <= 3 else 0)
             
-            reward_str = f"+{orbs_earned} orb & +1 MyK"
-            update_query = {"$inc": {"orb": orbs_earned}}
+            # --- PHẦN THƯỞNG CHẮC CHẮN 100% CỐ ĐỊNH CHO TẤT CẢ ---
+            base_orb = random.randint(10, 20)
+            base_digibit = 100
+            base_myk = 1
+            
+            # --- CÁC BIẾN CHỨA PHẦN THƯỞNG DÙNG ĐỂ GỬI UPDATE_QUERY ---
+            inc_data = {"orb": base_orb, "digibit": base_digibit, "myk_coin": base_myk}
+            inventory_rewards = []
+            reward_str = f"➕ **{base_orb}** orb\n➕ **{base_digibit}** digibit\n➕ **{base_myk}** MyK Coin"
 
-            if rank <= 3 and random.random() < 0.30:
-                reward_str += "\n🍎 Size Reroll Fruit"
-                update_query.setdefault("$push", {})["inventory"] = "Size Reroll Fruit"
-                
-            if random.random() < (0.20 / rank) + dmg_percent:
-                divine_drop = random.choice(["Divine Blade (Unlocked)", "Divine Aegis (Unlocked)", "Divine Vice (Unlocked)"])
-                reward_str += f"\n👑 {divine_drop}"
-                update_query.setdefault("$push", {})
-                if "inventory" in update_query["$push"]: 
-                    if isinstance(update_query["$push"]["inventory"], dict) and "$each" in update_query["$push"]["inventory"]:
-                        update_query["$push"]["inventory"]["$each"].append(divine_drop)
-                    else:
-                        prev = update_query["$push"]["inventory"]
-                        update_query["$push"]["inventory"] = {"$each": [prev, divine_drop]}
-                else: 
-                    update_query["$push"]["inventory"] = divine_drop
+            # --- TỈ LỆ GACHA (Dựa trên xếp hạng và phần trăm sát thương) ---
+            # Xếp hạng càng cao, phần trăm tỉ lệ cộng thêm càng lớn
+            bonus_chance = 0.0
+            if rank == 1: bonus_chance = 0.15      # Top 1 cộng thêm 15%
+            elif rank <= 3: bonus_chance = 0.08    # Top 2-3 cộng thêm 8%
+            else: bonus_chance = dmg_percent       # Các hạng sau phụ thuộc độ đóng góp sát thương
+
+            # 1. Tỉ lệ 10% nhận High-Tier Item (Mythic/Divine)
+            high_tier_rate = 0.10 + bonus_chance
+            if random.random() < high_tier_rate:
+                # Random giữa Mythic Gear (Dict) và Divine Gear (String)
+                if random.random() < 0.5:
+                    mythic_item = random.choice(self.HIGH_TIER_GEARS).copy()
+                    mythic_item["id"] = str(uuid.uuid4())
+                    mythic_item["obtained_at"] = int(time.time())
+                    inventory_rewards.append(mythic_item)
+                    reward_str += f"\n👑 **{mythic_item['name']}** [{mythic_item['rarity']}]"
+                else:
+                    divine_item = random.choice(["Divine Blade", "Divine Aegis", "Divine Vice"])
+                    inventory_rewards.append(divine_item)
+                    reward_str += f"\n🌟 **{divine_item}**"
+
+            # 2. Tỉ lệ 20% nhận Item Thường (Rusty/Chrome)
+            normal_rate = 0.20 + (bonus_chance * 0.5)
+            if random.random() < normal_rate:
+                normal_item = random.choice(["Rusty Sword", "Rusty Armor", "Rusty Vice", "Chrome Dagger", "Chrome Cloak", "Chrome Vice"])
+                inventory_rewards.append(normal_item)
+                reward_str += f"\n🛡️ **{normal_item}**"
+
+            # 3. Tỉ lệ 30% nhận Size Reroll Fruit
+            fruit_rate = 0.30 + (bonus_chance * 0.5)
+            if random.random() < fruit_rate:
+                inventory_rewards.append("Size Reroll Fruit")
+                reward_str += "\n🍎 **Size Reroll Fruit**"
+
+            # --- TỔNG HỢP VÀ CẬP NHẬT LÊN DATABASE (Sạch sẽ, chống lỗi) ---
+            update_query = {"$inc": inc_data}
+            if inventory_rewards:
+                # Cách viết này đảm bảo MongoDB push một mảng dữ liệu cực kỳ an toàn
+                update_query["$push"] = {"inventory": {"$each": inventory_rewards}}
                 
             await rpg_profiles_col.update_one({"user_id": user_id}, update_query)
             
+            # --- GỬI TIN NHẮN BÁO CÁO QUA DM ---
             try:
                 user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
                 if user:
                     dm_msg = (
                         f"🎉 **BOSS {boss_data['name']} HAS BEEN DEFEATED!**\n\n"
-                        f"📊 **Your achievements:**\n"
+                        f"📊 **Combat Report:**\n"
                         f"🔹 Rank: `#{rank}`\n"
                         f"🔹 Damage inflicted: `{dmg:,}` ({dmg_percent*100:.1f}%)\n\n"
-                        f"🏆 **Rewards received:**\n"
-                        f"{reward_str}"
+                        f"🏆 **Your reward:**\n{reward_str}"
                     )
                     await user.send(dm_msg)
             except Exception as e:
-                print(f"Cant send DM for {user_id}: {e}")
+                print(f"Error: Unable to send DM {user_id}: {e}")
                 
-        # Kích hoạt chuỗi Boss tiếp theo sau khi phát thưởng thành công
+        # Kích hoạt chuỗi Boss tiếp theo
         await self.trigger_chain_boss_respawn(boss_data.get("participants", []))
 
     async def process_boss_damage(self, interaction: discord.Interaction, boss_id: str, damage_dealt: int):
