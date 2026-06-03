@@ -445,10 +445,6 @@ class FarmView(discord.ui.View):
         if digimon_list:
             self.add_item(FarmDigiMinerSelect(digimon_list))
 
-    @discord.ui.button(label="Manual Mine (5m CD)", style=discord.ButtonStyle.success, emoji="⛏️")
-    async def manual_mine(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_manual_mine(interaction)
-        
     @discord.ui.button(label="View Farm Logs", style=discord.ButtonStyle.secondary, emoji="📜")
     async def view_logs(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_view_logs(interaction)
