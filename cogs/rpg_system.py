@@ -1334,26 +1334,26 @@ class RPGSystemCog(commands.Cog):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         
         active_digi = self.get_active_digimon(profile)
-        if not active_digi: return await interaction.followup.send("❌ Hãy chọn một Digimon đồng hành trước.", ephemeral=True)
+        if not active_digi: return await interaction.followup.send("❌ Choose a Digimon companion first..", ephemeral=True)
         
         MAX_TRAIN_ATK, MAX_TRAIN_HP = 1000, 5000
         current_train_atk, current_train_hp = active_digi.get("trained_atk", 0), active_digi.get("trained_hp", 0)
         
         updates = {}
         if stat == "atk":
-            if current_train_atk >= MAX_TRAIN_ATK: return await interaction.followup.send("❌ Đạt giới hạn huấn luyện ATK.", ephemeral=True)
+            if current_train_atk >= MAX_TRAIN_ATK: return await interaction.followup.send("❌ Reached ATK training limit.", ephemeral=True)
             updates["trained_atk"] = current_train_atk + 20
         else:
-            if current_train_hp >= MAX_TRAIN_HP: return await interaction.followup.send("❌ Đạt giới hạn huấn luyện HP.", ephemeral=True)
+            if current_train_hp >= MAX_TRAIN_HP: return await interaction.followup.send("❌ Reached the HP training limit.", ephemeral=True)
             updates["trained_hp"] = current_train_hp + 100
             
         new_list = self.update_active_digimon(profile, updates)
         res = await rpg_profiles_col.update_one(
-            {"user_id": user_id, "digibit": {"$gte": 1000}}, 
-            {"$set": {"digimon_list": new_list}, "$inc": {"digibit": -1000}}
+            {"user_id": user_id, "digibit": {"$gte": 500}}, 
+            {"$set": {"digimon_list": new_list}, "$inc": {"digibit": -500}}
         )
         if res.modified_count == 0:
-            return await interaction.followup.send("❌ Không đủ Digibits (Yêu cầu 1,000 Bits).", ephemeral=True)
+            return await interaction.followup.send("❌ Insufficient Digibits (500 Bits required).", ephemeral=True)
             
         await interaction.followup.send(f"🏋️ Huấn luyện thành công! **+{20 if stat == 'atk' else 100} {stat.upper()}** cho {active_digi['name']}.", ephemeral=True)
         await self.refresh_profile_message(interaction.message, user_id)
@@ -1444,7 +1444,7 @@ class RPGSystemCog(commands.Cog):
         if current_stage == "mega":
             return await interaction.followup.send("❌ Max Level (Mega) reached.", ephemeral=True)
 
-        TRAIN_COST = 5000
+        TRAIN_COST = 1000
         if profile.get("digibit", 0) < TRAIN_COST:
             return await interaction.followup.send(f"❌ You need **{TRAIN_COST:,} Digibits** to evolve.", ephemeral=True)
 
