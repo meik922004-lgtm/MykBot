@@ -328,18 +328,22 @@ class ProfileView(discord.ui.View):
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
         if not profile:
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
-        
-        # Chỉ tạo Menu Digimon
-        digi_menu = DigiBagSelect(profile.get("digimon_list", []), profile.get("active_digimon_id"), self.cog)
+        digi_list = profile.get("digimon_list", [])
+        # FIX 1: Kiểm tra danh sách rỗng để tránh lỗi HTTP 400
+        if not digi_list:
+            return await interaction.followup.send("❌ Your Digimon bag is empty. Go catch some!", ephemeral=True)  
+        # FIX 2: Giới hạn danh sách trong 25 để tránh lỗi vượt quá giới hạn của Discord
+        display_list = digi_list[:25]
+        # Tạo Menu
+        digi_menu = DigiBagSelect(display_list, profile.get("active_digimon_id"), self.cog)
         
         embed = discord.Embed(
             title="🐾 Your Digimon Bag", 
-            description="Manage your Digimon here.", 
+            description=f"You have {len(digi_list)} Digimon in your bag.", 
             color=discord.Color.gold()
         )
-        
+         
         # Nạp menu Digimon vào view
-        # Bạn có thể dùng chung class InventoryView nếu nó chỉ là cái khung
         view = InventoryView(select_menu=digi_menu) 
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
