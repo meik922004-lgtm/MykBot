@@ -728,7 +728,7 @@ class RPGSystemCog(commands.Cog):
                     existing_item_names.add(item.replace(" (Unlocked)", ""))
 
             # --- 1. Xử lý phần thưởng Digibit (Mặc định +10) ---
-            base_db = 10 
+            base_db = 50
             efficiency_bonus = profile.get("mining_efficiency_bonus", 0)
             assistant_bonus_db = int(base_db * (efficiency_bonus * 0.10)) # Thêm vàng từ Digimon trợ thủ
             
