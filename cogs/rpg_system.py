@@ -23,16 +23,16 @@ OWNER_IDS = [1283689737567211581]
 # ========================================================================
 
 NEW_MEGA_POOL = [
-    {"name": "ShineGreymon BM", "stage": "Mega", "atk": 1560, "hp": 15500, "base_price": 600},
-    {"name": "MirageGaogamon BM", "stage": "Mega", "atk": 1490, "hp": 14800, "base_price": 600},
-    {"name": "Rosemon BM", "stage": "Mega", "atk": 1550, "hp": 14200, "base_price": 600},
-    {"name": "Ravemon BM", "stage": "Mega", "atk": 1500, "hp": 14000, "base_price": 600},
-    {"name": "BlackWarGreymon", "stage": "Mega", "atk": 1600, "hp": 16500, "base_price": 600},
-    {"name": "MetalSeadramon", "stage": "Mega", "atk": 1485, "hp": 15800, "base_price": 600},
-    {"name": "Piedmon", "stage": "Mega", "atk": 1560, "hp": 15000, "base_price": 600},
-    {"name": "Valkyrimon", "stage": "Mega", "atk": 1500, "hp": 13800, "base_price": 600},
-    {"name": "Vikemon", "stage": "Mega", "atk": 1540, "hp": 16800, "base_price": 600},
-    {"name": "GranKuwagamon", "stage": "Mega", "atk": 1535, "hp": 14500, "base_price": 600}
+    {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "atk": 1090, "hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
+    {"name": "MirageGaogamon BM", "stage": "Mega", "attr": "Data", "atk": 990, "hp": 14800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/miragegaogamon_bm.jpg", "skill": {"name": "Full Moon Meteor Impact", "dmg_mult": 1.7, "chance": 0.18}},
+    {"name": "Rosemon BM", "stage": "Mega", "attr": "Data", "atk": 1100, "hp": 14200, "base_price": 600, "img": "https://digimon.net/cimages/digimon/rosemon_bm.jpg", "skill": {"name": "Aguichant Lèvres", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "atk": 1000, "hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "BlackWarGreymon", "stage": "Mega", "attr": "Virus", "atk": 1045, "hp": 16500, "base_price": 600,  "img": "https://digimon.net/cimages/digimon/blackwargreymon.jpg", "skill": {"name": "Terra Destroyer", "dmg_mult": 1.8, "chance": 0.15}},
+    {"name": "MetalSeadramon", "stage": "Mega", "attr": "Data", "atk": 1019, "hp": 15800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg", "skill": {"name": "River of Power", "dmg_mult": 1.7, "chance": 0.18}},
+    {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "atk": 1066, "hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
+    {"name": "Valkyrimon", "stage": "Mega", "attr": "Vaccine", "atk": 980, "hp": 13800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/valkyrimon.jpg", "skill": {"name": "Fenrir Sword", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "Vikemon", "stage": "Mega", "attr": "Free", "atk": 999, "hp": 16800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/vikemon.jpg", "skill": {"name": "Arctic Blizzard", "dmg_mult": 1.7, "chance": 0.18}},
+    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "atk": 1930, "hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}}
 ]
 
 HIGH_TIER_GEARS = [
@@ -327,7 +327,7 @@ class ProfileView(discord.ui.View):
         self.profile = profile
         self.cog = cog_instance
 
-    @discord.ui.button(label="🥚 Hatch Digi (5 Cores)", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="🥚 Hatch Digi (50 Cores)", style=discord.ButtonStyle.primary, row=0)
     async def hatch_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_hatch_action(interaction)
 
@@ -1141,7 +1141,7 @@ class RPGSystemCog(commands.Cog):
             else:
                 await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"digimon_list": profile["digimon_list"], "active_digimon_id": new_digi_id, "current_hp": actual_hp}})
 
-            await interaction.channel.send(f"🎉 Congratulations to new player {interaction.user.mention}! You have been awarded **15 Hatch Cores** and the system has automatically hatched your starter Digimon: **{hatched_name}** ({size_pct*100:.1f}%)!")
+            await interaction.channel.send(f"🎉 Congratulations to new player {interaction.user.mention}! You have been awarded **50 Hatch Cores** and the system has automatically hatched your starter Digimon: **{hatched_name}** ({size_pct*100:.1f}%)!")
         elif is_new:
             await rpg_profiles_col.insert_one(profile)
 
@@ -1173,11 +1173,11 @@ class RPGSystemCog(commands.Cog):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
 
         res = await rpg_profiles_col.update_one(
-            {"user_id": user_id, "hatch_core": {"$gte": 5}},
-            {"$inc": {"hatch_core": -5}}
+            {"user_id": user_id, "hatch_core": {"$gte": 50}},
+            {"$inc": {"hatch_core": -50}}
         )
         if res.modified_count == 0:
-            return await interaction.followup.send("❌ You don't have enough Hatch Cores (5 cores required).", ephemeral=True)
+            return await interaction.followup.send("❌ You don't have enough Hatch Cores (50 cores required).", ephemeral=True)
 
         is_vip = profile.get("is_vip", False)
         available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
@@ -1531,8 +1531,8 @@ class RPGSystemCog(commands.Cog):
         remaining_digi_list = [d for d in digi_list if d["id"] not in selected_ids]
         sold_digimon_names = [d["name"] for d in digi_list if d["id"] in selected_ids]
         
-        # Tính toán phần thưởng kinh tế: 1,000 Bits cho mỗi Digimon bị xóa
-        total_reward_bits = len(selected_ids) * 1000.0
+        # Tính toán phần thưởng kinh tế: 100 bits cho mỗi Digimon bị xóa
+        total_reward_bits = len(selected_ids) * 100
         
         # Kiểm tra xem con Digimon đang kích hoạt (Active) có nằm trong danh sách bị bán hay không
         is_active_sold = active_id in selected_ids
