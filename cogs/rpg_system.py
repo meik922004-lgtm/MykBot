@@ -64,7 +64,7 @@ class GearInventorySelect(discord.ui.Select):
             if item and item != "None":
                 item_name = item if isinstance(item, str) else item.get("name", "Unknown")
                 options.append(discord.SelectOption(
-                    label=f"[Đang mặc] {item_name}",
+                    label=f"[Wearing] {item_name}",
                     description=f"Click to remove from slot {slot.upper()}",
                     value=f"unequip_{slot}", # Giá trị đặc biệt để nhận diện lệnh tháo
                     emoji="🔓"
@@ -94,7 +94,7 @@ class GearInventorySelect(discord.ui.Select):
             quantity_label = f" x{count}" if count > 1 else ""
             options.append(discord.SelectOption(
                 label=f"{cleaned_name}{quantity_label}",
-                description=f"Loại: {gear_data.get('type', 'item').upper()} | {stat_desc}",
+                description=f"Type: {gear_data.get('type', 'item').upper()} | {stat_desc}",
                 value=gear_str 
             ))
             
@@ -108,7 +108,7 @@ class GearInventorySelect(discord.ui.Select):
             
             options.append(discord.SelectOption(
                 label=f"{gear_dict.get('name', 'Unknown')} ({gear_dict.get('rarity', 'Common')})",
-                description=f"Loại: {gear_dict.get('type', 'N/A').upper()} | {stat_desc}",
+                description=f"Type: {gear_dict.get('type', 'N/A').upper()} | {stat_desc}",
                 value=gear_dict.get("id", str(uuid.uuid4()))
             ))
 
