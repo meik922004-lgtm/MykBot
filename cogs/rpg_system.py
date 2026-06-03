@@ -532,7 +532,7 @@ class RPGSystemCog(commands.Cog):
         "Psychemon": "Gururumon", "Gururumon": "Astamon", "Astamon": "Mekurimon"
     }
     
-    HATCH_CORE_COST = 5
+    HATCH_CORE_COST = 50
 
     def __init__(self, bot):
         self.bot = bot
