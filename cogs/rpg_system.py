@@ -710,7 +710,6 @@ class RPGSystemCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.auto_attackers = set()
-        self.auto_spawn_boss.start()
         self.live_boss_update_loop.start()
         self.bot.loop.create_task(self.initialize_market_mega_products())
         self.auto_attack_cache = {}
@@ -720,7 +719,6 @@ class RPGSystemCog(commands.Cog):
     {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
-        self.auto_spawn_boss.cancel()
         self.live_boss_update_loop.cancel()
         
 
@@ -842,51 +840,6 @@ class RPGSystemCog(commands.Cog):
             await interaction.followup.send(result_msg, ephemeral=True)
         except (discord.NotFound, discord.HTTPException):
             pass
-    @tasks.loop(minutes=1)
-    async def auto_spawn_boss(self):
-        config = await world_boss_col.find_one({"type": "spawn_config"})
-        if not config or "next_spawn" not in config or int(time.time()) < config["next_spawn"]: return
-        if await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}}): return
-        
-        await world_boss_col.update_one({"type": "spawn_config"}, {"$unset": {"next_spawn": ""}})
-        
-        last_round_damage = config.get("last_round_damage", 500000)
-        calculated_hp = int(last_round_damage * random.uniform(1.2, 2.0))
-        
-        # 👑 Máu tối thiểu của boss cấu hình bây giờ là 500.000
-        if calculated_hp < 50000000: calculated_hp = 50000000
-
-        boss_roster = [
-            # --- Hệ Virus ---
-            {"name": "Devimon", "hp": calculated_hp, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/devimon.jpg"}, 
-            {"name": "Myotismon", "hp": calculated_hp, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/vamdemon.jpg"}, 
-            {"name": "Piedmon", "hp": calculated_hp, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/piemon.jpg"}, 
-            {"name": "Machinedramon", "hp": calculated_hp, "attr": "Virus", "img": "https://digimon.net/cimages/digimon/mugendramon.jpg"}, 
-            
-            # --- Hệ Vaccine ---
-            {"name": "WarGreymon", "hp": calculated_hp, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/wargreymon.jpg"},
-            {"name": "MetalSeadramon", "hp": calculated_hp, "attr": "Data", "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg"},
-            {"name": "Phoenixmon", "hp": calculated_hp, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/hououmon.jpg"},
-            {"name": "Seraphimon", "hp": calculated_hp, "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/seraphimon.jpg"},
-            
-            # --- Hệ Data ---
-            {"name": "MetalGarurumon", "hp": calculated_hp, "attr": "Data", "img": "https://digimon.net/cimages/digimon/metalgarurumon.jpg"},
-            {"name": "SaberLeomon", "hp": calculated_hp, "attr": "Data", "img": "https://digimon.net/cimages/digimon/saberleomon.jpg"},
-            {"name": "Gryphonmon", "hp": calculated_hp, "attr": "Data", "img": "https://digimon.net/cimages/digimon/gryphomon.jpg"},
-            
-            # --- Hệ Unknown / Đặc Biệt ---
-            {"name": "Apocalymon", "hp": calculated_hp, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/apocalymon.jpg"},
-            {"name": "Keramon (Giant)", "hp": calculated_hp, "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/keramon.jpg"}
-        ]
-        chosen = random.choice(boss_roster)
-        new_boss = {
-            "boss_id": str(uuid.uuid4()), "name": chosen["name"], "max_hp": chosen["hp"], "current_hp": chosen["hp"], "hp": chosen["hp"], 
-            "attr": chosen["attr"], "img": chosen["img"], "is_active": True, "damage_log": {}, "active_messages": [], "participants": []
-        }
-        
-        result = await world_boss_col.insert_one(new_boss)
-        new_boss["_id"] = result.inserted_id
-        await self.broadcast_initial_boss(new_boss)
 
     async def trigger_chain_boss_respawn(self, participants: list):
         config = await world_boss_col.find_one({"type": "spawn_config"})
@@ -947,10 +900,6 @@ class RPGSystemCog(commands.Cog):
         new_boss["_id"] = result.inserted_id
        
         await self.broadcast_initial_boss(new_boss)
-
-    @auto_spawn_boss.before_loop
-    async def before_auto_spawn(self): 
-        await self.bot.wait_until_ready()
 
     @app_commands.command(name="combat", description="Display Boss Combat Interface")
     async def combat_cmd(self, interaction: discord.Interaction):
