@@ -602,7 +602,16 @@ class RPGSystemCog(commands.Cog):
             "DemiDevimon": {"attr": "Virus", "atk": 65, "hp": 1050, "vip": False, "img": "https://digimon.net/cimages/digimon/pico_devimon.jpg"},
             "Palmon": {"attr": "Data", "atk": 60, "hp": 1250, "vip": False, "img": "https://digimon.net/cimages/digimon/palmon.jpg"},
             "Tentomon": {"attr": "Vaccine", "atk": 65, "hp": 1200, "vip": False, "img": "https://digimon.net/cimages/digimon/tentomon.jpg"},
-            "Psychemon": {"attr": "Data", "atk": 70, "hp": 1100, "vip": False, "img": "https://digimon.net/cimages/digimon/psychemon.jpg"}
+            "Psychemon": {"attr": "Data", "atk": 70, "hp": 1100, "vip": False, "img": "https://digimon.net/cimages/digimon/psychemon.jpg"},
+            "Impmon": {"attr": "Virus", "atk": 85, "hp": 1050, "vip": False, "img": "https://digimon.net/cimages/digimon/impmon.jpg"},
+            "Sistermon Blanc": {"attr": "Vaccine", "atk": 65, "hp": 1250, "vip": False, "img": "https://digimon.net/cimages/digimon/sistermon_blanc.jpg"},
+            "Renamon": {"attr": "Data", "atk": 70, "hp": 1150, "vip": False, "img": "https://digimon.net/cimages/digimon/renamon.jpg"},
+            "Terriermon": {"attr": "Vaccine", "atk": 55, "hp": 1280, "vip": False, "img": "https://digimon.net/cimages/digimon/terriermon.jpg"},
+            "Lopmon": {"attr": "Data", "atk": 60, "hp": 1200, "vip": False, "img": "https://digimon.net/cimages/digimon/lopmon.jpg"},
+            "Hagurumon": {"attr": "Virus", "atk": 50, "hp": 1300, "vip": False, "img": "https://digimon.net/cimages/digimon/hagurumon.jpg"},
+            "Biyomon": {"attr": "Vaccine", "atk": 65, "hp": 1150, "vip": False, "img": "https://digimon.net/cimages/digimon/piyomon.jpg"},
+            "Keramon": {"attr": "Virus", "atk": 80, "hp": 1050, "vip": False, "img": "https://digimon.net/cimages/digimon/keramon.jpg"},
+            "Dorumon": {"attr": "Data", "atk": 75, "hp": 1200, "vip": False, "img": "https://digimon.net/cimages/digimon/dorumon.jpg"}
         },
         "champion": {
             "Greymon": {"attr": "Vaccine", "atk": 180, "hp": 3000, "img": "https://digimon.net/cimages/digimon/greymon.jpg"},
@@ -614,7 +623,16 @@ class RPGSystemCog(commands.Cog):
             "Devimon": {"attr": "Virus", "atk": 220, "hp": 2600, "img": "https://digimon.net/cimages/digimon/devimon.jpg"},
             "Togemon": {"attr": "Data", "atk": 170, "hp": 3300, "img": "https://digimon.net/cimages/digimon/togemon.jpg"},
             "Kabuterimon": {"attr": "Vaccine", "atk": 195, "hp": 3100, "img": "https://digimon.net/cimages/digimon/kabuterimon.jpg"},
-            "Gururumon": {"attr": "Vaccine", "atk": 190, "hp": 3000, "img": "https://digimon.net/cimages/digimon/gururumon.jpg"}
+            "Gururumon": {"attr": "Vaccine", "atk": 190, "hp": 3000, "img": "https://digimon.net/cimages/digimon/gururumon.jpg"},
+            "Witchmon": {"attr": "Data", "atk": 230, "hp": 2600, "img": "https://digimon.net/cimages/digimon/witchmon.jpg"},
+            "Sistermon Noir": {"attr": "Virus", "atk": 190, "hp": 2900, "img": "https://digimon.net/cimages/digimon/sistermon_noir.jpg"},
+            "Kyubimon": {"attr": "Data", "atk": 185, "hp": 3050, "img": "https://digimon.net/cimages/digimon/kyubimon.jpg"},
+            "Gargomon": {"attr": "Vaccine", "atk": 175, "hp": 3250, "img": "https://digimon.net/cimages/digimon/galgomon.jpg"},
+            "Wendigomon": {"attr": "Virus", "atk": 200, "hp": 2800, "img": "https://digimon.net/cimages/digimon/wendimon.jpg"},
+            "Guardromon": {"attr": "Virus", "atk": 165, "hp": 3300, "img": "https://digimon.net/cimages/digimon/guardromon.jpg"},
+            "Birdramon": {"attr": "Vaccine", "atk": 180, "hp": 2950, "img": "https://digimon.net/cimages/digimon/birdramon.jpg"},
+            "Chrysalimon": {"attr": "Virus", "atk": 240, "hp": 2550, "img": "https://digimon.net/cimages/digimon/chrysalimon.jpg"},
+            "Dorugamon": {"attr": "Data", "atk": 210, "hp": 3100, "img": "https://digimon.net/cimages/digimon/dorugamon.jpg"}
         },
         "ultimate": {
             "MetalGreymon": {"attr": "Vaccine", "atk": 450, "hp": 7500, "img": "https://digimon.net/cimages/digimon/metalgreymon.jpg"},
@@ -626,7 +644,16 @@ class RPGSystemCog(commands.Cog):
             "Myotismon": {"attr": "Virus", "atk": 500, "hp": 6800, "img": "https://digimon.net/cimages/digimon/vamdemon.jpg"},
             "Lillymon": {"attr": "Data", "atk": 410, "hp": 7800, "img": "https://digimon.net/cimages/digimon/lilimon.jpg"},
             "MegaKabuterimon": {"attr": "Vaccine", "atk": 460, "hp": 7600, "img": "https://digimon.net/cimages/digimon/atlurkabuterimon_red.jpg"},
-            "Astamon": {"attr": "Virus", "atk": 480, "hp": 7200, "img": "https://digimon.net/cimages/digimon/astamon.jpg"}
+            "Astamon": {"attr": "Virus", "atk": 480, "hp": 7200, "img": "https://digimon.net/cimages/digimon/astamon.jpg"},
+            "LadyDevimon": {"attr": "Virus", "atk": 490, "hp": 6900, "img": "https://digimon.net/cimages/digimon/ladydevimon.jpg"},
+            "Sistermon Ciel": {"attr": "Data", "atk": 450, "hp": 7500, "img": "https://digimon.net/cimages/digimon/sistermon_ciel.jpg"},
+            "Taomon": {"attr": "Data", "atk": 440, "hp": 7600, "img": "https://digimon.net/cimages/digimon/taomon.jpg"},
+            "Rapidmon": {"attr": "Vaccine", "atk": 430, "hp": 7900, "img": "https://digimon.net/cimages/digimon/rapidmon.jpg"},
+            "Antylamon": {"attr": "Virus", "atk": 470, "hp": 7300, "img": "https://digimon.net/cimages/digimon/andiramon.jpg"},
+            "Andromon": {"attr": "Vaccine", "atk": 420, "hp": 8000, "img": "https://digimon.net/cimages/digimon/andromon.jpg"},
+            "Garudamon": {"attr": "Vaccine", "atk": 460, "hp": 7400, "img": "https://digimon.net/cimages/digimon/garudamon.jpg"},
+            "Infermon": {"attr": "Virus", "atk": 550, "hp": 6600, "img": "https://digimon.net/cimages/digimon/infermon.jpg"},
+            "DoruGreymon": {"attr": "Data", "atk": 480, "hp": 7700, "img": "https://digimon.net/cimages/digimon/dorugremon.jpg"}
         },
         "mega": {
             "WarGreymon": {"attr": "Vaccine", "atk": 1200, "hp": 20000, "img": "https://digimon.net/cimages/digimon/wargreymon.jpg", "skill": {"name": "Terra Force", "dmg_mult": 2.5, "chance": 0.2}},
@@ -638,7 +665,16 @@ class RPGSystemCog(commands.Cog):
             "VenomMyotismon": {"attr": "Virus", "atk": 1350, "hp": 17500, "img": "https://digimon.net/cimages/digimon/venomvamdemon.jpg", "skill": {"name": "Venom Infusion", "dmg_mult": 2.6, "chance": 0.15}},
             "Rosemon": {"attr": "Data", "atk": 1050, "hp": 23000, "img": "https://digimon.net/cimages/digimon/rosemon.jpg", "skill": {"name": "Forbidden Temptation", "dmg_mult": 2.0, "chance": 0.3}},
             "HerculesKabuterimon": {"attr": "Vaccine", "atk": 1180, "hp": 22500, "img": "https://digimon.net/cimages/digimon/herakle_kabuterimon.jpg", "skill": {"name": "Giga Blaster", "dmg_mult": 2.4, "chance": 0.2}},
-            "Mekurimon": {"attr": "Virus", "atk": 1400, "hp": 16000, "img": "https://digimon.net/cimages/digimon/mercurymon.jpg", "skill": {"name": "Spark", "dmg_mult": 2.9, "chance": 0.15}}
+            "Mekurimon": {"attr": "Virus", "atk": 1400, "hp": 16000, "img": "https://digimon.net/cimages/digimon/mercurymon.jpg", "skill": {"name": "Spark", "dmg_mult": 2.9, "chance": 0.15}},
+            "BeelStarmon": {"attr": "Virus", "atk": 1450, "hp": 16000, "img": "https://digimon.net/cimages/digimon/beelstarmon.jpg", "skill": {"name": "Fly Bullet", "dmg_mult": 3.0, "chance": 0.15}},
+            "Sistermon Noir (Awaken)": {"attr": "Virus", "atk": 1350, "hp": 18000, "img": "https://digimon.net/cimages/digimon/sistermon_noir_awaken.jpg", "skill": {"name": "Mickey Bullet", "dmg_mult": 2.8, "chance": 0.2}},
+            "Sakuyamon": {"attr": "Data", "atk": 1200, "hp": 20500, "img": "https://digimon.net/cimages/digimon/sakuyamon.jpg", "skill": {"name": "Amethyst Mandala", "dmg_mult": 2.5, "chance": 0.2}},
+            "MegaGargomon": {"attr": "Vaccine", "atk": 1150, "hp": 22000, "img": "https://digimon.net/cimages/digimon/saintgalgomon.jpg", "skill": {"name": "Giant Bazooka", "dmg_mult": 2.4, "chance": 0.25}},
+            "Cherubimon": {"attr": "Virus", "atk": 1300, "hp": 18500, "img": "https://digimon.net/cimages/digimon/cherubimon_vice.jpg", "skill": {"name": "Lightning Spear", "dmg_mult": 2.7, "chance": 0.18}},
+            "HiAndromon": {"attr": "Vaccine", "atk": 1100, "hp": 23000, "img": "https://digimon.net/cimages/digimon/hiandromon.jpg", "skill": {"name": "Atomic Ray", "dmg_mult": 2.2, "chance": 0.3}},
+            "Hououmon": {"attr": "Vaccine", "atk": 1250, "hp": 19500, "img": "https://digimon.net/cimages/digimon/hououmon.jpg", "skill": {"name": "Starlight Explosion", "dmg_mult": 2.6, "chance": 0.2}},
+            "Diaboromon": {"attr": "Virus", "atk": 1480, "hp": 15500, "img": "https://digimon.net/cimages/digimon/diablomon.jpg", "skill": {"name": "Catastrophe Cannon", "dmg_mult": 3.1, "chance": 0.12}},
+            "Alphamon": {"attr": "Vaccine", "atk": 1400, "hp": 21000, "img": "https://digimon.net/cimages/digimon/alphamon.jpg", "skill": {"name": "Digitalize of Soul", "dmg_mult": 3.0, "chance": 0.15}}
         }
     }
 
@@ -652,7 +688,16 @@ class RPGSystemCog(commands.Cog):
         "DemiDevimon": "Devimon", "Devimon": "Myotismon", "Myotismon": "VenomMyotismon",
         "Palmon": "Togemon", "Togemon": "Lillymon", "Lillymon": "Rosemon",
         "Tentomon": "Kabuterimon", "Kabuterimon": "MegaKabuterimon", "MegaKabuterimon": "HerculesKabuterimon",
-        "Psychemon": "Gururumon", "Gururumon": "Astamon", "Astamon": "Mekurimon"
+        "Psychemon": "Gururumon", "Gururumon": "Astamon", "Astamon": "Mekurimon",
+        "Impmon": "Witchmon", "Witchmon": "LadyDevimon", "LadyDevimon": "BeelStarmon",
+        "Sistermon Blanc": "Sistermon Noir", "Sistermon Noir": "Sistermon Ciel", "Sistermon Ciel": "Sistermon Noir (Awaken)",
+        "Renamon": "Kyubimon", "Kyubimon": "Taomon", "Taomon": "Sakuyamon",
+        "Terriermon": "Gargomon", "Gargomon": "Rapidmon", "Rapidmon": "MegaGargomon",
+        "Lopmon": "Wendigomon", "Wendigomon": "Antylamon", "Antylamon": "Cherubimon",
+        "Hagurumon": "Guardromon", "Guardromon": "Andromon", "Andromon": "HiAndromon",
+        "Biyomon": "Birdramon", "Birdramon": "Garudamon", "Garudamon": "Hououmon",
+        "Keramon": "Chrysalimon", "Chrysalimon": "Infermon", "Infermon": "Diaboromon",
+        "Dorumon": "Dorugamon", "Dorugamon": "DoruGreymon", "DoruGreymon": "Alphamon"
     }
     
     HATCH_CORE_COST = 50
