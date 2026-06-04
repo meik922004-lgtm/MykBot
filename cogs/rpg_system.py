@@ -1240,10 +1240,37 @@ class RPGSystemCog(commands.Cog):
         
         await interaction.response.send_message(f"⚔️ Spawned Boss **{name}**!", ephemeral=True)
     async def handle_manual_attack(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        
+        # 1. TẠO BỘ NHỚ LƯU COOLDOWN NẾU CHƯA CÓ
+        # Tốt nhất bạn nên để self.manual_attack_cooldowns = {} trong hàm __init__ của Class
+        # Nhưng để tránh lỗi, ta dùng hasattr kiểm tra và tự tạo nếu thiếu
+        if not hasattr(self, 'manual_attack_cooldowns'):
+            self.manual_attack_cooldowns = {}
+
+        # 2. KIỂM TRA COOLDOWN 5 GIÂY
+        current_time = time.time()
+        last_attack_time = self.manual_attack_cooldowns.get(user_id, 0)
+        time_passed = current_time - last_attack_time
+
+        if time_passed < 5.0:
+            remaining = 5.0 - time_passed
+            # Trả lời ngay lập tức (không cần defer) nếu đang trong thời gian chờ
+            return await interaction.response.send_message(
+                f"⏳ **Cooldown!** Please wait `{remaining:.1f}s` before attacking again.", 
+                ephemeral=True
+            )
+
+        # 3. ĐÁNH DẤU THỜI GIAN CLICK MỚI NHẤT
+        self.manual_attack_cooldowns[user_id] = current_time
+
+        # --------------------------------------------------------------------
+        # 4. TIẾN HÀNH XỬ LÝ ĐÁNH BOSS (Phần code cũ của bạn)
+        # --------------------------------------------------------------------
+        
         # Tránh lỗi "This interaction failed" do Bot phản hồi chậm
         await interaction.response.defer(ephemeral=True) 
         
-        user_id = interaction.user.id
         user_name = interaction.user.display_name
         
         # Gọi hàm tính toán sát thương đã có sẵn
