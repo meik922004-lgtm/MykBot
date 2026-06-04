@@ -443,6 +443,20 @@ def generate_inventory_embed(profile: dict) -> discord.Embed:
         
     embed.set_footer(text="Use the menu below to Equip, Remove, or Use items..")
     return embed
+class TrainMultiplierView(discord.ui.View):
+    def __init__(self, stat: str, cog_instance, original_msg: discord.Message):
+        super().__init__(timeout=60)
+        self.stat = stat
+        self.cog = cog_instance
+        self.original_msg = original_msg  # Lưu lại tin nhắn Profile gốc để Refresh sau khi Train
+
+    @discord.ui.button(label="Train x1 (500 Bits)", style=discord.ButtonStyle.primary)
+    async def train_x1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_train_action(interaction, self.stat, multiplier=1, original_msg=self.original_msg)
+
+    @discord.ui.button(label="Train x5 (2500 Bits)", style=discord.ButtonStyle.danger)
+    async def train_x5(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_train_action(interaction, self.stat, multiplier=5, original_msg=self.original_msg)
 
 class ProfileView(discord.ui.View):
     def __init__(self, profile: dict, cog_instance):
@@ -450,69 +464,60 @@ class ProfileView(discord.ui.View):
         self.profile = profile
         self.cog = cog_instance
 
-    @discord.ui.button(label="🥚 Hatch Digi (50 Cores)", style=discord.ButtonStyle.primary, row=0)
+    # --- ROW 0: Sinh sản, Đột biến, Tiến hóa ---
+    @discord.ui.button(label="🥚 Hatch Digi", style=discord.ButtonStyle.primary, row=0)
     async def hatch_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_hatch_action(interaction)
 
-    @discord.ui.button(label="🏋️ Train ATK (500 Bits)", style=discord.ButtonStyle.secondary, row=0)
-    async def train_atk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_train_action(interaction, "atk")
+    @discord.ui.button(label="🍎 Reroll Size", style=discord.ButtonStyle.success, row=0)
+    async def reroll_size_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_quick_reroll(interaction)
 
-    @discord.ui.button(label="🏋️ Train HP (500 Bits)", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🧬 Evolve", style=discord.ButtonStyle.danger, row=0)
+    async def evolve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_evolve(interaction)
+
+    # --- ROW 1: Huấn luyện & Hồi phục ---
+    @discord.ui.button(label="🏋️ Train ATK", style=discord.ButtonStyle.secondary, row=1)
+    async def train_atk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Mở menu ẩn chọn x1 hoặc x5
+        view = TrainMultiplierView(stat="atk", cog_instance=self.cog, original_msg=interaction.message)
+        await interaction.response.send_message("🏋️ **Select training multiplier for ATK:**", view=view, ephemeral=True)
+
+    @discord.ui.button(label="🏋️ Train HP", style=discord.ButtonStyle.secondary, row=1)
     async def train_hp_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_train_action(interaction, "hp")
+        view = TrainMultiplierView(stat="hp", cog_instance=self.cog, original_msg=interaction.message)
+        await interaction.response.send_message("🏋️ **Select training multiplier for HP:**", view=view, ephemeral=True)
 
     @discord.ui.button(label="🩹 Heal Partner", style=discord.ButtonStyle.success, row=1)
     async def heal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_heal(interaction)
 
-    @discord.ui.button(label="🧬 Evolve (6k digibit)", style=discord.ButtonStyle.danger, row=1)
-    async def evolve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_evolve(interaction)
-
-    @discord.ui.button(label="Digimon bag", style=discord.ButtonStyle.secondary, emoji="🐾", row=1)
+    # --- ROW 2: Túi đồ & Kho bãi ---
+    @discord.ui.button(label="Digimon bag", style=discord.ButtonStyle.secondary, emoji="🐾", row=2)
     async def open_digi_bag(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile:
-            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
-        
+        if not profile: return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
         digi_list = profile.get("digimon_list", [])
+        if not digi_list: return await interaction.followup.send("❌ Your bag is empty!", ephemeral=True)
         
-        if not digi_list:
-            return await interaction.followup.send("❌ Your bag is empty! You need to catch some Digimon first.", ephemeral=True)
-        
-        options = digi_list[:25]
-        
-        embed = discord.Embed(
-            title="🐾 Your Digimon Bag", 
-            description=f"You have {len(digi_list)} Digimon in your bag.", 
-            color=discord.Color.gold()
-        )
-        
-        # SỬ DỤNG DigiBagView ĐỂ HIỂN THỊ CẢ MENU CHỌN VÀ NÚT BÁN
-        view = DigiBagView(options, profile.get("active_digimon_id"), self.cog) 
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        embed = discord.Embed(title="🐾 Your Digimon Bag", description=f"You have {len(digi_list)} Digimon.", color=discord.Color.gold())
+        await interaction.followup.send(embed=embed, view=DigiBagView(digi_list[:25], profile.get("active_digimon_id"), self.cog), ephemeral=True)
 
     @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒", row=2)
     async def open_inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         profile = await rpg_profiles_col.find_one({"user_id": interaction.user.id})
-        if not profile:
-            return await interaction.followup.send("❌ No Data.", ephemeral=True)
-            
-        embed = generate_inventory_embed(profile)
-        view = InventoryView(profile=profile, cog_instance=self.cog)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        if not profile: return await interaction.followup.send("❌ No Data.", ephemeral=True)
+        await interaction.followup.send(embed=generate_inventory_embed(profile), view=InventoryView(profile=profile, cog_instance=self.cog), ephemeral=True)
 
-    # --- THÊM NÚT DAILY CHECK ---
-    @discord.ui.button(label="📅 Daily Check", style=discord.ButtonStyle.success, row=2)
+    # --- ROW 3: Tiện ích ---
+    @discord.ui.button(label="📅 Daily Check", style=discord.ButtonStyle.success, row=3)
     async def daily_check_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_daily_check(interaction)
 
-    # --- THÊM NÚT REFRESH ---
-    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.secondary, row=3)
     async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await self.cog.refresh_profile_message(interaction.message, interaction.user.id)
@@ -1592,7 +1597,7 @@ class RPGSystemCog(commands.Cog):
             {"$inc": {"hatch_core": -50}}
         )
         if res.modified_count == 0:
-            return await interaction.followup.send("❌ You don't have enough Hatch Cores (5 cores required).", ephemeral=True)
+            return await interaction.followup.send("❌ You don't have enough Hatch Cores (50 cores required).", ephemeral=True)
 
         is_vip = profile.get("is_vip", False)
         available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
@@ -1616,35 +1621,57 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(f"🥚 Egg hatching successful! Received **{hatched_name}** ({size_pct * 100:.1f}%)", ephemeral=True)
         await self.refresh_profile_message(interaction.message, user_id)
 
-    async def handle_train_action(self, interaction: discord.Interaction, stat: str):
+    async def handle_train_action(self, interaction: discord.Interaction, stat: str, multiplier: int = 1, original_msg: discord.Message = None):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         
         active_digi = self.get_active_digimon(profile)
-        if not active_digi: return await interaction.followup.send("❌ Choose a Digimon companion first..", ephemeral=True)
+        if not active_digi: 
+            return await interaction.followup.send("❌ Choose a Digimon companion first.", ephemeral=True)
         
         MAX_TRAIN_ATK, MAX_TRAIN_HP = 1000, 5000
         current_train_atk, current_train_hp = active_digi.get("trained_atk", 0), active_digi.get("trained_hp", 0)
         
+        # 1. Tính toán chi phí và lượng sức mạnh tăng thêm
+        total_cost = 500 * multiplier
         updates = {}
+        
         if stat == "atk":
-            if current_train_atk >= MAX_TRAIN_ATK: return await interaction.followup.send("❌ Reached ATK training limit.", ephemeral=True)
-            updates["trained_atk"] = current_train_atk + 20
+            gain = 20 * multiplier
+            if current_train_atk >= MAX_TRAIN_ATK: 
+                return await interaction.followup.send("❌ Reached ATK training limit.", ephemeral=True)
+            if current_train_atk + gain > MAX_TRAIN_ATK:
+                return await interaction.followup.send(f"❌ Cannot train x{multiplier}. It exceeds the {MAX_TRAIN_ATK} ATK limit.", ephemeral=True)
+            updates["trained_atk"] = current_train_atk + gain
         else:
-            if current_train_hp >= MAX_TRAIN_HP: return await interaction.followup.send("❌ Reached the HP training limit.", ephemeral=True)
-            updates["trained_hp"] = current_train_hp + 100
+            gain = 100 * multiplier
+            if current_train_hp >= MAX_TRAIN_HP: 
+                return await interaction.followup.send("❌ Reached the HP training limit.", ephemeral=True)
+            if current_train_hp + gain > MAX_TRAIN_HP:
+                return await interaction.followup.send(f"❌ Cannot train x{multiplier}. It exceeds the {MAX_TRAIN_HP} HP limit.", ephemeral=True)
+            updates["trained_hp"] = current_train_hp + gain
             
+        # 2. Xử lý trừ tiền và cập nhật Database
+        if profile.get("digibit", 0) < total_cost:
+            return await interaction.followup.send(f"❌ Insufficient Digibits ({total_cost} Bits required).", ephemeral=True)
+
         new_list = self.update_active_digimon(profile, updates)
         res = await rpg_profiles_col.update_one(
-            {"user_id": user_id, "digibit": {"$gte": 500}}, 
-            {"$set": {"digimon_list": new_list}, "$inc": {"digibit": -500}}
+            {"user_id": user_id, "digibit": {"$gte": total_cost}}, 
+            {"$set": {"digimon_list": new_list}, "$inc": {"digibit": -total_cost}}
         )
         if res.modified_count == 0:
-            return await interaction.followup.send("❌ Insufficient Digibits (500 Bits required).", ephemeral=True)
+            return await interaction.followup.send("❌ Transaction failed.", ephemeral=True)
             
-        await interaction.followup.send(f"🏋️ Trained successfully! **+{20 if stat == 'atk' else 100} {stat.upper()}** cho {active_digi['name']}.", ephemeral=True)
-        await self.refresh_profile_message(interaction.message, user_id)
+        await interaction.followup.send(f"🏋️ Trained successfully! **+{gain} {stat.upper()}** for {active_digi['name']}.", ephemeral=True)
+        
+        # 3. Làm mới tin nhắn Profile bên ngoài (Nếu được bấm từ Menu x1/x5 thì dùng original_msg)
+        msg_to_refresh = original_msg if original_msg else interaction.message
+        try:
+            await self.refresh_profile_message(msg_to_refresh, user_id)
+        except Exception:
+            pass
 
     async def handle_inventory_use(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)
@@ -1715,6 +1742,62 @@ class RPGSystemCog(commands.Cog):
     # LÔ-GÍC XỬ LÝ MỚI: HÀM DAILY CHECK & HÀM BÁN DIGIMON (ADD VÀO COG)
     # ====================================================================================
 
+    async def handle_quick_reroll(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not profile: return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
+
+        inventory = profile.get("inventory", [])
+        
+        # 1. Tìm Reroll Fruit trong túi
+        found_fruit = None
+        for item in inventory:
+            if isinstance(item, str) and item == "Size Reroll Fruit":
+                found_fruit = item
+                break
+            elif isinstance(item, dict) and item.get("name") == "Size Reroll Fruit":
+                found_fruit = item
+                break
+                
+        if not found_fruit:
+            return await interaction.followup.send("❌ You don't have any `Size Reroll Fruit` in your inventory!", ephemeral=True)
+
+        # 2. Xử lý thông số Digimon
+        active_digi = self.get_active_digimon(profile)
+        if not active_digi:
+            return await interaction.followup.send("❌ No Active Digimon.", ephemeral=True)
+
+        old_size = active_digi.get("size", 1.0)
+        is_vip = profile.get("is_vip", False)
+        
+        # 3. Chỉ quay kích thước mới (Bỏ qua hoàn toàn việc tính toán Base Stats)
+        new_size = round(random.uniform(1.00 if is_vip else 0.85, 1.30 if is_vip else 1.25), 3)
+        
+        inventory.remove(found_fruit)
+        
+        # Chỉ cập nhật mỗi biến size vào mảng
+        updates = {"size": new_size}
+        new_list = self.update_active_digimon(profile, updates)
+
+        await rpg_profiles_col.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "inventory": inventory, 
+                "digimon_list": new_list
+            }}
+        )
+        
+        trend = "📈 INCREASED" if new_size > old_size else "📉 DECREASED" if new_size < old_size else "UNCHANGED"
+        await interaction.followup.send(f"🍎 **Size Reroll Fruit Used!**\n📏 Size: ~~{old_size * 100:.1f}%~~ ➡️ **{new_size * 100:.1f}%** ({trend})", ephemeral=True)
+        
+        # Làm mới giao diện Profile để hiển thị Size mới
+        try:
+            await self.refresh_profile_message(interaction.message, user_id)
+        except Exception:
+            pass
+    
     async def handle_daily_check(self, interaction: discord.Interaction):
         """Xử lý điểm danh hàng ngày: Cộng 1000 Digibits và 100 Hatch Cores"""
         await interaction.response.defer(ephemeral=True)
