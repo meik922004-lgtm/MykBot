@@ -790,21 +790,6 @@ class RPGSystemCog(commands.Cog):
                             print("Notice: API congestion; skipping this attempt.")
                         updated_messages.append(msg_info)
 
-                # DM ẩn thông báo trạng thái mỗi 15 giây
-                damage_log = boss.get("damage_log", {})
-                for uid_str, dmg in damage_log.items():
-                    try:
-                        p_user_id = int(uid_str)
-                        user = self.bot.get_user(p_user_id) or await self.bot.fetch_user(p_user_id)
-                        if user:
-                            dm_msg = (
-                                f"📊 **[RAID UPDATE] {boss['name']}**\n"
-                                f"⚔️ You have dealt a total of: **{dmg:,} DMG** to the Boss.\n"
-                                f"⚡ **Boss Mechanism:** The boss is now counterattacking **20% of incoming damage** directly to your Digimon.!"
-                            )
-                            await user.send(dm_msg)
-                    except Exception as e:
-                        print(f"⚠️ DM failure warning for {uid_str}: {e}")
 
     @live_boss_update_loop.before_loop
     async def before_live_boss_update(self): await self.bot.wait_until_ready()  
@@ -846,11 +831,11 @@ class RPGSystemCog(commands.Cog):
         last_round_damage = config.get("last_round_damage", 500000) if config else 500000
 
         # Tính toán chỉ số Scale Boss thế hệ sau dựa trên sát thương cũ
-        calculated_hp = int(last_round_damage * random.uniform(1.5, 2.5))
-        if calculated_hp < 50000000: calculated_hp = 50000000
+        calculated_hp = int(last_round_damage * random.uniform(0.1, 0.2))
+        if calculated_hp < 1000000: calculated_hp = 30000000
         
         calculated_atk = random.randint(int(calculated_hp * 0.005), int(calculated_hp * 0.015))
-        if calculated_atk < 500: calculated_atk = 500
+        if calculated_atk < 500: calculated_atk = 250
 
         # 👑 BỂ BOSS CHUỖI SIÊU CẤP (Bao gồm các thực thể tối cao trong Digimon)
         chain_boss_roster = [
@@ -988,8 +973,8 @@ class RPGSystemCog(commands.Cog):
             current_hp = result.get('current_hp', result.get('hp', 0))
 
             # Tính toán phản đòn 20%
-            if current_hp > 0 and random.random() < 0.40:
-                boss_dmg = int(dmg_to_sync * 0.30)
+            if current_hp > 0 and random.random() < 0.20:
+                boss_dmg = int(dmg_to_sync * 0.05)
                 if boss_dmg < 200: boss_dmg = random.randint(200, 350)
                 
                 if player.get("is_protecting"):
@@ -1071,17 +1056,16 @@ class RPGSystemCog(commands.Cog):
         current_hp = result.get('current_hp', result.get('hp', 0))
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
 
-        # 🛠️ CHỨC NĂNG 5: Sửa cơ chế phản đòn đánh tay của Boss tăng lên cố định thành 20% sát thương gánh chịu
+        # 🛠️ CHỨC NĂNG 5: Sửa cơ chế phản đòn đánh tay của Boss tăng lên cố định thành 10% sát thương gánh chịu
         if random.random() < 0.30 and current_hp > 0:
-            boss_dmg = int(final_dmg * 0.20)
+            boss_dmg = int(final_dmg * 0.02)
             if boss_dmg < 200: boss_dmg = random.randint(200, 350) 
             
             if player.get("is_protecting"):
                 boss_dmg = int(boss_dmg * 0.2)
                 msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
                 await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-            else:
-                msg += f"\n🚨 <@{user_id}> **BOSS COUNTERED** (Reflected 20%) for **{boss_dmg} DMG**!"
+            
                 
             new_hp = max(0, player["current_hp"] - boss_dmg)
             await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
@@ -1229,12 +1213,12 @@ class RPGSystemCog(commands.Cog):
         random_name = f"Vanguard {random.choice(boss_names_pool)} [Chain Raid]"
         
         # Scale HP theo hệ số ngẫu nhiên từ 1.5x đến 2.5x tổng lượng damage đợt trước nhận được
-        calculated_hp = int(last_round_damage * random.uniform(1.5, 2.5))
-        if calculated_hp < 30000: calculated_hp = random.randint(50000, 100000) # Sàn HP tối thiểu để bảo vệ
+        calculated_hp = int(last_round_damage * random.uniform(0, 0.1))
+        if calculated_hp < 30000: calculated_hp = random.randint(10000, 50000) # Sàn HP tối thiểu để bảo vệ
         
         # Scale ATK tỉ lệ thuận tương thích với HP mới
         calculated_atk = random.randint(int(calculated_hp * 0.01), int(calculated_hp * 0.025))
-        if calculated_atk < 400: calculated_atk = 400
+        if calculated_atk < 400: calculated_atk = 200
 
         new_boss = {
             "boss_id": str(uuid.uuid4()), "name": random_name, "hp": calculated_hp, "current_hp": calculated_hp, "max_hp": calculated_hp,
