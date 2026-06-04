@@ -1797,7 +1797,7 @@ class RPGSystemCog(commands.Cog):
         # 2. Kiểm tra số dư orb của người mua
         buyer_profile = await rpg_profiles_col.find_one({"user_id": buyer_id})
         if not buyer_profile or buyer_profile.get("orb", 0) < price:
-            return await interaction.followup.send("❌ You don't have enough orb to complete this transaction.!", ephemeral=True)
+            return await interaction.followup.send("❌ You don't have enough orb to complete this transaction!", ephemeral=True)
             
         # 3. Thực hiện khấu trừ và luân chuyển tài chính
         # Trừ tiền người mua
@@ -1814,7 +1814,7 @@ class RPGSystemCog(commands.Cog):
                 {"user_id": buyer_id}, 
                 {"$push": {"digimon_list": item["item_data"]}}
             )
-            success_msg = f"Digimon **{item['item_name']}**It has been placed in your Digimon bag.!"
+            success_msg = f"Digimon **{item['item_name']}** has been placed in your Digimon bag!"
         else:
             # Nếu sản phẩm là Trang bị/vật phẩm thường -> Đẩy vào inventory như cũ
             await rpg_profiles_col.update_one(
@@ -1826,7 +1826,38 @@ class RPGSystemCog(commands.Cog):
         # 5. Xóa vật phẩm khỏi marketplace sau khi giao dịch hoàn tất
         await market_col.delete_one({"listing_id": listing_id})
         
+        # =========================================================================
+        # [PHẦN THÊM MỚI] 6. Tự động restock (làm mới) hàng hệ thống
+        # =========================================================================
+        if is_system:
+            # Tự động tạo lại món hàng hệ thống vừa bị mua mất
+            await self.initialize_market_mega_products()
+
+        # Gửi thông báo mua thành công
         await interaction.followup.send(f"🛍️ **Transaction successful!** {success_msg} (Cost: {price:.0f} orb)", ephemeral=True)
+
+        # =========================================================================
+        # [PHẦN THÊM MỚI] 7. Tự động làm mới UI của Chợ ngay lập tức
+        # =========================================================================
+        try:
+            # Lấy lại danh sách hàng hóa mới nhất từ DB
+            listings = await market_col.find({}).sort("created_at", -1).to_list(25)
+            
+            embed = discord.Embed(title="🏪 Digital Marketplace Shop", color=discord.Color.purple())
+            if not listings:
+                embed.description = "*Market is currently empty. Please check back later.*"
+            else:
+                desc = ""
+                for itm in listings:
+                    type_tag = "🧬 [DIGIMON]" if itm.get("listing_type") == "digimon" else "⚔️ [EQUIP]"
+                    desc += f"{type_tag} **{itm['item_name']}**\n🆔 ID: `{itm['listing_id']}` | 💰 **{itm['price']:.2f} orb** | 👤 Seller: {itm['seller_name']}\n\n"
+                embed.description = desc[:4000]
+
+            # Chỉnh sửa (edit) lại tin nhắn Chợ ban đầu để update Menu và Embed mới
+            await interaction.edit_original_response(embed=embed, view=MarketShopView(listings, self))
+        except discord.errors.HTTPException:
+            # Bỏ qua nếu có lỗi không thể edit tin nhắn cũ (ví dụ tin nhắn quá thời hạn)
+            pass
 
     @app_commands.command(name="market", description="Open Digital Marketplace Shop")
     async def market_cmd(self, interaction: discord.Interaction):
