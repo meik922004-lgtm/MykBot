@@ -273,8 +273,6 @@ class NewsSystemCog(commands.Cog):
         )
         await interaction.followup.send(summary, ephemeral=True)
 
-async def setup(bot):
-    await bot.add_cog(NewsSystemCog(bot))
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
