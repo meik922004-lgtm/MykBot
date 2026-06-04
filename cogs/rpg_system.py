@@ -145,6 +145,13 @@ class GearInventorySelect(discord.ui.Select):
                     {"$set": {"inventory": inventory, "gear": gear}}
                 )
                 item_name = item_to_remove if isinstance(item_to_remove, str) else item_to_remove.get("name")
+                
+                # [AUTO REFRESH] Cập nhật giao diện kho đồ sau khi gỡ
+                updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
+                try:
+                    await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
+                except Exception: pass
+
                 return await interaction.followup.send(f"🔓 I have removed **{item_name}** from position **[{slot.upper()}]** and put it in the storage!", ephemeral=True)
             else:
                 return await interaction.followup.send("❌ Error: This location is not equipped.", ephemeral=True)
@@ -181,6 +188,13 @@ class GearInventorySelect(discord.ui.Select):
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "digimon_list": digimon_list}}
             )
+            
+            # [AUTO REFRESH] Cập nhật giao diện sau khi dùng Fruit
+            updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
+            try:
+                await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
+            except Exception: pass
+
             return await interaction.followup.send(f"🍎 **{item_name}** has been used on **{active_digi['name']}**!\n📏 New size: **{new_size * 100:.1f}%**", ephemeral=True)
             
         cleaned_name = self.cog.clean_item_name(item_name)
@@ -200,6 +214,13 @@ class GearInventorySelect(discord.ui.Select):
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "gear": gear}}
             )
+            
+            # [AUTO REFRESH] Cập nhật giao diện sau khi mặc đồ mới
+            updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
+            try:
+                await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
+            except Exception: pass
+
             return await interaction.followup.send(f"✅**{item_name}** has been placed in position**[{gear_type.upper()}]**!", ephemeral=True)
             
         await interaction.followup.send(f"📦Item **{item_name}** cannot be used directly here..", ephemeral=True)
@@ -224,6 +245,96 @@ class DigiBagSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "none": return
         await self.cog.handle_set_active_digimon(interaction, self.values[0])
+
+class BulkSellGearSelect(discord.ui.Select):
+    def __init__(self, profile: dict, cog_instance):
+        self.cog = cog_instance
+        options = []
+        # Chỉ lấy từ inventory (kho lưu trữ), hoàn toàn tách biệt với trang bị đang mặc (gear)
+        inventory = profile.get("inventory", [])
+        string_counts = {}
+        dict_items = []
+        for item in inventory:
+            if isinstance(item, str):
+                string_counts[item] = string_counts.get(item, 0) + 1
+            elif isinstance(item, dict):
+                dict_items.append(item)
+        # 1. Đưa các trang bị thường (String) vào danh sách bán
+        for gear_str, count in string_counts.items():
+            if len(options) >= 25: break
+            # Bỏ qua Size Reroll Fruit để tránh người chơi bán nhầm vật phẩm tiêu hao quan trọng
+            if "Fruit" in gear_str: continue 
+            cleaned_name = cog_instance.clean_item_name(gear_str)
+            quantity_label = f" (x{count})" if count > 1 else ""  
+            options.append(discord.SelectOption(
+                label=f"Sell: {cleaned_name}{quantity_label}",
+                description="Click to select | Price: 200 Digibits",
+                value=f"sell_str_{gear_str}",
+                emoji="💰"
+            ))
+        # 2. Đưa các trang bị chỉ số (Dict - Mythic) vào danh sách bán
+        for gear_dict in dict_items:
+            if len(options) >= 25: break
+            options.append(discord.SelectOption(
+                label=f"Sell: {gear_dict.get('name', 'Unknown')} ({gear_dict.get('rarity', 'Common')})",
+                description="Click to select | Price: 200 Digibits",
+                value=f"sell_dict_{gear_dict.get('id')}",
+                emoji="👑"
+            ))
+        if not options:
+            options = [discord.SelectOption(label="No equipment available to sell.", value="none")]
+            super().__init__(placeholder="💰 Bulk Sell Storage (Empty)...", options=options, disabled=True)
+        else:
+            # Cho phép chọn nhiều mục (Tối đa bằng số lượng vật phẩm hiển thị)
+            super().__init__(
+                placeholder="💰 Select multiple items to bulk sell...", 
+                options=options,
+                min_values=1,
+                max_values=len(options)
+            )
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        if not profile:
+            return await interaction.followup.send("❌ Character data not found.", ephemeral=True) 
+        inventory = profile.get("inventory", [])
+        selected_items = self.values
+        sold_count = 0
+        # Xử lý xóa vật phẩm được chọn ra khỏi inventory
+        for item_val in selected_items:
+            if item_val.startswith("sell_str_"):
+                target_str = item_val.replace("sell_str_", "")
+                if target_str in inventory:
+                    inventory.remove(target_str)
+                    sold_count += 1
+            elif item_val.startswith("sell_dict_"):
+                target_id = item_val.replace("sell_dict_", "")
+                for item in inventory:
+                    if isinstance(item, dict) and item.get("id") == target_id:
+                        inventory.remove(item)
+                        sold_count += 1
+                        break
+        if sold_count == 0:
+            return await interaction.followup.send("❌ No valid items were processed for sale.", ephemeral=True)
+        # Cộng tiền tài sản: 200 Digibit mỗi món
+        earned_bits = sold_count * 200
+        await rpg_profiles_col.update_one(
+            {"user_id": user_id},
+            {"$set": {"inventory": inventory}, "$inc": {"digibit": float(earned_bits)}}
+        )
+        # Gửi thông báo thành công cho người dùng
+        await interaction.followup.send(f"💰 **Bulk sale successful!** Sold {sold_count} items and earned **{earned_bits:.2f} Digibits**!", ephemeral=True)
+        # ==========================================
+        # [AUTO REFRESH] Cập nhật giao diện Chợ/Kho đồ lập tức
+        # ==========================================
+        updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
+        new_embed = generate_inventory_embed(updated_profile)
+        new_view = InventoryView(profile=updated_profile, cog_instance=self.cog)
+        try:
+            await interaction.message.edit(embed=new_embed, view=new_view)
+        except Exception:
+            pass
 
 class BulkSellDigiSelect(discord.ui.Select):
     def __init__(self, digimon_list, active_id, cog_instance):
@@ -275,7 +386,10 @@ class InventoryView(discord.ui.View):
         if select_menu:
             self.add_item(select_menu)
         elif profile and cog_instance:
+            # Menu 1: Mặc đồ / Gỡ đồ cũ
             self.add_item(GearInventorySelect(profile, cog_instance))   
+            # Menu 2: Chọn nhiều món để bán tháo giải phóng dung lượng (Mới)
+            self.add_item(BulkSellGearSelect(profile, cog_instance)) 
 
 def generate_inventory_embed(profile: dict) -> discord.Embed:
     embed = discord.Embed(title="🎒 Inventory", color=discord.Color.blue())
