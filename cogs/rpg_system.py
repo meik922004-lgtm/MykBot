@@ -2824,7 +2824,7 @@ class RPGSystemCog(commands.Cog):
 
     @app_commands.command(name="solo_dungeon", description="Challenger with Turn-base mode")
     async def solo_boss(self, interaction: discord.Interaction):
-        await interaction.response.defer
+        await interaction.response.defer()
         user_id = interaction.user.id
         
         if user_id in self.active_solo_battles:
