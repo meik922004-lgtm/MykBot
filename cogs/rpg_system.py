@@ -627,7 +627,7 @@ class SoloCombatView(discord.ui.View):
         await interaction.response.edit_message(embed=embed_waiting, view=self)
 
         # 2. 🕒 TẠO ĐỘ TRỄ 2 GIÂY NHƯ YÊU CẦU
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
 
         # Lấy lại dữ liệu mới nhất từ Database sau 2s chờ
         player = await rpg_profiles_col.find_one({"user_id": self.user_id})
@@ -753,12 +753,18 @@ class SoloCombatView(discord.ui.View):
         # ==========================================
         is_boss_attacking = True
 
-        # 💚 CƠ CHẾ BOSS HỒI MÁU: Dưới 40% máu, có 25% tỷ lệ tự phục hồi 15% HP
+        # 💚 CƠ CHẾ BOSS HỒI MÁU: Dưới 40% máu, 25% tỷ lệ và CHƯA TỪNG HỒI MÁU TRƯỚC ĐÓ
         boss_max_hp = battle.get("boss_max_hp", battle["boss_hp"] * 4)
-        if battle["boss_hp"] < (boss_max_hp * 0.4) and random.random() < 0.25:
+        if (
+            battle["boss_hp"] < (boss_max_hp * 0.4) 
+            and random.random() < 0.20 
+            and not battle.get("boss_heal_used", False)  # 🛑 Kiểm tra xem đã dùng chưa
+        ):
             boss_heal_amt = int(boss_max_hp * 0.15)
             battle["boss_hp"] = min(boss_max_hp, battle["boss_hp"] + boss_heal_amt)
-            log_msgs.append(f"💚 **BOSS RECOVERY:** **{battle['boss_name']}** gathers surrounding data, recovering **{boss_heal_amt:,} HP**!")
+            battle["boss_heal_used"] = True  # 🔒 KHÓA LẠI: Đánh dấu đã sử dụng cơ chế hồi máu cho trận này
+            
+            log_msgs.append(f"💚 **BOSS RECOVERY:** **{battle['boss_name']}** gathers surrounding data, recovering **{boss_heal_amt:,} HP**! *(Once per match)*")
             is_boss_attacking = False # Boss dành lượt này để hồi máu, không tấn công
 
         # Tiến hành phản công nếu Boss không hồi máu
@@ -767,9 +773,9 @@ class SoloCombatView(discord.ui.View):
             boss_attr_mult = self.cog.get_attribute_multiplier(battle["boss_attr"], digimon["attr"])
             
             boss_skills = {
-                "Vaccine": {"name": "LIGHT OF JUDGMENT", "mult": 1.4},
-                "Virus": {"name": "DARKNESS CORRUPTION", "mult": 1.5},
-                "Data": {"name": "DATA RESTRUCTING", "mult": 1.35}
+                "Vaccine": {"name": "LIGHT OF JUDGMENT", "mult": 1.6},
+                "Virus": {"name": "DARKNESS CORRUPTION", "mult": 1.6},
+                "Data": {"name": "DATA RESTRUCTING", "mult": 1.6}
             }
             
             # Boss tung kỹ năng đặc biệt (20% tỷ lệ)
@@ -986,121 +992,121 @@ class RPGSystemCog(commands.Cog):
         "Susanoomon": {
             "name": "Susanoomon (Ancient spirit",
             "attr": "Vaccine",
-            "hp_mult": 9.0,
-            "atk_mult": 0.10,
+            "hp_mult": 8.0,
+            "atk_mult": 0.12,
             "def_mult": 1.2,
             "rewards": {
-                "digibits": (500, 600),     # Thấp nhất trong bể (mốc 500)
-                "hatch_cores": (100, 120),  # Thấp nhất trong bể (mốc 100)
+                "digibits": (1000, 1400),     # Thấp nhất trong bể (mốc 500)
+                "hatch_cores": (150, 180),  # Thấp nhất trong bể (mốc 100)
                 "size_fruits": (3, 3)       # Rớt cố định 3 quả
             }
         },
         "Megidramon": {
             "name": "Megidramon (Evil dragon)",
             "attr": "Virus",
-            "hp_mult": 7.5,
-            "atk_mult": 0.9,
+            "hp_mult": 8.5,
+            "atk_mult": 1,
             "def_mult": 1.2,
             "rewards": {
-                "digibits": (550, 650),
-                "hatch_cores": (110, 130),
+                "digibits": (1000, 1400),
+                "hatch_cores": (150, 180),
                 "size_fruits": (3, 4)       # Rớt từ 3 đến 4 quả
             }
         },
         "metalgarurumon_boss": {
             "name": "MetalGarurumon (Blizzard Zone)",
             "attr": "Data",
-            "hp_mult": 11.2,
-            "atk_mult": 0.12,
+            "hp_mult": 10.2,
+            "atk_mult": 0.16,
             "def_mult": 1,
             "rewards": {
-                "digibits": (600, 700),
-                "hatch_cores": (120, 140),
+                "digibits": (1000, 1400),
+                "hatch_cores": (150, 180),
                 "size_fruits": (3, 4)
             }
         },
         "wargreymon_boss": {
             "name": "WarGreymon (Dragon Combatant)",
             "attr": "Vaccine",
-            "hp_mult": 11.8,
-            "atk_mult": 0.12,
+            "hp_mult": 10.8,
+            "atk_mult": 0.14,
             "def_mult": 0.9,
             "rewards": {
-                "digibits": (650, 750),
-                "hatch_cores": (130, 150),
+                "digibits": (1000, 1400),
+                "hatch_cores": (150, 180),
                 "size_fruits": (3, 4)
             }
         },
         "Jexmon GX": {
             "name": "Jesmon GX (Savior of digital world)",
             "attr": "Data",
-            "hp_mult": 12.6,
-            "atk_mult": 0.13,
+            "hp_mult": 11.6,
+            "atk_mult": 0.15,
             "def_mult": 0.7,
             "rewards": {
-                "digibits": (700, 800),
-                "hatch_cores": (140, 160),
+                "digibits": (1000, 1400),
+                "hatch_cores": (150, 180),
                 "size_fruits": (4, 4)       # Rớt cố định 4 quả
             }
         },
         "Dianamon": {
             "name": "Dianamon (Omlympos XII)",
             "attr": "DA",
-            "hp_mult": 11.4,
-            "atk_mult": 0.14,
+            "hp_mult": 10.4,
+            "atk_mult": 0.16,
             "def_mult": 1,
             "rewards": {
-                "digibits": (750, 850),
-                "hatch_cores": (150, 170),
+                "digibits": (1000, 1400),
+                "hatch_cores": (170, 200),
                 "size_fruits": (4, 5)       # Rớt từ 4 đến 5 quả
             }
         },
         "Beelzemon": {
             "name": "Beelzemon Blast Mode (Glutony)",
             "attr": "Virus",
-            "hp_mult": 12.0,
-            "atk_mult": 0.15,
+            "hp_mult": 9.0,
+            "atk_mult": 0.17,
             "def_mult": 0.6,
             "rewards": {
-                "digibits": (800, 900),
-                "hatch_cores": (160, 180),
+                "digibits": (1000, 1500),
+                "hatch_cores": (180, 220),
                 "size_fruits": (4, 5)
             }
         },
         "Bagramon": {
             "name": "Bagramon(Sage of Death)",
             "attr": "Virus",
-            "hp_mult": 12.5,
-            "atk_mult": 0.11,
+            "hp_mult": 10.5,
+            "atk_mult": 0.13,
             "def_mult": 1.2,
             "rewards": {
-                "digibits": (850, 950),
-                "hatch_cores": (170, 190),
+                "digibits": (1150, 1600),
+                "hatch_cores": (190, 230),
                 "size_fruits": (4, 5)
             }
         },
         "Gracenovamon": {
             "name": "Gracenovamon (Galaxy God)",
             "attr": "Vaccine",
-            "hp_mult": 13.0,
-            "atk_mult": 0.14,
+            "hp_mult": 10.0,
+            "atk_mult": 0.16,
             "def_mult": 0.9,
             "rewards": {
-                "digibits": (900, 980),
-                "hatch_cores": (180, 195),
-                "size_fruits": (5, 5)       # Rớt cố định 5 quả
+                "digibits": (1300, 1800),
+                "hatch_cores": (200, 250),
+                "size_fruits": (7, 7)       # Rớt cố định 5 quả
             }
         },
         "Zeed Milleniummon": {
             "name": "Zeed Milleniummon (Dimension Destroyer)",
             "attr": "Vaccine",
-            "hp_mult": 14.5,              # Boss trâu nhất, khó đánh nhất
-            "atk_mult": 0.16,
+            "hp_mult": 12.5,              # Boss trâu nhất, khó đánh nhất
+            "atk_mult": 0.18,
             "def_mult": 1.5,
             "rewards": {
-                "digibits": (950, 1000),    # Cao nhất trong bể (mốc 1000)
-                "hatch_cores": (190, 200),  # Cao nhất trong bể (mốc 200)
-                "size_fruits": (5, 5)
+                "digibits": (1500, 2000),    # Cao nhất trong bể (mốc 1000)
+                "hatch_cores": (300,500 ),  # Cao nhất trong bể (mốc 200)
+                "size_fruits": (10, 10)
             }
         }
     }
@@ -2747,6 +2753,7 @@ class RPGSystemCog(commands.Cog):
             "boss_attr": boss_template["attr"],
             "heal_cd": 0,
             "boss_def": boss_def,
+            "boss_heal_used": False,
             "player_debuff": None,   # 🔥 Trạng thái hiện tại (stun/blind)
             "debuff_duration": 0,
             "turn": 1,
