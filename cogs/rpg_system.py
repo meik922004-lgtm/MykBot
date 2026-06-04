@@ -1588,8 +1588,8 @@ class RPGSystemCog(commands.Cog):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
 
         res = await rpg_profiles_col.update_one(
-            {"user_id": user_id, "hatch_core": {"$gte": 5}},
-            {"$inc": {"hatch_core": -5}}
+            {"user_id": user_id, "hatch_core": {"$gte": 50}},
+            {"$inc": {"hatch_core": -50}}
         )
         if res.modified_count == 0:
             return await interaction.followup.send("❌ You don't have enough Hatch Cores (5 cores required).", ephemeral=True)
