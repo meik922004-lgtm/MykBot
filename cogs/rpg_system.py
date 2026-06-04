@@ -840,7 +840,7 @@ class RPGSystemCog(commands.Cog):
         calculated_hp = int(last_round_damage * random.uniform(1.2, 2.0))
         
         # 👑 Máu tối thiểu của boss cấu hình bây giờ là 500.000
-        if calculated_hp < 500000: calculated_hp = 500000
+        if calculated_hp < 50000000: calculated_hp = 50000000
 
         boss_roster = [
             # --- Hệ Virus ---
