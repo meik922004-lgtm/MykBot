@@ -978,7 +978,7 @@ class RPGSystemCog(commands.Cog):
 
         # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI CHO ĐÁNH TAY: Tỷ lệ 10%, phản sát thương cố định từ 300 -> 500 DMG
         if current_hp > 0 and random.random() < 0.10:
-            boss_dmg = random.randint(300, 500)
+            boss_dmg = random.randint(300, 1000)
             
             if player.get("is_protecting"):
                 boss_dmg = int(boss_dmg * 0.2)
