@@ -250,81 +250,90 @@ class BulkSellGearSelect(discord.ui.Select):
     def __init__(self, profile: dict, cog_instance):
         self.cog = cog_instance
         options = []
-        # Chỉ lấy từ inventory (kho lưu trữ), hoàn toàn tách biệt với trang bị đang mặc (gear)
+        
+        # Lấy kho đồ nguyên bản để xử lý theo từng vị trí (index)
         inventory = profile.get("inventory", [])
-        string_counts = {}
-        dict_items = []
-        for item in inventory:
+        
+        # Sử dụng enumerate để lấy chính xác vị trí index của từng món đồ
+        for index, item in enumerate(inventory):
+            if len(options) >= 25: 
+                break  # Giới hạn tối đa của một Select Menu trong Discord là 25 options
+                
+            # 1. Đưa các trang bị thường (String) vào danh sách bán theo từng ô độc lập
             if isinstance(item, str):
-                string_counts[item] = string_counts.get(item, 0) + 1
+                if "Fruit" in item: 
+                    continue  # Bỏ qua Size Reroll Fruit để tránh người chơi bán nhầm
+                    
+                cleaned_name = cog_instance.clean_item_name(item)
+                options.append(discord.SelectOption(
+                    label=f"Sell: {cleaned_name}",
+                    description="Click to select | Price: 200 Digibits",
+                    value=f"sell_idx_{index}",  # Định danh bằng INDEX để tạo ra các checkbox riêng biệt
+                    emoji="💰"
+                ))
+                
+            # 2. Đưa các trang bị chỉ số (Dict - Mythic) vào danh sách bán
             elif isinstance(item, dict):
-                dict_items.append(item)
-        # 1. Đưa các trang bị thường (String) vào danh sách bán
-        for gear_str, count in string_counts.items():
-            if len(options) >= 25: break
-            # Bỏ qua Size Reroll Fruit để tránh người chơi bán nhầm vật phẩm tiêu hao quan trọng
-            if "Fruit" in gear_str: continue 
-            cleaned_name = cog_instance.clean_item_name(gear_str)
-            quantity_label = f" (x{count})" if count > 1 else ""  
-            options.append(discord.SelectOption(
-                label=f"Sell: {cleaned_name}{quantity_label}",
-                description="Click to select | Price: 200 Digibits",
-                value=f"sell_str_{gear_str}",
-                emoji="💰"
-            ))
-        # 2. Đưa các trang bị chỉ số (Dict - Mythic) vào danh sách bán
-        for gear_dict in dict_items:
-            if len(options) >= 25: break
-            options.append(discord.SelectOption(
-                label=f"Sell: {gear_dict.get('name', 'Unknown')} ({gear_dict.get('rarity', 'Common')})",
-                description="Click to select | Price: 200 Digibits",
-                value=f"sell_dict_{gear_dict.get('id')}",
-                emoji="👑"
-            ))
+                options.append(discord.SelectOption(
+                    label=f"Sell: {item.get('name', 'Unknown')} ({item.get('rarity', 'Common')})",
+                    description="Click to select | Price: 200 Digibits",
+                    value=f"sell_idx_{index}",  # Định danh bằng INDEX
+                    emoji="👑"
+                ))
+
         if not options:
             options = [discord.SelectOption(label="No equipment available to sell.", value="none")]
             super().__init__(placeholder="💰 Bulk Sell Storage (Empty)...", options=options, disabled=True)
         else:
-            # Cho phép chọn nhiều mục (Tối đa bằng số lượng vật phẩm hiển thị)
+            # max_values tự động co giãn bằng tổng số lượng option đang hiển thị (cho phép đa chọn)
             super().__init__(
                 placeholder="💰 Select multiple items to bulk sell...", 
                 options=options,
                 min_values=1,
                 max_values=len(options)
             )
+
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         if not profile:
-            return await interaction.followup.send("❌ Character data not found.", ephemeral=True) 
+            return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
         inventory = profile.get("inventory", [])
-        selected_items = self.values
+        selected_values = self.values  # Nhận về danh sách các index được tích chọn (ví dụ: ['sell_idx_2', 'sell_idx_5'])
+        
+        # Trích xuất danh sách các index dạng số
+        indices_to_remove = []
+        for val in selected_values:
+            if val.startswith("sell_idx_"):
+                try:
+                    idx = int(val.replace("sell_idx_", ""))
+                    indices_to_remove.append(idx)
+                except ValueError:
+                    continue
+        if not indices_to_remove:
+            return await interaction.followup.send("❌ No valid items were selected for sale.", ephemeral=True)
+        # ⚠️ QUAN TRỌNG: Sắp xếp các chỉ mục index theo thứ tự GIẢM DẦN (từ lớn đến nhỏ)
+        # Nếu xóa từ đầu mảng (index nhỏ trước), các vật phẩm phía sau sẽ bị đẩy dịch vị trí lên, gây xóa nhầm đồ!
+        indices_to_remove.sort(reverse=True)
         sold_count = 0
-        # Xử lý xóa vật phẩm được chọn ra khỏi inventory
-        for item_val in selected_items:
-            if item_val.startswith("sell_str_"):
-                target_str = item_val.replace("sell_str_", "")
-                if target_str in inventory:
-                    inventory.remove(target_str)
-                    sold_count += 1
-            elif item_val.startswith("sell_dict_"):
-                target_id = item_val.replace("sell_dict_", "")
-                for item in inventory:
-                    if isinstance(item, dict) and item.get("id") == target_id:
-                        inventory.remove(item)
-                        sold_count += 1
-                        break
+        # Tiến hành bốc tách và xóa đồ ra khỏi inventory theo vị trí index ngược từ dưới lên
+        for idx in indices_to_remove:
+            if 0 <= idx < len(inventory):
+                inventory.pop(idx)
+                sold_count += 1
         if sold_count == 0:
             return await interaction.followup.send("❌ No valid items were processed for sale.", ephemeral=True)
-        # Cộng tiền tài sản: 200 Digibit mỗi món
+        # Tính toán tiền tệ và cập nhật Database tài sản
         earned_bits = sold_count * 200
         await rpg_profiles_col.update_one(
             {"user_id": user_id},
             {"$set": {"inventory": inventory}, "$inc": {"digibit": float(earned_bits)}}
         )
-        # Gửi thông báo thành công cho người dùng
+
+        # Gửi tin nhắn phản hồi thành công bí mật (ephemeral)
         await interaction.followup.send(f"💰 **Bulk sale successful!** Sold {sold_count} items and earned **{earned_bits:.2f} Digibits**!", ephemeral=True)
+
         # ==========================================
         # [AUTO REFRESH] Cập nhật giao diện Chợ/Kho đồ lập tức
         # ==========================================
