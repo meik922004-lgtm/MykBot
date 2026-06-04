@@ -720,6 +720,8 @@ class RPGSystemCog(commands.Cog):
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
         self.live_boss_update_loop.cancel()
+        self.trigger_chain_boss_respawn.start()
+        
         
 
     # ========================================================================
@@ -1054,9 +1056,9 @@ class RPGSystemCog(commands.Cog):
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
 
         # 🛠️ CHỨC NĂNG 5: Sửa cơ chế phản đòn đánh tay của Boss tăng lên cố định thành 10% sát thương gánh chịu
-        if random.random() < 0.1 and current_hp > 0:
-            boss_dmg = int(final_dmg * 0.02)
-            if boss_dmg < 200: boss_dmg = random.randint(200, 350) 
+        if random.random() < 0.5 and current_hp > 0:
+            boss_dmg = int(final_dmg * 0.03)
+            if boss_dmg < 200: boss_dmg = random.randint(300, 600) 
             
             if player.get("is_protecting"):
                 boss_dmg = int(boss_dmg * 0.2)
