@@ -990,15 +990,16 @@ class RPGSystemCog(commands.Cog):
         self.active_solo_battles = {}
         self.solo_boss_pool = {
         "Susanoomon": {
-            "name": "Susanoomon (Ancient spirit",
+            "name": "Susanoomon (Ancient spirit)",
             "attr": "Vaccine",
             "hp_mult": 8.0,
             "atk_mult": 0.12,
             "def_mult": 1.2,
+            "image": "https://wikimon.net/images/8/87/Susanoomon.jpg",
             "rewards": {
-                "digibits": (1000, 1400),     # Thấp nhất trong bể (mốc 500)
-                "hatch_cores": (150, 180),  # Thấp nhất trong bể (mốc 100)
-                "size_fruits": (3, 3)       # Rớt cố định 3 quả
+                "digibits": (1000, 1400),
+                "hatch_cores": (150, 180),
+                "size_fruits": (3, 3)
             }
         },
         "Megidramon": {
@@ -1007,10 +1008,11 @@ class RPGSystemCog(commands.Cog):
             "hp_mult": 8.5,
             "atk_mult": 1,
             "def_mult": 1.2,
+            "image": "https://wikimon.net/images/c/cd/Megidramon.jpg",
             "rewards": {
                 "digibits": (1000, 1400),
                 "hatch_cores": (150, 180),
-                "size_fruits": (3, 4)       # Rớt từ 3 đến 4 quả
+                "size_fruits": (3, 4)
             }
         },
         "metalgarurumon_boss": {
@@ -1019,6 +1021,7 @@ class RPGSystemCog(commands.Cog):
             "hp_mult": 10.2,
             "atk_mult": 0.16,
             "def_mult": 1,
+            "image": "https://wikimon.net/images/7/77/Metalgarurumon.jpg",
             "rewards": {
                 "digibits": (1000, 1400),
                 "hatch_cores": (150, 180),
@@ -1031,6 +1034,7 @@ class RPGSystemCog(commands.Cog):
             "hp_mult": 10.8,
             "atk_mult": 0.14,
             "def_mult": 0.9,
+            "image": "https://wikimon.net/images/c/c8/Wargreymon.jpg",
             "rewards": {
                 "digibits": (1000, 1400),
                 "hatch_cores": (150, 180),
@@ -1043,22 +1047,24 @@ class RPGSystemCog(commands.Cog):
             "hp_mult": 11.6,
             "atk_mult": 0.15,
             "def_mult": 0.7,
+            "image": "https://wikimon.net/images/6/62/Jesmon_gx.jpg",
             "rewards": {
                 "digibits": (1000, 1400),
                 "hatch_cores": (150, 180),
-                "size_fruits": (4, 4)       # Rớt cố định 4 quả
+                "size_fruits": (4, 4)
             }
         },
         "Dianamon": {
             "name": "Dianamon (Omlympos XII)",
-            "attr": "DA",
+            "attr": "Data",
             "hp_mult": 10.4,
             "atk_mult": 0.16,
             "def_mult": 1,
+            "image": "https://wikimon.net/images/3/36/Dianamon.jpg",
             "rewards": {
                 "digibits": (1000, 1400),
                 "hatch_cores": (170, 200),
-                "size_fruits": (4, 5)       # Rớt từ 4 đến 5 quả
+                "size_fruits": (4, 5)
             }
         },
         "Beelzemon": {
@@ -1067,6 +1073,7 @@ class RPGSystemCog(commands.Cog):
             "hp_mult": 9.0,
             "atk_mult": 0.17,
             "def_mult": 0.6,
+            "image": "https://wikimon.net/images/c/c3/Beelzebumon_blast.jpg",
             "rewards": {
                 "digibits": (1000, 1500),
                 "hatch_cores": (180, 220),
@@ -1074,11 +1081,12 @@ class RPGSystemCog(commands.Cog):
             }
         },
         "Bagramon": {
-            "name": "Bagramon(Sage of Death)",
+            "name": "Bagramon (Sage of Death)",
             "attr": "Virus",
             "hp_mult": 10.5,
             "atk_mult": 0.13,
             "def_mult": 1.2,
+            "image": "https://wikimon.net/images/0/0f/Bagramon.jpg",
             "rewards": {
                 "digibits": (1150, 1600),
                 "hatch_cores": (190, 230),
@@ -1091,26 +1099,27 @@ class RPGSystemCog(commands.Cog):
             "hp_mult": 10.0,
             "atk_mult": 0.16,
             "def_mult": 0.9,
+            "image": "https://wikimon.net/images/3/34/Gracenovamon.jpg",
             "rewards": {
                 "digibits": (1300, 1800),
                 "hatch_cores": (200, 250),
-                "size_fruits": (7, 7)       # Rớt cố định 5 quả
+                "size_fruits": (7, 7)
             }
         },
         "Zeed Milleniummon": {
             "name": "Zeed Milleniummon (Dimension Destroyer)",
             "attr": "Vaccine",
-            "hp_mult": 12.5,              # Boss trâu nhất, khó đánh nhất
+            "hp_mult": 12.5,
             "atk_mult": 0.18,
             "def_mult": 1.5,
+            "image": "https://wikimon.net/images/8/86/Zeedmillenniumon.jpg",
             "rewards": {
-                "digibits": (1500, 2000),    # Cao nhất trong bể (mốc 1000)
-                "hatch_cores": (300,500 ),  # Cao nhất trong bể (mốc 200)
+                "digibits": (1500, 2000),
+                "hatch_cores": (300, 500),
                 "size_fruits": (10, 10)
             }
         }
     }
-        
 
         
 
@@ -2726,7 +2735,8 @@ class RPGSystemCog(commands.Cog):
         digimon = self.get_active_digimon(player)
         
         if not player or not digimon:
-            return await interaction.edit_original_response(content="❌ You do not have an RPG profile or partner Digimon set.", embed=None, view=None)
+            # 🟢 Sửa lại thông báo lỗi công khai
+            return await interaction.followup.send("❌ You do not have an RPG profile or partner Digimon set.", ephemeral=True)
         if player.get("current_hp", 0) <= 0:
             return await interaction.edit_original_response(content="☠️ Your Digimon is exhausted. Please heal before entering the battle.", embed=None, view=None)
 
@@ -2753,6 +2763,7 @@ class RPGSystemCog(commands.Cog):
             "boss_attr": boss_template["attr"],
             "heal_cd": 0,
             "boss_def": boss_def,
+            "boss_image": boss_template.get("image", ""), # 🖼️ LƯU ẢNH BOSS VÀO ĐÂY
             "boss_heal_used": False,
             "player_debuff": None,   # 🔥 Trạng thái hiện tại (stun/blind)
             "debuff_duration": 0,
@@ -2765,8 +2776,10 @@ class RPGSystemCog(commands.Cog):
         embed = self.generate_solo_embed(user_id)
         
         # Cập nhật tin nhắn hiện tại thành trận đấu mới
-        await interaction.edit_original_response(content=None, embed=embed, view=view)
-
+        try:
+            await interaction.edit_original_response(content=None, embed=embed, view=view)
+        except discord.errors.NotFound:
+            await interaction.followup.send(embed=embed, view=view)
     def generate_solo_embed(self, user_id: int) -> discord.Embed:
         battle = self.active_solo_battles[user_id]
     
@@ -2778,10 +2791,16 @@ class RPGSystemCog(commands.Cog):
         b_bar = "🟥" * int(b_percent * 10) + "⬛" * (10 - int(b_percent * 10))
         
         embed = discord.Embed(
-            title=f"🏟️ Soro Dungeon {battle['turn']}",
-            color=discord.Color.dark_blue()
+            title=f"🏟️ SOLO ARENA - TURN {battle['turn']}",
+            description="🟢 **YOUR TURN!** Please choose an action below.",
+            color=discord.Color.dark_red()
         )
         
+        # 🖼️ HIỂN THỊ HÌNH ẢNH CỦA BOSS LÊN GÓC PHẢI GIAO DIỆN
+        if battle.get("boss_image"):
+            embed.set_thumbnail(url=battle["boss_image"])
+        if battle["player_hp"] <= 0 or battle["boss_hp"] <= 0:
+            embed.description = "🏁 **BATTLE ENDED**"
         embed.add_field(
             name=f"👤 You (HP: {battle['player_hp']:,} / {battle['player_max_hp']:,})",
             value=f"{p_bar} ({p_percent * 100:.1f}%)",
@@ -2805,7 +2824,7 @@ class RPGSystemCog(commands.Cog):
 
     @app_commands.command(name="solo_dungeon", description="Challenger with Turn-base mode")
     async def solo_boss(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer
         user_id = interaction.user.id
         
         if user_id in self.active_solo_battles:
