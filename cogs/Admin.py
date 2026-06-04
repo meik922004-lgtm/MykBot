@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 from Database import db
-news_col = db["server_configs"]
+news_channel_col = db["server_configs"]
 
 
 # ==========================================
@@ -195,17 +195,13 @@ class BroadcastModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         # Defer tại đây vì quá trình gửi tin tới nhiều server sẽ mất thời gian
         await interaction.response.defer(ephemeral=True)
-        
         # Lấy nội dung trực tiếp từ Modal (đã có sẵn các dấu xuống dòng thực tế)
         message = self.message_input.value
-        
         # Lấy toàn bộ danh sách channel từ Database
-        cursor = news_col.find({})
+        cursor = news_channel_col.find({})
         channels_data = await cursor.to_list(length=None) 
-        
         success_count = 0
         fail_count = 0
-
         # Xử lý tiêu đề ngày tháng theo thiết kế
         utc_now = datetime.now(timezone.utc)
         day = utc_now.day
@@ -279,7 +275,7 @@ class NewsSystemCog(commands.Cog):
         channel_id = channel.id
 
         # 2. Lưu vào Database
-        await news_col.update_one(
+        await news_channel_col.update_one(
             {"guild_id": guild_id},
             {"$set": {"channel_id": channel_id}},
             upsert=True

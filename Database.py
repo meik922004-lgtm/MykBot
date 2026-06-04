@@ -14,7 +14,6 @@ client = motor.motor_asyncio.AsyncIOMotorClient(
 )
 
 db = client.database0
-
 # Thêm 3 dòng này vào cuối file
 players_col = db.players
 parties_col = db.parties
@@ -26,3 +25,4 @@ world_boss_col = db["world_boss"]
 boss_channels_col = db["boss_channels"]
 cross_messages_col = db["cross_chat_logs"]
 news_col = rpg_profiles_col.database["server_configs"]
+news_channel_col = db["server_configs"]
