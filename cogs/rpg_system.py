@@ -1054,7 +1054,7 @@ class RPGSystemCog(commands.Cog):
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
 
         # 🛠️ CHỨC NĂNG 5: Sửa cơ chế phản đòn đánh tay của Boss tăng lên cố định thành 10% sát thương gánh chịu
-        if random.random() < 0.30 and current_hp > 0:
+        if random.random() < 0.1 and current_hp > 0:
             boss_dmg = int(final_dmg * 0.02)
             if boss_dmg < 200: boss_dmg = random.randint(200, 350) 
             
@@ -1123,12 +1123,12 @@ class RPGSystemCog(commands.Cog):
             dmg_percent = dmg / total_hp
             
             # --- PHẦN THƯỞNG CHẮC CHẮN 100% CỐ ĐỊNH CHO TẤT CẢ ---
-            base_orb = random.randint(10, 20)
-            base_digibit = 100
+            base_orb = random.randint(20, 50)
+            base_digibit = 300
             base_myk = 1
             
             # 🌟 CHỨC NĂNG 1: Thêm 10 Hatch Core vào quà Base cố định (100% tỉ lệ nhận)
-            base_hatch_core = 10
+            base_hatch_core = 25
             
             # 🌟 CHỨC NĂNG 2: Cộng thêm 1-10 Hatch Core dựa vào % đóng góp sát thương (dmg_percent)
             contribution_hatch_core = max(1, min(10, int(dmg_percent * 10)))
@@ -1206,8 +1206,33 @@ class RPGSystemCog(commands.Cog):
         config = await world_boss_col.find_one({"type": "spawn_config"})
         last_round_damage = config.get("last_round_damage", 60000) if config else 60000
 
-        boss_names_pool = ["Omnimon Zwart", "Alphamon Ouryuken", "Beelzemon X", "Gallantmon X", "Mastemon", "Lucemon Larva", "Susanoomon"]
-        random_name = f"Vanguard {random.choice(boss_names_pool)} [Chain Raid]"
+        chain_boss_roster = [
+            # --- Siêu Boss Hệ Vaccine ---
+            {"name": "Omnimon (Royal Knight)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/omegamon.jpg"},
+            {"name": "Alphamon Ouryuken", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/alphamon_ouryuken.jpg"},
+            {"name": "Gallantmon X-Antibody", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/dukemon_x.jpg"},
+            {"name": "Susanoomon (Ancient)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/susanoomon.jpg"},
+            {"name": "Jesmon GX", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/jesmon_gx.jpg"},
+            {"name": "Imperialdramon Paladin Mode", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/imperialdramon_pm.jpg"},
+
+            # --- Siêu Boss Hệ Virus ---
+            {"name": "Omnimon Zwart D (Defeat)", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/omegamon_zwart_d.jpg"},
+            {"name": "Beelzemon X-Antibody", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/beelzebumon_x.jpg"},
+            {"name": "Lucemon Shadowlord Mode", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/lucemon_sm.jpg"},
+            {"name": "Belphemon Rage Mode", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/belphemon_rm.jpg"},
+            {"name": "ZeedMillenniummon", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/zeedmillenniumon.jpg"},
+
+            # --- Siêu Boss Hệ Data & Unknown ---
+            {"name": "Examon (Dragon Emperor)", "attr": "Data", "img": "https://digimon.net/cimages/digimon/examon.jpg"},
+            {"name": "Mastemon (Chaos Angel)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/mastemon.jpg"},
+            {"name": "Armageddemon (Catastrophe)", "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/armagemon.jpg"},
+            {"name": "Ogudomon (Avatar of Sin)", "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/ogudomon.jpg"}
+        ]
+        
+        # Chọn ngẫu nhiên một thực thể trong danh sách
+        chosen_chain_boss = random.choice(chain_boss_roster)
+        full_boss_name = f"⚠️ {chosen_chain_boss['name']} [CHAIN RAID]"
+        random_name = f"Vanguard {random.choice(chosen_chain_boss)} [Chain Raid]"
         
         # Scale HP theo hệ số ngẫu nhiên từ 1.5x đến 2.5x tổng lượng damage đợt trước nhận được
         calculated_hp = int(last_round_damage * random.uniform(0, 0.1))
@@ -1224,7 +1249,7 @@ class RPGSystemCog(commands.Cog):
         
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
-)
+
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
