@@ -38,9 +38,9 @@ NEW_MEGA_POOL = [
 HIGH_TIER_GEARS = [
     {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
     {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
-    {"name": "Ultimate Omegamon Vice", "type": "vice", "atk": 400, "hp": 3000, "rarity": "Mythic"},
+    {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
-    {"name": "Miracle Origin Ring", "type": "vice", "atk": 350, "def": 350, "rarity": "Mythic"}
+    {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}
 ]
 
 # Cache cho hệ thống Auto Attack tối ưu hóa (Yêu cầu 7)
@@ -1246,8 +1246,12 @@ class RPGSystemCog(commands.Cog):
         if not item or item == "None":
             return "None"
         if isinstance(item, dict):
-            # Nếu là đồ Mythic, lấy thuộc tính name của nó ra hiển thị
-            return item.get("name", "Unknown Item")
+            name = item.get("name", "Unknown Item")
+            rarity = item.get("rarity", "Mythic")
+            # Trả về định dạng đẹp: **Omega Artifact Sword** [Mythic]
+            return f"**{name}** [{rarity}]"
+            
+        # Nếu là đồ cũ (dạng Chuỗi chữ thông thường)
         return str(item)
     
     def get_total_stats(self, profile: dict) -> dict:
