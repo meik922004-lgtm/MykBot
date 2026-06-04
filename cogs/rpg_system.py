@@ -1541,7 +1541,7 @@ class RPGSystemCog(commands.Cog):
         await rpg_profiles_col.update_one(
             {"user_id": user_id},
             {
-                "$inc": {"digibit": 5000, "hatch_core": 250},
+                "$inc": {"digibit": 5000, "hatch_core": 500},
                 "$set": {"last_daily_check": today, "daily_streak": new_streak}
             }
         )
@@ -1549,7 +1549,7 @@ class RPGSystemCog(commands.Cog):
         await interaction.followup.send(
             f"🎉 **Attendance check successful.!**\n"
             f"📅 Congratulations on your attendance! **{new_streak}** day!\n"
-            f"🎁 Rewards received: **+1,000 Digibits** and **+100 Hatch Cores**!",
+            f"🎁 Rewards received: **+5,000 Digibits** and **+500 Hatch Cores**!",
             ephemeral=True
         )
         # Làm mới lại UI Profile ngay lập tức
