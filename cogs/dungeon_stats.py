@@ -60,9 +60,9 @@ class MyGearWizard(discord.ui.View):
             options = [
                 discord.SelectOption(label="UTC-8", description="UTC-8", value="-8"),
                 discord.SelectOption(label="UTC-5", description="UTC-5", value="-5"),
-                discord.SelectOption(label="UTC+4", description="UTC-8", value="4"),
+                discord.SelectOption(label="UTC+4", description="UTC+4", value="4"),
                 discord.SelectOption(label="UTC-3", description="UTC-3", value="-3"),
-                discord.SelectOption(label="UTC+2", description="UTC-8", value="2"),
+                discord.SelectOption(label="UTC+2", description="UTC+2", value="2"),
                 discord.SelectOption(label="UTC+0", description="UTC+0", value="0"),
                 discord.SelectOption(label="UTC+1", description="UTC+1", value="1"),
                 discord.SelectOption(label="UTC+3", description="UTC+3", value="3"),
