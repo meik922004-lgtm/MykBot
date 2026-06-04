@@ -2066,52 +2066,51 @@ class RPGSystemCog(commands.Cog):
     # ========================================================================
     # MARKET COMMANDS & HANDLERS
     # ========================================================================
-        async def initialize_market_mega_products(self):
-            """Khởi tạo Market với dữ liệu trực tiếp từ NEW_MEGA_POOL, khắc phục lỗi rỗng Skill và Attr"""
+    async def initialize_market_mega_products(self):
+        """Khởi tạo Market với dữ liệu trực tiếp từ NEW_MEGA_POOL, khắc phục lỗi rỗng Skill và Attr"""
 
-            for mega in NEW_MEGA_POOL:
-                mega_name = mega["name"]
+        for mega in NEW_MEGA_POOL:
+            mega_name = mega["name"]
                 
                 # Lấy toàn bộ chỉ số trực tiếp từ Dictionary trong NEW_MEGA_POOL
-                base_hp = int(mega.get("base_hp"))
-                base_atk = int(mega.get("base_atk"))
-                attr = mega.get("attr", "Unknown")
-                img = mega.get("img")
+            base_hp = int(mega.get("base_hp"))
+            base_atk = int(mega.get("base_atk"))
+            attr = mega.get("attr", "Unknown")
+            img = mega.get("img")
                 
                 # Khởi tạo Object skill chuẩn, đề phòng trường hợp nhập thiếu sẽ có fallback
-                fallback_skill = {"name": "Basic Strike", "dmg_mult": 1.5, "chance": 0.1}
-                skill = mega.get("skill", fallback_skill)
+            fallback_skill = {"name": "Basic Strike", "dmg_mult": 1.5, "chance": 0.1}
+            skill = mega.get("skill", fallback_skill)
 
-                await market_col.update_one(
-                    {"item_name": mega_name, "is_system": True},
-                    {"$setOnInsert": {
-                        "listing_id": str(uuid.uuid4())[:8],
-                        "item_name": mega_name,
-                        "price": float(mega["base_price"]),
-                        "seller_name": "System Market",
-                        "seller_id": "system",
-                        "is_system": True,
-                        "currency": "orb",
-                        "listing_type": "digimon",  
-                        "item_data": {
-                            "id": str(uuid.uuid4()),
-                            "name": mega_name,
-                            "stage": "Mega",
-                            "attr": attr,
-                            "hp": base_hp,
-                            "atk": base_atk,
-                            "current_hp": base_hp,
-                            "size": 1.0,  # Nên để size 1.0 lúc mua, tránh việc scale chỉ số ảo quá cao
-                            "img": img,
-                            "skill": skill,  # Sẽ lưu đúng định dạng Object (Dictionary)
-                            "trained_hp": 0,
-                            "trained_atk": 0,
-                            "obtained_at": int(time.time())
-                        },
-                        "created_at": int(time.time())
-                    }},
-                    upsert=True 
-                )
+            await market_col.update_one(
+                {"item_name": mega_name, "is_system": True},
+                {"$setOnInsert": {
+                    "listing_id": str(uuid.uuid4())[:8],
+                    "item_name": mega_name,
+                    "price": float(mega["base_price"]),
+                    "seller_name": "System Market",
+                    "seller_id": "system",
+                    "is_system": True,
+                    "currency": "orb",
+                    "listing_type": "digimon",  
+                    "item_data": {
+                        "id": str(uuid.uuid4()),
+                        "name": mega_name,
+                        "stage": "Mega",
+                        "attr": attr,
+                        "hp": base_hp,
+                        "atk": base_atk,
+                        "current_hp": base_hp,
+                        "size": 1.0,  # Nên để size 1.0 lúc mua, tránh việc scale chỉ số ảo quá cao
+                        "img": img,
+                        "skill": skill,  # Sẽ lưu đúng định dạng Object (Dictionary)
+                        "trained_hp": 0,
+                        "trained_atk": 0,
+                        "obtained_at": int(time.time())
+                    },
+                    "created_at": int(time.time())
+                }},
+                upsert=True )
     async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
         await interaction.response.defer(ephemeral=True)
         
