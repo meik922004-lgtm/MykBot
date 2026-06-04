@@ -1234,7 +1234,90 @@ class RPGSystemCog(commands.Cog):
             self.auto_attack_cache[user_id] = 0
             await interaction.followup.send("🤖 **Auto-Attack ACTIVATED!** Automatic loop that continuously deals damage..", ephemeral=True)
             self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction))
+    async def auto_attack_loop(self, user_id: int, user_name: str, interaction: discord.Interaction):
+        HITS_PER_INTERVAL = 2
+        
+        while user_id in self.auto_attackers:
+            await asyncio.sleep(5)  # Trả về sleep 5s giữ nhịp độ an toàn cho database
+            if user_id not in self.auto_attackers: break
 
+            player = await rpg_profiles_col.find_one({"user_id": user_id})
+            
+            # Vòng lặp CHỈ dừng khi người chơi hết máu (Fainted)
+            if not player or player.get("current_hp", 0) <= 0:
+                self.auto_attackers.discard(user_id)
+                self.auto_attack_cache.pop(user_id, None)
+                try:
+                    await interaction.followup.send("❌ **Your Digimon has fainted!** Auto-Attack disabled.", ephemeral=True)
+                except (discord.NotFound, discord.HTTPException): pass
+                break
+
+            party = await parties_col.find_one({"members.user_id": user_id})
+            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
+
+            # 🔄 NẾU KHÔNG CÓ BOSS: Giữ trạng thái chạy ngầm, đợi boss spawn
+            if not boss:
+                continue
+
+            digimon = self.get_active_digimon(player)
+            stats = self.get_total_stats(player)
+            attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
+            digi_size = digimon.get("size", 1.0)
+
+            batch_dmg = 0
+            for _ in range(HITS_PER_INTERVAL):
+                raw_dmg = stats["atk"] + random.randint(-5, 10)
+                if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
+                if "skill" in digimon and random.random() < digimon["skill"]["chance"]: raw_dmg *= digimon["skill"]["dmg_mult"]
+                
+                hit_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
+                batch_dmg += hit_dmg
+
+            self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
+            dmg_to_sync = self.auto_attack_cache[user_id]
+
+            result = await world_boss_col.find_one_and_update(
+                {"_id": boss["_id"], "is_active": True}, 
+                {
+                    "$inc": {"current_hp": -dmg_to_sync, "hp": -dmg_to_sync, f"damage_log.{str(user_id)}": dmg_to_sync}, 
+                    "$addToSet": {"participants": user_id},
+                    "$set": {"last_attacked_at": datetime.utcnow()} # 🔥 Làm mới thời gian đánh để không bị reset 5 phút
+                },
+                return_document=pymongo.ReturnDocument.AFTER
+            )
+            
+            if not result:
+                self.auto_attack_cache[user_id] = 0
+                continue
+                
+            self.auto_attack_cache[user_id] = 0 
+            current_hp = result.get('current_hp', result.get('hp', 0))
+
+            # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI: 10% tỷ lệ, cố định từ 300 -> 500 sát thương
+            if current_hp > 0 and random.random() < 0.10:
+                boss_dmg = random.randint(300, 750)
+                
+                if player.get("is_protecting"):
+                    boss_dmg = int(boss_dmg * 0.2)
+                    await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
+                
+                new_hp = max(0, player.get("current_hp", 0) - boss_dmg)
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
+                
+                if new_hp == 0:
+                    try:
+                        await interaction.followup.send(f"💀 **WARNING:** Defeated by counterattack! Auto-Attack stopped.", ephemeral=True)
+                    except (discord.NotFound, discord.HTTPException): pass
+                    self.auto_attackers.discard(user_id)
+                    break
+
+            # ⚔️ KHI BOSS CHẾT
+            if current_hp <= 0:
+                await self.distribute_boss_loot(result)
+                try:
+                    await interaction.followup.send(f"🎉 **{boss['name']} defeated!** Auto-attack is searching for the next target...", ephemeral=True)
+                except (discord.NotFound, discord.HTTPException): pass
+                continue
     # 🛠️ CHỨC NĂNG 3 & 5: Tối ưu hóa Auto-Attack chạy liên tục cực nhanh cho đến khi hết trận hoặc đạt giới hạn token Discord (15p)
     async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
         party = await parties_col.find_one({"members.user_id": user_id})
