@@ -60,7 +60,9 @@ class MyGearWizard(discord.ui.View):
             options = [
                 discord.SelectOption(label="UTC-8", description="UTC-8", value="-8"),
                 discord.SelectOption(label="UTC-5", description="UTC-5", value="-5"),
+                discord.SelectOption(label="UTC+4", description="UTC-8", value="4"),
                 discord.SelectOption(label="UTC-3", description="UTC-3", value="-3"),
+                discord.SelectOption(label="UTC+2", description="UTC-8", value="2"),
                 discord.SelectOption(label="UTC+0", description="UTC+0", value="0"),
                 discord.SelectOption(label="UTC+1", description="UTC+1", value="1"),
                 discord.SelectOption(label="UTC+3", description="UTC+3", value="3"),
@@ -201,7 +203,7 @@ class DungeonStats(commands.Cog):
 
     @app_commands.command(name="set_timezone", description="🌍 Set your local timezone")
     async def set_timezone(self, interaction: discord.Interaction):
-        options = [discord.SelectOption(label=f"UTC{'+' if i>0 else ''}{i}", value=str(i)) for i in [-8, -5, -3, 0, 1, 2, 3, 7, 8, 9, 10]]
+        options = [discord.SelectOption(label=f"UTC{'+' if i>0 else ''}{i}", value=str(i)) for i in [-8, -5, -3, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]
         select = discord.ui.Select(placeholder="🌍 Select your region / timezone...", options=options)
         
         async def tz_callback(inter: discord.Interaction):
