@@ -1246,6 +1246,28 @@ class RPGSystemCog(commands.Cog):
         
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
+        if old_messages:
+            async def instant_update():
+                async with aiohttp.ClientSession() as session:
+                    # Tạo Embed của Boss mới ngay tại đây
+                    embed = self.generate_boss_embed(new_boss) 
+                    for msg_info in old_messages:
+                        try:
+                            if msg_info.get("is_interaction"):
+                                channel = self.bot.get_channel(msg_info["channel_id"])
+                                if channel:
+                                    msg = channel.get_partial_message(msg_info["message_id"])
+                                    await msg.edit(embed=embed, view=CombatView(self))
+                            else:
+                                webhook_url = msg_info.get("webhook_url")
+                                if webhook_url:
+                                    webhook = discord.Webhook.from_url(webhook_url, session=session)
+                                    await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
+                        except Exception: 
+                            pass # Bỏ qua lỗi nếu tin nhắn bị xóa
+            
+            # Chạy background task để không làm nghẽn hàm xử lý chính
+            self.bot.loop.create_task(instant_update())
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
