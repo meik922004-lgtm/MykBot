@@ -809,7 +809,6 @@ class RPGSystemCog(commands.Cog):
         new_boss["_id"] = result.inserted_id
         
         await interaction.response.send_message(f"⚔️ Spawned Boss **{name}**!", ephemeral=True)
-        await self.broadcast_initial_boss(new_boss)
     async def handle_manual_attack(self, interaction: discord.Interaction):
         # Tránh lỗi "This interaction failed" do Bot phản hồi chậm
         await interaction.response.defer(ephemeral=True) 
@@ -883,8 +882,6 @@ class RPGSystemCog(commands.Cog):
         
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
-       
-        await self.broadcast_initial_boss(new_boss)
 
     @app_commands.command(name="combat", description="Display Boss Combat Interface")
     async def combat_cmd(self, interaction: discord.Interaction):
@@ -1227,8 +1224,7 @@ class RPGSystemCog(commands.Cog):
         
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
-       
-        await self.broadcast_initial_boss(new_boss)
+)
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
