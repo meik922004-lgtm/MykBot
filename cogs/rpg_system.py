@@ -26,7 +26,7 @@ NEW_MEGA_POOL = [
     {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "based_atk": 1270, "based_hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
     {"name": "MirageGaogamon BM", "stage": "Mega", "attr": "Data", "based_atk": 1200, "based_hp": 14800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/miragegaogamon_bm.jpg", "skill": {"name": "Full Moon Meteor Impact", "dmg_mult": 1.7, "chance": 0.18}},
     {"name": "Rosemon BM", "stage": "Mega", "attr": "Data", "atk": 1100, "based_hp": 14200, "base_price": 600, "img": "https://digimon.net/cimages/digimon/rosemon_bm.jpg", "skill": {"name": "Aguichant Lèvres", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "based_atkatk": 1255, "based_hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "based_atk": 1255, "based_hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
     {"name": "BlackWarGreymon", "stage": "Mega", "attr": "Virus", "based_atk": 1250, "based_hp": 16500, "base_price": 600,  "img": "https://digimon.net/cimages/digimon/blackwargreymon.jpg", "skill": {"name": "Terra Destroyer", "dmg_mult": 1.8, "chance": 0.15}},
     {"name": "MetalSeadramon", "stage": "Mega", "attr": "Data", "based_atk": 1140, "based_hp": 15800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg", "skill": {"name": "River of Power", "dmg_mult": 1.7, "chance": 0.18}},
     {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "based_atk": 1230, "based_hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
@@ -895,6 +895,9 @@ class RPGSystemCog(commands.Cog):
             digimon = self.get_active_digimon(player)
             stats = self.get_total_stats(player)
             attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
+            
+            # 1. 🛠️ CHỈNH SỬA: Lấy kích thước (Size) của Digimon người chơi
+            digi_size = digimon.get("size", 1.0)
 
             # Tính toán sát thương tích lũy
             batch_dmg = 0
@@ -902,7 +905,10 @@ class RPGSystemCog(commands.Cog):
                 raw_dmg = stats["atk"] + random.randint(-5, 10)
                 if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
                 if "skill" in digimon and random.random() < digimon["skill"]["chance"]: raw_dmg *= digimon["skill"]["dmg_mult"]
-                batch_dmg += int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
+                
+                # 2. 🛠️ CHỈNH SỬA: Nhân thêm hệ số size của Digimon vào sát thương mỗi lượt đánh
+                hit_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
+                batch_dmg += hit_dmg
 
             self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
             dmg_to_sync = self.auto_attack_cache[user_id]
@@ -926,7 +932,11 @@ class RPGSystemCog(commands.Cog):
 
             # Logic phản đòn của Boss
             if current_hp > 0 and random.random() < 0.30:
-                boss_dmg = random.randint(250, 600)
+                # 3. 🛠️ CHỈNH SỬA: Tính toán phản đòn bằng 10% - 15% lượng damage Boss vừa nhận phải
+                boss_dmg = int(dmg_to_sync * random.uniform(0.10, 0.15))
+                # Giới hạn sát thương tối thiểu (Ví dụ: ít nhất là 200 dmg) để tránh trường hợp phản ra 0 dmg
+                if boss_dmg < 200: boss_dmg = random.randint(200, 350)
+                
                 if player.get("is_protecting"):
                     boss_dmg = int(boss_dmg * 0.2)
                     await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
@@ -993,6 +1003,10 @@ class RPGSystemCog(commands.Cog):
         if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Fainted!** Please Heal.", True)
 
         stats = self.get_total_stats(player)
+        
+        # 4. 🛠️ CHỈNH SỬA: Lấy kích thước (Size) của Digimon khi đánh thủ công
+        digi_size = digimon.get("size", 1.0)
+        
         raw_dmg = stats["atk"] + random.randint(-5, 10)
         if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
         
@@ -1002,7 +1016,9 @@ class RPGSystemCog(commands.Cog):
             skill_msg = f"\n🌟 **SKILL!** **{digimon['skill']['name']}**!"
             
         attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
-        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0))
+        
+        # 5. 🛠️ CHỈNH SỬA: Áp dụng hệ số kích thước (size) vào sát thương cuối cùng
+        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
         
         result = await world_boss_col.find_one_and_update(
             {"_id": boss["_id"], "is_active": True}, 
@@ -1015,14 +1031,18 @@ class RPGSystemCog(commands.Cog):
         current_hp = result.get('current_hp', result.get('hp', 0))
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
 
+        # Cơ chế phản đòn của Boss
         if random.random() < 0.30 and current_hp > 0:
-            boss_dmg = random.randint(250, 600)
+            # 6. 🛠️ CHỈNH SỬA: Phản đòn dựa theo 10% - 15% sát thương gánh chịu
+            boss_dmg = int(final_dmg * random.uniform(0.10, 0.15))
+            if boss_dmg < 200: boss_dmg = random.randint(200, 350) # Sát thương tối thiểu phòng hộ
+            
             if player.get("is_protecting"):
                 boss_dmg = int(boss_dmg * 0.2)
                 msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
                 await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
             else:
-                msg += f"\n🚨 <@{user_id}> **BOSS COUNTERED** for **{boss_dmg} DMG**!"
+                msg += f"\n🚨 <@{user_id}> **BOSS COUNTERED** (Reflected {int(boss_dmg/final_dmg*100)}%) for **{boss_dmg} DMG**!"
                 
             new_hp = max(0, player["current_hp"] - boss_dmg)
             await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
