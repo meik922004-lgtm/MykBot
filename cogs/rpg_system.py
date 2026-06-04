@@ -23,16 +23,16 @@ OWNER_IDS = [1283689737567211581]
 # ========================================================================
 
 NEW_MEGA_POOL = [
-    {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "based_atk": 1090, "based_hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
-    {"name": "MirageGaogamon BM", "stage": "Mega", "attr": "Data", "based_atk": 990, "based_hp": 14800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/miragegaogamon_bm.jpg", "skill": {"name": "Full Moon Meteor Impact", "dmg_mult": 1.7, "chance": 0.18}},
+    {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "based_atk": 1270, "based_hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
+    {"name": "MirageGaogamon BM", "stage": "Mega", "attr": "Data", "based_atk": 1200, "based_hp": 14800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/miragegaogamon_bm.jpg", "skill": {"name": "Full Moon Meteor Impact", "dmg_mult": 1.7, "chance": 0.18}},
     {"name": "Rosemon BM", "stage": "Mega", "attr": "Data", "atk": 1100, "based_hp": 14200, "base_price": 600, "img": "https://digimon.net/cimages/digimon/rosemon_bm.jpg", "skill": {"name": "Aguichant Lèvres", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "based_atkatk": 1000, "based_hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "BlackWarGreymon", "stage": "Mega", "attr": "Virus", "based_atk": 1045, "based_hp": 16500, "base_price": 600,  "img": "https://digimon.net/cimages/digimon/blackwargreymon.jpg", "skill": {"name": "Terra Destroyer", "dmg_mult": 1.8, "chance": 0.15}},
-    {"name": "MetalSeadramon", "stage": "Mega", "attr": "Data", "based_atk": 1019, "based_hp": 15800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg", "skill": {"name": "River of Power", "dmg_mult": 1.7, "chance": 0.18}},
-    {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "based_atk": 1066, "based_hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
-    {"name": "Valkyrimon", "stage": "Mega", "attr": "Vaccine", "based_atk": 980, "based_hp": 13800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/valkyrimon.jpg", "skill": {"name": "Fenrir Sword", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "Vikemon", "stage": "Mega", "attr": "Free", "based_atk": 999, "based_hp": 16800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/vikemon.jpg", "skill": {"name": "Arctic Blizzard", "dmg_mult": 1.7, "chance": 0.18}},
-    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "based_atk": 1930, "based_hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}}
+    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "based_atkatk": 1255, "based_hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "BlackWarGreymon", "stage": "Mega", "attr": "Virus", "based_atk": 1250, "based_hp": 16500, "base_price": 600,  "img": "https://digimon.net/cimages/digimon/blackwargreymon.jpg", "skill": {"name": "Terra Destroyer", "dmg_mult": 1.8, "chance": 0.15}},
+    {"name": "MetalSeadramon", "stage": "Mega", "attr": "Data", "based_atk": 1140, "based_hp": 15800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg", "skill": {"name": "River of Power", "dmg_mult": 1.7, "chance": 0.18}},
+    {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "based_atk": 1230, "based_hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
+    {"name": "Valkyrimon", "stage": "Mega", "attr": "Vaccine", "based_atk": 1210, "based_hp": 13800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/valkyrimon.jpg", "skill": {"name": "Fenrir Sword", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "Vikemon", "stage": "Mega", "attr": "Free", "based_atk": 1280, "based_hp": 16800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/vikemon.jpg", "skill": {"name": "Arctic Blizzard", "dmg_mult": 1.7, "chance": 0.18}},
+    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "based_atk": 1130, "based_hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}}
 ]
 
 HIGH_TIER_GEARS = [
