@@ -310,5 +310,7 @@ class Admin(commands.Cog):
 
         
 async def setup(bot):
+    await bot.add_cog(NewsSystemCog(bot))
     await bot.add_cog(Admin(bot))
     await bot.add_cog(DigitalTour(bot))
+    
