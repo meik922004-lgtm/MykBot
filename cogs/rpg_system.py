@@ -1056,7 +1056,7 @@ class RPGSystemCog(commands.Cog):
 
         # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI CHO ĐÁNH TAY: Tỷ lệ 10%, phản sát thương cố định từ 300 -> 500 DMG
         if current_hp > 0 and random.random() < 0.10:
-            boss_dmg = random.randint(300, 500)
+            boss_dmg = random.randint(300, 10000)
             
             if player.get("is_protecting"):
                 boss_dmg = int(boss_dmg * 0.2)
@@ -1219,7 +1219,7 @@ class RPGSystemCog(commands.Cog):
         # ✅ Sửa lỗi tạo tên để tránh Crash game
         full_boss_name = f"⚠️ {chosen_chain_boss['name']} [CHAIN RAID]"
         
-        calculated_hp = int(last_round_damage * random.uniform(1.5, 2.5)) # Tăng tỉ lệ scale cho hợp lý
+        calculated_hp = int(last_round_damage * random.uniform(1, 1.5)) # Tăng tỉ lệ scale cho hợp lý
         if calculated_hp < 30000: calculated_hp = random.randint(10000, 50000)
         
         calculated_atk = random.randint(int(calculated_hp * 0.01), int(calculated_hp * 0.025))
