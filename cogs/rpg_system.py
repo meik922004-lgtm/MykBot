@@ -1142,7 +1142,29 @@ class RPGSystemCog(commands.Cog):
             await self.distribute_boss_loot(result)
             return (msg + "\n🎉 **BOSS DEFEATED!**", True)
         return (msg, False)
-
+    
+    def get_attribute_multiplier(self, attacker_attr: str, defender_attr: str) -> float:
+        """
+        Tính toán hệ số tương khắc thuộc tính giữa Digimon tấn công và mục tiêu:
+        Vaccine > Virus > Data > Vaccine
+        """
+        if not attacker_attr or not defender_attr:
+            return 1.0
+            
+        # Chuẩn hóa chữ hoa/chữ thường và xóa khoảng trắng thừa để tránh lỗi so khớp
+        att = str(attacker_attr).strip().capitalize()
+        dfn = str(defender_attr).strip().capitalize()
+        
+        # Bảng ma trận khắc chế thuộc tính:
+        # Nếu khắc hệ: x1.5 sát thương | Nếu bị khắc hệ: x0.5 sát thương
+        matrix = {
+            "Vaccine": {"Virus": 1.5, "Data": 0.5},
+            "Virus": {"Data": 1.5, "Vaccine": 0.5},
+            "Data": {"Vaccine": 1.5, "Virus": 0.5}
+        }
+        
+        # Nếu tìm thấy cặp thuộc tính tương ứng thì trả về hệ số, ngược lại trả về 1.0 (trung tính)
+        return matrix.get(att, {}).get(dfn, 1.0)
     # 🛠️ CHỨC NĂNG 1, 2 & 5: Phát thưởng lõi hatch_core cố định + đóng góp và lưu trữ tổng damage để scale boss sau
     async def distribute_boss_loot(self, boss_data: dict):
         actual_boss = await world_boss_col.find_one_and_update(
