@@ -2796,7 +2796,7 @@ class RPGSystemCog(commands.Cog):
         embed.set_footer(text="Think carefully before choosing your next action.!")
         return embed
 
-    @app_commands.command(name="Solo_dungeon", description="Challenger with Turn-base mode")
+    @app_commands.command(name="solo_dungeon", description="Challenger with Turn-base mode")
     async def solo_boss(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
