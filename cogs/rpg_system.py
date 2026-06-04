@@ -658,9 +658,9 @@ class RPGSystemCog(commands.Cog):
         self.HIGH_TIER_GEARS = [
     {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
     {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
-    {"name": "Ultimate Omegamon Vice", "type": "vice", "atk": 400, "hp": 3000, "rarity": "Mythic"},
+    {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
-    {"name": "Miracle Origin Ring", "type": "vice", "atk": 350, "def": 350, "rarity": "Mythic"}]
+    {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
         self.auto_spawn_boss.cancel()
         self.live_boss_update_loop.cancel()
         
