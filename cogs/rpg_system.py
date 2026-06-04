@@ -596,8 +596,14 @@ class SoloCombatView(discord.ui.View):
         
         # Mở khóa lại nút công và thủ sau thời gian chờ 2s
         self.attack_btn.disabled = False
-        self.defend_btn.disabled = False
-        
+        if battle:
+            # 🟢 KIỂM TRA COOLDOWN PHÒNG THỦ
+            if battle.get("defend_cd", 0) > 0:
+                self.defend_btn.disabled = True
+                self.defend_btn.label = f"Defend (CD: {battle['defend_cd']})"
+            else:
+                self.defend_btn.disabled = False
+                self.defend_btn.label = "🛡️ DEFEND"
         # Kiểm tra riêng trạng thái nút Hồi Máu
         if battle and battle["heal_cd"] > 0:
             self.heal_btn.disabled = True
@@ -679,6 +685,7 @@ class SoloCombatView(discord.ui.View):
 
         elif player_action == "defend":
             is_protecting = True
+            battle["defend_cd"] = 3  # 🟢 Kích hoạt hồi chiêu 3 lượt
             log_msgs.append("🛡️ You choose to **Defend**, preparing to block and immune to debuffs!")
 
         elif player_action == "heal":
@@ -692,7 +699,8 @@ class SoloCombatView(discord.ui.View):
 
         if player_action != "heal" and battle["heal_cd"] > 0:
             battle["heal_cd"] -= 1
-
+        if player_action != "defend" and battle.get("defend_cd", 0) > 0:
+            battle["defend_cd"] -= 1
         # Kiểm tra nếu Boss chết luôn sau đòn đánh của người chơi
         # XỬ LÝ KHI USER HẠ GỤC BOSS (PHÁT THƯỞNG THEO SỐ LƯỢNG)
         if battle["boss_hp"] <= 0:
@@ -780,7 +788,7 @@ class SoloCombatView(discord.ui.View):
             
             # Boss tung kỹ năng đặc biệt (20% tỷ lệ)
             if random.random() < 0.20:
-                skill = boss_skills.get(battle["boss_attr"], {"name": "Powerful Strike", "mult": 1.4})
+                skill = boss_skills.get(battle["boss_attr"], {"name": "Powerful Strike", "mult": 1.6})
                 boss_raw_dmg = int(boss_raw_dmg * skill["mult"])
                 log_msgs.append(f"⚠️ **BOSS SKILL:** {battle['boss_name']} ACTIVATES **[{skill['name']}]**!")
 
@@ -2762,6 +2770,7 @@ class RPGSystemCog(commands.Cog):
             "boss_atk": boss_atk,
             "boss_attr": boss_template["attr"],
             "heal_cd": 0,
+            "defend_cd": 0,
             "boss_def": boss_def,
             "boss_image": boss_template.get("image", ""), # 🖼️ LƯU ẢNH BOSS VÀO ĐÂY
             "boss_heal_used": False,
