@@ -721,7 +721,7 @@ class RPGSystemCog(commands.Cog):
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
         self.live_boss_update_loop.cancel()
         self.trigger_chain_boss_respawn.start()
-        
+
         
 
     # ========================================================================
@@ -758,13 +758,34 @@ class RPGSystemCog(commands.Cog):
         embed.set_footer(text="Use /combat or buttons below to fight!")
         return embed    
 
-    @tasks.loop(seconds=15)  # ⏱️ Đã giảm từ 20s xuống 15s theo yêu cầu
+    @tasks.loop(seconds=15)
     async def live_boss_update_loop(self):
         bosses = await world_boss_col.find({"is_active": True}).to_list(None)
         if not bosses: return
 
         async with aiohttp.ClientSession() as session: 
             for boss in bosses:
+                # ⏱️ KIỂM TRA CƠ CHẾ 5 PHÚT KHÔNG CÓ NGƯỜI ĐÁNH
+                now = datetime.utcnow()
+                last_attacked = boss.get("last_attacked_at") or boss.get("spawned_at") or now
+                
+                if (now - last_attacked).total_seconds() >= 300: # 300 giây = 5 phút
+                    if boss.get("max_hp", 0) > 30000: # Chỉ reset nếu HP hiện tại cao hơn sàn tối thiểu
+                        # Tiến hành cập nhật Database đưa Boss về giới hạn thấp nhất
+                        updated_boss = await world_boss_col.find_one_and_update(
+                            {"_id": boss["_id"], "is_active": True},
+                            {"$set": {
+                                "current_hp": 30000,
+                                "hp": 30000,
+                                "max_hp": 30000,
+                                "last_attacked_at": now # Reset mốc thời gian để không bị lặp lại liên tục
+                            }},
+                            return_document=pymongo.ReturnDocument.AFTER
+                        )
+                        if updated_boss:
+                            boss = updated_boss # Thay thế dữ liệu để Embed hiển thị đúng HP mới
+
+                # --- Phần code render Embed và Edit tin nhắn giữ nguyên ---
                 embed = self.generate_boss_embed(boss)
                 active_messages = boss.get("active_messages", [])
                 updated_messages = []
@@ -879,7 +900,8 @@ class RPGSystemCog(commands.Cog):
             "is_active": True, 
             "damage_log": {}, 
             "active_messages": [], 
-            "spawned_at": datetime.utcnow()
+            "spawned_at": datetime.utcnow(),
+            "last_attacked_at": datetime.utcnow()
         }
         
         result = await world_boss_col.insert_one(new_boss)
@@ -914,89 +936,65 @@ class RPGSystemCog(commands.Cog):
             self.bot.loop.create_task(self.auto_attack_loop(user_id, interaction.user.display_name, interaction))
 
     # 🛠️ CHỨC NĂNG 3 & 5: Tối ưu hóa Auto-Attack chạy liên tục cực nhanh cho đến khi hết trận hoặc đạt giới hạn token Discord (15p)
-    async def auto_attack_loop(self, user_id: int, user_name: str, interaction: discord.Interaction):
-        HITS_PER_INTERVAL = 2
+    async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
+        party = await parties_col.find_one({"members.user_id": user_id})
+        boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
+        if not boss: boss = await world_boss_col.find_one({"is_active": True, "party_id": {"$exists": False}})
+        if not boss: return ("❌ **No active Boss found.**", True)
+
+        player = await rpg_profiles_col.find_one({"user_id": user_id})
+        digimon = self.get_active_digimon(player)
+        if not player or not digimon: return ("❌ **No Digimon partnered.**", True)
+        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Fainted!** Please Heal.", True)
+
+        stats = self.get_total_stats(player)
+        digi_size = digimon.get("size", 1.0)
         
-        while user_id in self.auto_attackers:
-            await asyncio.sleep(5)  # ⏱️ Trả về sleep 5s giữ nhịp độ an toàn cho database
-            if user_id not in self.auto_attackers: break
-
-            player = await rpg_profiles_col.find_one({"user_id": user_id})
+        raw_dmg = stats["atk"] + random.randint(-5, 10)
+        if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
+        
+        skill_msg = ""
+        if "skill" in digimon and random.random() < digimon["skill"]["chance"]:
+            raw_dmg *= digimon["skill"]["dmg_mult"]
+            skill_msg = f"\n🌟 **SKILL!** **{digimon['skill']['name']}**!"
             
-            # Vòng lặp CHỈ dừng khi người chơi hết máu (Fainted)
-            if not player or player.get("current_hp", 0) <= 0:
-                self.auto_attackers.discard(user_id)
-                self.auto_attack_cache.pop(user_id, None)
-                try:
-                    await interaction.followup.send("❌ **Your Digimon has fainted!** Auto-Attack disabled.", ephemeral=True)
-                except (discord.NotFound, discord.HTTPException): pass
-                break
-
-            party = await parties_col.find_one({"members.user_id": user_id})
-            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
-
-            # 🔄 NẾU KHÔNG CÓ BOSS: Giữ trạng thái chạy ngầm, bỏ qua lượt này và đợi boss spawn ở chu kỳ sau
-            if not boss:
-                continue
-
-            digimon = self.get_active_digimon(player)
-            stats = self.get_total_stats(player)
-            attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
-            digi_size = digimon.get("size", 1.0)
-
-            batch_dmg = 0
-            for _ in range(HITS_PER_INTERVAL):
-                raw_dmg = stats["atk"] + random.randint(-5, 10)
-                if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
-                if "skill" in digimon and random.random() < digimon["skill"]["chance"]: raw_dmg *= digimon["skill"]["dmg_mult"]
-                
-                hit_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
-                batch_dmg += hit_dmg
-
-            self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
-            dmg_to_sync = self.auto_attack_cache[user_id]
-
-            result = await world_boss_col.find_one_and_update(
-                {"_id": boss["_id"], "is_active": True}, 
-                {"$inc": {"current_hp": -dmg_to_sync, "hp": -dmg_to_sync, f"damage_log.{str(user_id)}": dmg_to_sync}, 
-                 "$addToSet": {"participants": user_id}},
+        attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
+        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
+        
+        # Tìm đoạn find_one_and_update của Boss và thêm trường update vào $set:
+        result = await world_boss_col.find_one_and_update(
+            {"_id": boss["_id"], "is_active": True}, 
+                {
+                    "$inc": {"current_hp": final_dmg, "hp": -final_dmg, f"damage_log.{str(user_id)}": final_dmg}, 
+                    "$addToSet": {"participants": user_id},
+                    "$set": {"last_attacked_at": datetime.utcnow()} # 🔥 Làm mới thời gian khi có người Auto-Attack
+                },
                 return_document=pymongo.ReturnDocument.AFTER
             )
+        if not result: return ("❌ **Boss has already been defeated!**", True)
+        
+        current_hp = result.get('current_hp', result.get('hp', 0))
+        msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
+
+        # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI CHO ĐÁNH TAY: Tỷ lệ 10%, phản sát thương cố định từ 300 -> 500 DMG
+        if current_hp > 0 and random.random() < 0.10:
+            boss_dmg = random.randint(300, 500)
             
-            if not result:
-                # Nếu boss vừa bị người khác kết liễu ngay trước tiến trình, xóa cache dmg lượt này và tìm boss khác
-                self.auto_attack_cache[user_id] = 0
-                continue
+            if player.get("is_protecting"):
+                boss_dmg = int(boss_dmg * 0.2)
+                msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
+            else:
+                msg += f"\n💥 **Counterattacked!** Took **{boss_dmg} DMG**."
                 
-            self.auto_attack_cache[user_id] = 0 
-            current_hp = result.get('current_hp', result.get('hp', 0))
+            new_hp = max(0, player["current_hp"] - boss_dmg)
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
+            if new_hp == 0: return (msg + "\n💀 **YOUR PARTNER FAINTED!**", True)
 
-            # Tính toán phản đòn 20%
-            if current_hp > 0 and random.random() < 0.20:
-                boss_dmg = int(dmg_to_sync * 0.05)
-                if boss_dmg < 200: boss_dmg = random.randint(200, 350)
-                
-                if player.get("is_protecting"):
-                    boss_dmg = int(boss_dmg * 0.2)
-                    await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-                
-                new_hp = max(0, player.get("current_hp", 0) - boss_dmg)
-                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
-                
-                if new_hp == 0:
-                    try:
-                        await interaction.followup.send(f"💀 **WARNING:** Defeated by counterattack! Auto-Attack stopped.", ephemeral=True)
-                    except (discord.NotFound, discord.HTTPException): pass
-                    self.auto_attackers.discard(user_id)
-                    break
-
-            # ⚔️ KHI BOSS CHẾT: Phát quà xong xuôi rồi tiếp tục duy trì trạng thái loop để đợi mục tiêu tiếp theo
-            if current_hp <= 0:
-                await self.distribute_boss_loot(result)
-                try:
-                    await interaction.followup.send(f"🎉 **{boss['name']} defeated!** Auto-attack is searching for the next target...", ephemeral=True)
-                except (discord.NotFound, discord.HTTPException): pass
-                continue
+        if current_hp <= 0:
+            await self.distribute_boss_loot(result)
+            return (msg + "\n🎉 **BOSS DEFEATED!**", True)
+        return (msg, False)
     async def handle_protect(self, interaction: discord.Interaction):
         # Tránh lỗi "This interaction failed" của Discord
         await interaction.response.defer(ephemeral=True)
@@ -1047,7 +1045,8 @@ class RPGSystemCog(commands.Cog):
         result = await world_boss_col.find_one_and_update(
             {"_id": boss["_id"], "is_active": True}, 
             {"$inc": {"current_hp": -final_dmg, "hp": -final_dmg, f"damage_log.{str(user_id)}": final_dmg}, 
-             "$addToSet": {"participants": user_id}},
+             "$addToSet": {"participants": user_id},
+             "$set": {"last_attacked_at": datetime.utcnow()}},
             return_document=pymongo.ReturnDocument.AFTER
         )
         if not result: return ("❌ **Boss has already been defeated!**", True)
@@ -1055,16 +1054,16 @@ class RPGSystemCog(commands.Cog):
         current_hp = result.get('current_hp', result.get('hp', 0))
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
 
-        # 🛠️ CHỨC NĂNG 5: Sửa cơ chế phản đòn đánh tay của Boss tăng lên cố định thành 10% sát thương gánh chịu
-        if random.random() < 0.5 and current_hp > 0:
-            boss_dmg = int(final_dmg * 0.03)
-            if boss_dmg < 200: boss_dmg = random.randint(300, 600) 
+        # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI CHO ĐÁNH TAY: Tỷ lệ 10%, phản sát thương cố định từ 300 -> 500 DMG
+        if current_hp > 0 and random.random() < 0.10:
+            boss_dmg = random.randint(300, 500)
             
             if player.get("is_protecting"):
                 boss_dmg = int(boss_dmg * 0.2)
                 msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
                 await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-            
+            else:
+                msg += f"\n💥 **Counterattacked!** Took **{boss_dmg} DMG**."
                 
             new_hp = max(0, player["current_hp"] - boss_dmg)
             await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
@@ -1106,7 +1105,6 @@ class RPGSystemCog(commands.Cog):
         )
         if not actual_boss: return  
 
-        # Tính tổng damage toàn bộ đợt này thu được từ người chơi để chuẩn bị scale Boss sau
         total_round_damage = sum(boss_data.get("damage_log", {}).values())
         await world_boss_col.update_one(
             {"type": "spawn_config"},
@@ -1124,19 +1122,14 @@ class RPGSystemCog(commands.Cog):
             user_id = int(uid_str)
             dmg_percent = dmg / total_hp
             
-            # --- PHẦN THƯỞNG CHẮC CHẮN 100% CỐ ĐỊNH CHO TẤT CẢ ---
             base_orb = random.randint(20, 50)
             base_digibit = 300
             base_myk = 1
-            
-            # 🌟 CHỨC NĂNG 1: Thêm 10 Hatch Core vào quà Base cố định (100% tỉ lệ nhận)
             base_hatch_core = 25
             
-            # 🌟 CHỨC NĂNG 2: Cộng thêm 1-10 Hatch Core dựa vào % đóng góp sát thương (dmg_percent)
             contribution_hatch_core = max(1, min(10, int(dmg_percent * 10)))
             total_hatch_core_reward = base_hatch_core + contribution_hatch_core
             
-            # --- TỔNG HỢP BIẾN PHẦN THƯỞNG ---
             inc_data = {
                 "orb": base_orb, 
                 "digibit": base_digibit, 
@@ -1151,11 +1144,7 @@ class RPGSystemCog(commands.Cog):
                 f"➕ **{total_hatch_core_reward}** Hatch Core ({base_hatch_core} Base + {contribution_hatch_core} Damage)"
             )
 
-            # --- TỈ LỆ GACHA ITEM ---
-            bonus_chance = 0.0
-            if rank == 1: bonus_chance = 0.15      
-            elif rank <= 3: bonus_chance = 0.08    
-            else: bonus_chance = dmg_percent       
+            bonus_chance = 0.15 if rank == 1 else (0.08 if rank <= 3 else dmg_percent)
 
             high_tier_rate = 0.10 + bonus_chance
             if random.random() < high_tier_rate:
@@ -1201,57 +1190,62 @@ class RPGSystemCog(commands.Cog):
             except Exception as e:
                 print(f"Error: Unable to send DM {user_id}: {e}")
                 
-        await self.trigger_chain_boss_respawn(boss_data.get("participants", []))
-
+        # 🔄 TRUYỀN TOÀN BỘ BIẾN BOSS CŨ ĐỂ KẾ THỪA TIN NHẮN
+        await self.trigger_chain_boss_respawn(boss_data)
     # 🛠️ CHỨC NĂNG 5: Cơ chế scale HP & ATK của Boss Spawn sau dựa theo sát thương đợt trước thu hoạch được
-    async def trigger_chain_boss_respawn(self, participants: list):
+    async def trigger_chain_boss_respawn(self, boss_data: dict):
         config = await world_boss_col.find_one({"type": "spawn_config"})
         last_round_damage = config.get("last_round_damage", 60000) if config else 60000
 
         chain_boss_roster = [
-            # --- Siêu Boss Hệ Vaccine ---
             {"name": "Omnimon (Royal Knight)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/omegamon.jpg"},
             {"name": "Alphamon Ouryuken", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/alphamon_ouryuken.jpg"},
             {"name": "Gallantmon X-Antibody", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/dukemon_x.jpg"},
             {"name": "Susanoomon (Ancient)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/susanoomon.jpg"},
             {"name": "Jesmon GX", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/jesmon_gx.jpg"},
             {"name": "Imperialdramon Paladin Mode", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/imperialdramon_pm.jpg"},
-
-            # --- Siêu Boss Hệ Virus ---
             {"name": "Omnimon Zwart D (Defeat)", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/omegamon_zwart_d.jpg"},
             {"name": "Beelzemon X-Antibody", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/beelzebumon_x.jpg"},
             {"name": "Lucemon Shadowlord Mode", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/lucemon_sm.jpg"},
             {"name": "Belphemon Rage Mode", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/belphemon_rm.jpg"},
             {"name": "ZeedMillenniummon", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/zeedmillenniumon.jpg"},
-
-            # --- Siêu Boss Hệ Data & Unknown ---
             {"name": "Examon (Dragon Emperor)", "attr": "Data", "img": "https://digimon.net/cimages/digimon/examon.jpg"},
             {"name": "Mastemon (Chaos Angel)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/mastemon.jpg"},
             {"name": "Armageddemon (Catastrophe)", "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/armagemon.jpg"},
             {"name": "Ogudomon (Avatar of Sin)", "attr": "Unknown", "img": "https://digimon.net/cimages/digimon/ogudomon.jpg"}
         ]
         
-        # Chọn ngẫu nhiên một thực thể trong danh sách
         chosen_chain_boss = random.choice(chain_boss_roster)
+        # ✅ Sửa lỗi tạo tên để tránh Crash game
         full_boss_name = f"⚠️ {chosen_chain_boss['name']} [CHAIN RAID]"
-        random_name = f"Vanguard {random.choice(chosen_chain_boss)} [Chain Raid]"
         
-        # Scale HP theo hệ số ngẫu nhiên từ 1.5x đến 2.5x tổng lượng damage đợt trước nhận được
-        calculated_hp = int(last_round_damage * random.uniform(0, 0.1))
-        if calculated_hp < 30000: calculated_hp = random.randint(10000, 50000) # Sàn HP tối thiểu để bảo vệ
+        calculated_hp = int(last_round_damage * random.uniform(1.5, 2.5)) # Tăng tỉ lệ scale cho hợp lý
+        if calculated_hp < 30000: calculated_hp = random.randint(10000, 50000)
         
-        # Scale ATK tỉ lệ thuận tương thích với HP mới
         calculated_atk = random.randint(int(calculated_hp * 0.01), int(calculated_hp * 0.025))
         if calculated_atk < 400: calculated_atk = 200
 
+        # ✅ Lấy danh sách tin nhắn hiển thị từ Boss vừa chết để kế thừa (không gửi tin mới)
+        old_messages = boss_data.get("active_messages", [])
+
         new_boss = {
-            "boss_id": str(uuid.uuid4()), "name": random_name, "hp": calculated_hp, "current_hp": calculated_hp, "max_hp": calculated_hp,
-            "atk": calculated_atk, "participants": [], "is_active": True, "damage_log": {}, "active_messages": [], "spawned_at": datetime.utcnow()
+            "boss_id": str(uuid.uuid4()), 
+            "name": full_boss_name, 
+            "hp": calculated_hp, 
+            "current_hp": calculated_hp, 
+            "max_hp": calculated_hp,
+            "atk": calculated_atk, 
+            "attr": chosen_chain_boss["attr"], # Thêm thuộc tính bị thiếu
+            "img": chosen_chain_boss["img"],   # Thêm ảnh bị thiếu
+            "participants": [], 
+            "is_active": True, 
+            "damage_log": {}, 
+            "active_messages": old_messages,   # Kế thừa để Loop tự động Edit giao diện cũ
+            "spawned_at": datetime.utcnow()
         }
         
         result = await world_boss_col.insert_one(new_boss)
         new_boss["_id"] = result.inserted_id
-
     @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
