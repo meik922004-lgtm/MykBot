@@ -1064,7 +1064,28 @@ class RPGSystemCog(commands.Cog):
                     await interaction.followup.send(f"🎉 **{boss['name']} defeated!** Auto-attack is searching for the next target...", ephemeral=True)
                 except (discord.NotFound, discord.HTTPException): pass
                 continue
-
+    async def handle_protect(self, interaction: discord.Interaction):
+        # Tránh lỗi "This interaction failed" của Discord
+        await interaction.response.defer(ephemeral=True)
+        
+        user_id = interaction.user.id
+        
+        # 1. Kiểm tra xem người chơi có tồn tại hoặc đã kiệt sức (fainted) chưa
+        player = await rpg_profiles_col.find_one({"user_id": user_id})
+        if not player or player.get("current_hp", 0) <= 0:
+            return await interaction.followup.send("❌ Your Digimon is exhausted and cannot activate its protection.!", ephemeral=True)
+            
+        # 2. Cập nhật trạng thái "is_protecting" lên MongoDB ngay lập tức
+        await rpg_profiles_col.update_one(
+            {"user_id": user_id},
+            {"$set": {"is_protecting": True}}
+        )
+        
+        # 3. Thông báo ẩn cho người chơi biết đã bật khiên thành công
+        await interaction.followup.send(
+            "🛡️ **Protection activated!** Successfully reduces **80% damage** from the Boss's next counterattack..", 
+            ephemeral=True
+        )
     async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
         party = await parties_col.find_one({"members.user_id": user_id})
         boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"])}) if party else None
