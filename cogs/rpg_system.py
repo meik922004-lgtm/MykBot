@@ -1435,7 +1435,7 @@ class RPGSystemCog(commands.Cog):
         return str(item_name) # Trả về chuỗi đại diện nếu là kiểu khác
 
     def format_gear_display(self, item) -> str:
-        """Hàm định dạng tên hiển thị của trang bị ra Embed tránh lỗi lộ raw dict"""
+       # """Hàm định dạng tên hiển thị của trang bị ra Embed tránh lỗi lộ raw dict"""
         if not item or item == "None":
             return "None"
         if isinstance(item, dict):
@@ -1698,7 +1698,7 @@ class RPGSystemCog(commands.Cog):
             digimon = self.get_active_digimon(profile)
             if not digimon: return await interaction.followup.send("❌ No Digimon activated.", ephemeral=True)
 
-            new_size = round(random.uniform(1.00 if profile.get("is_vip") else 0.85, 1.30 if profile.get("is_vip") else 1.25), 3)
+            new_size = round(random.uniform(1.00 if profile.get("is_vip") else 1, 1.30 if profile.get("is_vip") else 1.30), 2)
             stage_lower = digimon.get("stage", "Rookie").lower()
             base_stats = self.DIGIMON_DATA.get(stage_lower, {}).get(digimon.get("name"))
 
@@ -1773,7 +1773,7 @@ class RPGSystemCog(commands.Cog):
         is_vip = profile.get("is_vip", False)
         
         # 3. Chỉ quay kích thước mới (Bỏ qua hoàn toàn việc tính toán Base Stats)
-        new_size = round(random.uniform(1.00 if is_vip else 0.85, 1.30 if is_vip else 1.25), 3)
+        new_size = round(random.uniform(1.00 if is_vip else 1, 1.30 if is_vip else 1.30), 2)
         
         inventory.remove(found_fruit)
         
