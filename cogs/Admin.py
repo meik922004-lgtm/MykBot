@@ -174,7 +174,83 @@ class DigitalTour(commands.Cog):
 
 # ==========================================
 # 3. COG ADMIN (QUẢN TRỊ HỆ THỐNG)
+# ==========================================
+# GIAO DIỆN MODAL NHẬP THÔNG BÁO BẰNG PHÍM ENTER
+# ==========================================
+class BroadcastModal(discord.ui.Modal):
+    def __init__(self, cog):
+        # Đặt tiêu đề cho bảng nhập liệu
+        super().__init__(title="📢 Broadcast")
+        self.cog = cog
 
+    # Khai báo ô nhập văn bản dạng dài (Paragraph/Long)
+    message_input = discord.ui.TextInput(
+        label="Nội dung thông báo",
+        style=discord.TextStyle.long,
+        placeholder="Nhập nội dung thông báo tại đây. Bấm phím Enter để xuống dòng thoải mái, hỗ trợ cả Markdown...",
+        required=True,
+        max_length=4000
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Defer tại đây vì quá trình gửi tin tới nhiều server sẽ mất thời gian
+        await interaction.response.defer(ephemeral=True)
+        
+        # Lấy nội dung trực tiếp từ Modal (đã có sẵn các dấu xuống dòng thực tế)
+        message = self.message_input.value
+        
+        # Lấy toàn bộ danh sách channel từ Database
+        cursor = news_col.find({})
+        channels_data = await cursor.to_list(length=None) 
+        
+        success_count = 0
+        fail_count = 0
+
+        # Xử lý tiêu đề ngày tháng theo thiết kế
+        utc_now = datetime.now(timezone.utc)
+        day = utc_now.day
+        if 11 <= day <= 13:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+            
+        date_title = f"📢 {utc_now.strftime('%B')} {day}{suffix} {utc_now.year}"
+
+        # Vòng lặp gửi tin nhắn đến các server
+        for data in channels_data:
+            channel_id = data.get("channel_id")
+            if not channel_id:
+                continue
+                
+            try:
+                channel = self.cog.bot.get_channel(channel_id) or await self.cog.bot.fetch_channel(channel_id)
+                
+                if channel:
+                    embed = discord.Embed(
+                        title=date_title,
+                        description=message, # Không cần .replace("\\n") nữa vì text từ modal giữ nguyên cấu trúc dòng
+                        color=discord.Color.from_str("#2ecc71"),
+                        timestamp=utc_now
+                    )
+                    embed.set_footer(text="Global System Announcement")
+                    
+                    await channel.send(embed=embed)
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except discord.Forbidden:
+                fail_count += 1
+            except Exception as e:
+                print(f"Lỗi khi gửi broadcast tới kênh {channel_id}: {e}")
+                fail_count += 1
+
+        # Trả về kết quả báo cáo sau khi hoàn tất gửi qua mockup follow-up
+        summary = (
+            f"✅ **Hoàn tất quá trình gửi tin Broadcast qua Modal!**\n"
+            f"🟢 Thành công: `{success_count}` server\n"
+            f"🔴 Thất bại: `{fail_count}` server (Do bot bị kick hoặc thiếu quyền gửi tin nhắn)"
+        )
+        await interaction.followup.send(summary, ephemeral=True)
 
 
 
@@ -219,60 +295,17 @@ class NewsSystemCog(commands.Cog):
     # ========================================================================
     # LỆNH 2: OWNER BROADCAST (Chỉ dành cho Developer/Owner)
     # ========================================================================
-    @app_commands.command(name="ownerbroadcast", description="Gửi thông báo đến toàn bộ các server đã đăng ký")
-    @app_commands.describe(message="Nội dung thông báo (dùng \n nếu muốn xuống dòng)")
-    async def ownerbroadcast(self, interaction: discord.Interaction, message: str):
-        # Kiểm tra xem người dùng có phải là Owner không
+    # ========================================================================
+    # LỆNH 2: OWNER BROADCAST (Mở Modal nhập liệu)
+    # ========================================================================
+    @app_commands.command(name="ownerbroadcast", description="Mở bảng soạn thông báo gửi đến các server")
+    async def ownerbroadcast(self, interaction: discord.Interaction):
+        # 1. Kiểm tra xem người dùng có phải là Owner không
         if interaction.user.id not in self.OWNER_IDS:
             return await interaction.response.send_message("❌ Lệnh này chỉ dành cho Developer.", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True)
-
-        # Lấy toàn bộ danh sách channel từ Database
-        # Nếu dùng motor async
-        cursor = news_col.find({})
-        channels_data = await cursor.to_list(length=None) 
-        
-        success_count = 0
-        fail_count = 0
-
-        # Lặp qua từng server để gửi tin
-        for data in channels_data:
-            channel_id = data.get("channel_id")
-            if not channel_id:
-                continue
-                
-            try:
-                # Tìm kênh trong cache, nếu không có thì fetch từ API Discord
-                channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
-                
-                if channel:
-                    embed = discord.Embed(
-                        title="📢 Annoucement from MyK",
-                        description=message.replace("\\n", "\n"), # Hỗ trợ xuống dòng nếu nhập \n trong command
-                        color=discord.Color.blue()
-                    )
-                    embed.set_footer(text="News is sent automatically because the server uses /setup_news_channel.")
-                    
-                    await channel.send(embed=embed)
-                    success_count += 1
-                else:
-                    fail_count += 1
-            except discord.Forbidden:
-                # Xảy ra khi Bot bị mất quyền gửi tin nhắn hoặc bị kick khỏi server
-                fail_count += 1
-            except Exception as e:
-                print(f"Lỗi khi gửi broadcast tới kênh {channel_id}: {e}")
-                fail_count += 1
-
-        # Trả kết quả báo cáo cho Owner
-        summary = (
-            f"✅ **Hoàn tất quá trình gửi tin Broadcast!**\n"
-            f"🟢 Thành công: `{success_count}` server\n"
-            f"🔴 Thất bại: `{fail_count}` server (Do bot bị kick hoặc thiếu quyền gửi tin nhắn)"
-        )
-        await interaction.followup.send(summary, ephemeral=True)
-
+        # 2. Gọi hiển thị Modal ngay lập tức (KHÔNG sử dụng defer trước dòng này)
+        await interaction.response.send_modal(BroadcastModal(self))
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
