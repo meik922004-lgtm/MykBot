@@ -2575,49 +2575,47 @@ class RPGSystemCog(commands.Cog):
         embed.set_footer(text="Think carefully before choosing your next action.!")
         return embed
 
-    @app_commands.command(name="solo_boss", description="Challenge Personal Bosses using a Turn-Based (Stat-Based) mechanism.")
+    @app_commands.command(name="solo_boss", description="Thách đấu Boss Cá Nhân ngẫu nhiên từ Bể Boss")
     async def solo_boss(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True) # Đấu ẩn để tránh rác kênh chat chung
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         
-        # Kiểm tra xem người chơi có đang trong trận nào khác không
         if user_id in self.active_solo_battles:
-            return await interaction.followup.send("❌You have an unfinished match! Finish the old one.", ephemeral=True)
+            return await interaction.followup.send("❌ You already have an ongoing battle!", ephemeral=True)
             
         player = await rpg_profiles_col.find_one({"user_id": user_id})
         digimon = self.get_active_digimon(player)
         if not player or not digimon:
-            return await interaction.followup.send("❌ You haven't set up a Digimon companion or created an RPG profile yet.", ephemeral=True)
-        if player.get("current_hp", 0) <= 0:
-            return await interaction.followup.send("☠️Your Digimon is exhausted. Heal it before battle.", ephemeral=True)
-
+            return await interaction.followup.send("❌ You do not have an RPG profile or partner Digimon set.", ephemeral=True)
+            
         stats = self.get_total_stats(player)
-        player_max_hp = player.get("max_hp", 3000) # Lấy max hp gốc của người chơi hoặc giả định mặc định
+        player_max_hp = player.get("max_hp", 3000)
 
-        # ⚖️ CƠ CHẾ SCALE CHỈ SỐ BOSS DỰA TRÊN NGƯỜI CHƠI
-        # Máu Boss gấp 4 lần Máu người chơi. Công Boss bằng 22% Công người chơi.
-        boss_max_hp = int(player_max_hp * 4.0)
-        boss_atk = int(stats["atk"] * 0.30)
-        boss_attr = random.choice(["Vaccine", "Virus", "Data"]) # Thuộc tính ngẫu nhiên tăng tính chiến thuật
+        # 🎲 BỐC NGẪU NHIÊN 1 BOSS TỪ BỂ BOSS
+        boss_id = random.choice(list(self.solo_boss_pool.keys()))
+        boss_template = self.solo_boss_pool[boss_id]
+
+        # Scale chỉ số theo đúng cấu hình riêng của Boss được bốc
+        boss_max_hp = int(player_max_hp * boss_template["hp_mult"])
+        boss_atk = int(stats["atk"] * boss_template["atk_mult"])
         
-        # Khởi tạo Object trạng thái trận đấu
+        # Khởi tạo trận đấu
         self.active_solo_battles[user_id] = {
             "player_hp": player_max_hp,
             "player_max_hp": player_max_hp,
-            "boss_name": f"Mirror {digimon['name']}",
+            "boss_name": boss_template["name"],
             "boss_hp": boss_max_hp,
             "boss_max_hp": boss_max_hp,
             "boss_atk": boss_atk,
-            "boss_attr": boss_attr,
+            "boss_attr": boss_template["attr"],
             "heal_cd": 0,
             "turn": 1,
-            "log": "The match has begun! Come up with a suitable strategy.."
+            "log": "The battle has begun! Good luck.",
+            # 🔥 Đút cấu hình phần thưởng vào đây để xử lý khi thắng
+            "rewards_config": boss_template["rewards"] 
         }
-        
         view = SoloCombatView(self, user_id)
         embed = self.generate_solo_embed(user_id)
-        
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
+        await interaction.followup.send(embed=embed, view=view, ephemeral=False)
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
