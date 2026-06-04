@@ -1934,10 +1934,10 @@ class RPGSystemCog(commands.Cog):
             mega_name = mega["name"]
             
             # Lấy toàn bộ chỉ số trực tiếp từ Dictionary trong NEW_MEGA_POOL
-            base_hp = int(mega.get("hp", 15000))
-            base_atk = int(mega.get("atk", 1500))
+            base_hp = int(mega.get("base_hp"))
+            base_atk = int(mega.get("base_atk"))
             attr = mega.get("attr", "Unknown")
-            img = mega.get("img", "")
+            img = mega.get("img")
             
             # Khởi tạo Object skill chuẩn, đề phòng trường hợp nhập thiếu sẽ có fallback
             fallback_skill = {"name": "Basic Strike", "dmg_mult": 1.5, "chance": 0.1}
