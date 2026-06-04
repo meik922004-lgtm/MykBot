@@ -23,16 +23,16 @@ OWNER_IDS = [1283689737567211581]
 # ========================================================================
 
 NEW_MEGA_POOL = [
-    {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "atk": 1090, "hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
-    {"name": "MirageGaogamon BM", "stage": "Mega", "attr": "Data", "atk": 990, "hp": 14800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/miragegaogamon_bm.jpg", "skill": {"name": "Full Moon Meteor Impact", "dmg_mult": 1.7, "chance": 0.18}},
-    {"name": "Rosemon BM", "stage": "Mega", "attr": "Data", "atk": 1100, "hp": 14200, "base_price": 600, "img": "https://digimon.net/cimages/digimon/rosemon_bm.jpg", "skill": {"name": "Aguichant Lèvres", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "atk": 1000, "hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "BlackWarGreymon", "stage": "Mega", "attr": "Virus", "atk": 1045, "hp": 16500, "base_price": 600,  "img": "https://digimon.net/cimages/digimon/blackwargreymon.jpg", "skill": {"name": "Terra Destroyer", "dmg_mult": 1.8, "chance": 0.15}},
-    {"name": "MetalSeadramon", "stage": "Mega", "attr": "Data", "atk": 1019, "hp": 15800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg", "skill": {"name": "River of Power", "dmg_mult": 1.7, "chance": 0.18}},
-    {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "atk": 1066, "hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
-    {"name": "Valkyrimon", "stage": "Mega", "attr": "Vaccine", "atk": 980, "hp": 13800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/valkyrimon.jpg", "skill": {"name": "Fenrir Sword", "dmg_mult": 1.6, "chance": 0.20}},
-    {"name": "Vikemon", "stage": "Mega", "attr": "Free", "atk": 999, "hp": 16800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/vikemon.jpg", "skill": {"name": "Arctic Blizzard", "dmg_mult": 1.7, "chance": 0.18}},
-    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "atk": 1930, "hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}}
+    {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "based_atk": 1090, "based_hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
+    {"name": "MirageGaogamon BM", "stage": "Mega", "attr": "Data", "based_atk": 990, "based_hp": 14800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/miragegaogamon_bm.jpg", "skill": {"name": "Full Moon Meteor Impact", "dmg_mult": 1.7, "chance": 0.18}},
+    {"name": "Rosemon BM", "stage": "Mega", "attr": "Data", "atk": 1100, "based_hp": 14200, "base_price": 600, "img": "https://digimon.net/cimages/digimon/rosemon_bm.jpg", "skill": {"name": "Aguichant Lèvres", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "Ravemon BM", "stage": "Mega", "attr": "Vaccine", "based_atkatk": 1000, "based_hp": 14000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/ravemon_bm.jpg", "skill": {"name": "Mourning Dance", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "BlackWarGreymon", "stage": "Mega", "attr": "Virus", "based_atk": 1045, "based_hp": 16500, "base_price": 600,  "img": "https://digimon.net/cimages/digimon/blackwargreymon.jpg", "skill": {"name": "Terra Destroyer", "dmg_mult": 1.8, "chance": 0.15}},
+    {"name": "MetalSeadramon", "stage": "Mega", "attr": "Data", "based_atk": 1019, "based_hp": 15800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/metalseadramon.jpg", "skill": {"name": "River of Power", "dmg_mult": 1.7, "chance": 0.18}},
+    {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "based_atk": 1066, "based_hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
+    {"name": "Valkyrimon", "stage": "Mega", "attr": "Vaccine", "based_atk": 980, "based_hp": 13800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/valkyrimon.jpg", "skill": {"name": "Fenrir Sword", "dmg_mult": 1.6, "chance": 0.20}},
+    {"name": "Vikemon", "stage": "Mega", "attr": "Free", "based_atk": 999, "based_hp": 16800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/vikemon.jpg", "skill": {"name": "Arctic Blizzard", "dmg_mult": 1.7, "chance": 0.18}},
+    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "based_atk": 1930, "based_hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}}
 ]
 
 HIGH_TIER_GEARS = [
@@ -1162,7 +1162,13 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
 
         embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} orb**", inline=False)
-        embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
+        # SỬA TẠI ĐÂY: Dùng hàm format_gear_display để bóc tách tên đồ
+        embed.add_field(
+            name="Equipment", 
+            value=f"⚔️ {self.format_gear_display(gear.get('weapon'))}\n"
+                  f"🛡️ {self.format_gear_display(gear.get('armor'))}\n"
+                  f"📿 {self.format_gear_display(gear.get('vice'))}", 
+            inline=False)
 
         await interaction.followup.send(embed=embed, view=ProfileView(profile, self))
 
@@ -1235,6 +1241,15 @@ class RPGSystemCog(commands.Cog):
         
         return str(item_name) # Trả về chuỗi đại diện nếu là kiểu khác
 
+    def format_gear_display(self, item) -> str:
+        """Hàm định dạng tên hiển thị của trang bị ra Embed tránh lỗi lộ raw dict"""
+        if not item or item == "None":
+            return "None"
+        if isinstance(item, dict):
+            # Nếu là đồ Mythic, lấy thuộc tính name của nó ra hiển thị
+            return item.get("name", "Unknown Item")
+        return str(item)
+    
     def get_total_stats(self, profile: dict) -> dict:
         digimon = self.get_active_digimon(profile)
         total_hp = digimon.get("hp", 0) + digimon.get("trained_hp", 0)
@@ -1242,16 +1257,38 @@ class RPGSystemCog(commands.Cog):
         total_def, total_crit_rate, total_crit_dmg = 10, 0, 1.0
 
         gear = profile.get("gear", {"weapon": "None", "armor": "None", "vice": "None"})
-        w_name = self.clean_item_name(gear.get("weapon"))
-        if w_name in self.ITEMS: total_atk += self.ITEMS[w_name].get("atk", 0)
-        a_name = self.clean_item_name(gear.get("armor"))
-        if a_name in self.ITEMS:
-            total_hp += self.ITEMS[a_name].get("hp", 0)
-            total_def += self.ITEMS[a_name].get("def", 0)
-        v_name = self.clean_item_name(gear.get("vice"))
-        if v_name in self.ITEMS:
-            total_crit_rate += self.ITEMS[v_name].get("crit_rate", 0)
-            total_crit_dmg += self.ITEMS[v_name].get("crit_dmg", 0)
+        
+        # --- Xử lý Vũ khí (Weapon) ---
+        weapon = gear.get("weapon")
+        if isinstance(weapon, dict):  # Đồ Mythic
+            total_atk += weapon.get("atk", 0)
+        elif weapon and weapon != "None":  # Đồ chuỗi (Divine / Thường)
+            w_name = self.clean_item_name(weapon)
+            if w_name in self.ITEMS: 
+                total_atk += self.ITEMS[w_name].get("atk", 0)
+
+        # --- Xử lý Áo giáp (Armor) ---
+        armor = gear.get("armor")
+        if isinstance(armor, dict):  # Đồ Mythic
+            total_hp += armor.get("hp", 0)
+            total_def += armor.get("def", 0)
+        elif armor and armor != "None":  # Đồ chuỗi
+            a_name = self.clean_item_name(armor)
+            if a_name in self.ITEMS:
+                total_hp += self.ITEMS[a_name].get("hp", 0)
+                total_def += self.ITEMS[a_name].get("def", 0)
+                
+        # --- Xử lý Vice ---
+        vice = gear.get("vice")
+        if isinstance(vice, dict):  # Đồ Mythic
+            total_crit_rate += vice.get("crit_rate", 0)
+            total_crit_dmg += vice.get("crit_dmg", 0)
+        elif vice and vice != "None":  # Đồ chuỗi
+            v_name = self.clean_item_name(vice)
+            if v_name in self.ITEMS:
+                total_crit_rate += self.ITEMS[v_name].get("crit_rate", 0)
+                total_crit_dmg += self.ITEMS[v_name].get("crit_dmg", 0)
+                
         return {"hp": total_hp, "atk": total_atk, "def": total_def, "crit_rate": total_crit_rate, "crit_dmg": total_crit_dmg}
 
     async def refresh_profile_message(self, message: discord.Message, user_id: int):
@@ -1276,7 +1313,13 @@ class RPGSystemCog(commands.Cog):
             embed.add_field(name="🎯 CRIT", value=f"{stats['crit_rate']}% (x{stats['crit_dmg']})", inline=True)
             
         embed.add_field(name="💰 Assets", value=f"🌐 **{profile.get('digibit', 0):.2f} Bits** | 🔮 **{profile.get('hatch_core', 0)} Cores** | 🔮 **{profile.get('orb', 0)} orb**", inline=False)
-        embed.add_field(name="Equipment", value=f"⚔️ {gear.get('weapon', 'None')}\n🛡️ {gear.get('armor', 'None')}\n📿 {gear.get('vice', 'None')}", inline=False)
+        embed.add_field(
+            name="Equipment", 
+            value=f"⚔️ {self.format_gear_display(gear.get('weapon'))}\n"
+                  f"🛡️ {self.format_gear_display(gear.get('armor'))}\n"
+                  f"📿 {self.format_gear_display(gear.get('vice'))}", 
+            inline=False
+        )
         await message.edit(embed=embed, view=ProfileView(profile, self))
 
     @app_commands.command(name="rpg_profile", description="View profiles and manage Digimon.")
@@ -1373,7 +1416,7 @@ class RPGSystemCog(commands.Cog):
             updates["$set"] = {"active_digimon_id": new_digi_id, "current_hp": actual_hp}
 
         await rpg_profiles_col.update_one({"user_id": user_id}, updates)
-        await interaction.followup.send(f"🥚 Ấp trứng thành công! Nhận được **{hatched_name}** ({size_pct * 100:.1f}%)", ephemeral=True)
+        await interaction.followup.send(f"🥚 Egg hatching successful! Received **{hatched_name}** ({size_pct * 100:.1f}%)", ephemeral=True)
         await self.refresh_profile_message(interaction.message, user_id)
 
     async def handle_train_action(self, interaction: discord.Interaction, stat: str):
