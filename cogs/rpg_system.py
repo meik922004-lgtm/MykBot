@@ -581,8 +581,195 @@ class CombatView(discord.ui.View):
     @discord.ui.button(label="Protect (45s CD)", style=discord.ButtonStyle.secondary, emoji="🛡️", custom_id="boss_protect")
     async def protect_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_protect(interaction)
+import asyncio  # 🔥 Bắt buộc phải có ở đầu file để chạy độ trễ
 
+class SoloCombatView(discord.ui.View):
+    def __init__(self, cog, user_id: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.user_id = user_id
+        self.update_button_states()
 
+    def update_button_states(self):
+        """Mở khóa lại các nút và kiểm tra Cooldown chiêu hồi máu"""
+        battle = self.cog.active_solo_battles.get(self.user_id)
+        
+        # Mở khóa lại nút công và thủ sau thời gian chờ 2s
+        self.attack_btn.disabled = False
+        self.defend_btn.disabled = False
+        
+        # Kiểm tra riêng trạng thái nút Hồi Máu
+        if battle and battle["heal_cd"] > 0:
+            self.heal_btn.disabled = True
+            self.heal_btn.label = f"Heal (CD: {battle['heal_cd']} turn)"
+        else:
+            self.heal_btn.disabled = False
+            self.heal_btn.label = "🧪 HEAL"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your match!", ephemeral=True)
+            return False
+        return True
+
+    async def process_turn(self, interaction: discord.Interaction, player_action: str):
+        battle = self.cog.active_solo_battles.get(self.user_id)
+        if not battle:
+            return await interaction.response.send_message("❌ This match is ended or no longer exist.", ephemeral=True)
+
+        # 1. 🛑 KHÓA TẤT CẢ NÚT BẤM NGAY LẬP TỨC ĐỂ CHỐNG SPAM
+        for child in self.children:
+            child.disabled = True
+
+        # Đổi trạng thái hiển thị tạm thời sang "Đang giao tranh"
+        embed_waiting = interaction.message.embeds[0].copy()
+        embed_waiting.description = "⏳ **IN BATTLE** "
+        await interaction.response.edit_message(embed=embed_waiting, view=self)
+
+        # 2. 🕒 TẠO ĐỘ TRỄ 2 GIÂY NHƯ YÊU CẦU
+        await asyncio.sleep(2)
+
+        # Lấy lại dữ liệu mới nhất từ Database sau 2s chờ
+        player = await rpg_profiles_col.find_one({"user_id": self.user_id})
+        digimon = self.cog.get_active_digimon(player)
+        stats = self.cog.get_total_stats(player)
+        digi_size = digimon.get("size", 1.0)
+
+        log_msgs = []
+        is_protecting = False
+
+        # ==========================================
+        # 3. XỬ LÝ LƯỢT NGƯỜI CHƠI (PLAYER TURN)
+        # ==========================================
+        if player_action == "attack":
+            raw_dmg = stats["atk"] + random.randint(-5, 10)
+            if random.randint(1, 100) <= stats["crit_rate"]:
+                raw_dmg *= stats["crit_dmg"]
+                log_msgs.append("🌟 **CRITICAL HIT!**")
+
+            attr_mult = self.cog.get_attribute_multiplier(digimon["attr"], battle["boss_attr"])
+            final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
+            
+            battle["boss_hp"] = max(0, battle["boss_hp"] - final_dmg)
+            log_msgs.append(f"⚔️ You command for **{digimon['name']}** attack, dealing **{final_dmg:,} DMG**.")
+
+        elif player_action == "defend":
+            is_protecting = True
+            log_msgs.append("🛡️ You choose to **Defend**, preparing to block the Boss's attack!.")
+
+        elif player_action == "heal":
+            heal_amt = int(battle["player_max_hp"] * 0.15)
+            battle["player_hp"] = min(battle["player_max_hp"], battle["player_hp"] + heal_amt)
+            battle["heal_cd"] = 2 
+            log_msgs.append(f"🧪 You use a quick recovery potion, restoring **{heal_amt:,} HP**.")
+
+        if player_action != "heal" and battle["heal_cd"] > 0:
+            battle["heal_cd"] -= 1
+
+        # Kiểm tra nếu Boss chết luôn sau đòn đánh của người chơi
+       # XỬ LÝ KHI USER HẠ GỤC BOSS (PHÁT THƯỞNG THEO SỐ LƯỢNG)
+        if battle["boss_hp"] <= 0:
+            rew_config = battle["rewards_config"]
+            
+            # 🎲 Xúc xắc số lượng ngẫu nhiên dựa trên cấu hình của Boss cụ thể đó
+            won_digibits = random.randint(rew_config["digibits"][0], rew_config["digibits"][1])
+            won_hatch_cores = random.randint(rew_config["hatch_cores"][0], rew_config["hatch_cores"][1])
+            won_fruits = random.randint(rew_config["size_fruits"][0], rew_config["size_fruits"][1])
+            
+            # Khởi tạo câu chữ thông báo tiếng Anh chuyên nghiệp trên giao diện
+            reward_text = (
+                f"\n\n🎁 **VICTORY REWARDS:**\n"
+                f"➕ **{won_digibits:,}** Digibits\n"
+                f"➕ **{won_hatch_cores}** Hatch Cores\n"
+                f"➕ **{won_fruits}** Size Reroll Fruits"
+            )
+            
+            # Chuẩn bị câu lệnh tăng tiến ($inc) tài nguyên trong MongoDB
+            inc_query = {
+                "digibit": won_digibits, 
+                "hatch_core": won_hatch_cores
+            }
+            
+            # Nhân bản chuỗi vật phẩm bỏ vào túi đồ theo đúng số lượng đã rớt (ví dụ rớt 4 quả thì nhân chuỗi 4 lần)
+            push_items = ["Size Reroll Fruit"] * won_fruits
+            
+            update_query = {"$inc": inc_query}
+            if push_items:
+                # Sử dụng toán tử $each để nhồi toàn bộ danh sách quả vào mảng inventory cùng một lúc
+                update_query["$push"] = {"inventory": {"$each": push_items}}
+                
+            # Thực thi đẩy dữ liệu lên Database
+            await rpg_profiles_col.update_one({"user_id": self.user_id}, update_query)
+
+            # Cập nhật nhật ký chiến đấu thành công
+            battle["log"] = "\n".join(log_msgs) + f"\n\n🎉 **VICTORY!** YOU HAVE DEFEATED {battle['boss_name']}!{reward_text}"
+            embed = self.cog.generate_solo_embed(self.user_id)
+            self.clear_items() # Xóa sạch nút bấm
+            await interaction.edit_original_response(embed=embed, view=self)
+            self.cog.active_solo_battles.pop(self.user_id, None) # Giải phóng bộ nhớ trận đấu
+            return
+
+        # ==========================================
+        # 4. XỬ LÝ LƯỢT BOSS + SKILL (BOSS TURN)
+        # ==========================================
+        boss_raw_dmg = battle["boss_atk"] + random.randint(-5, 15)
+        boss_attr_mult = self.cog.get_attribute_multiplier(battle["boss_attr"], digimon["attr"])
+        
+        boss_skills = {
+            "Vaccine": {"name": "LIGHT OF JUDGMENT", "mult": 1.4},
+            "Virus": {"name": "DARKNESS CORRUPTION", "mult": 1.5},
+            "Data": {"name": "DATA RESTRUCTING", "mult": 1.35}
+        }
+        
+        if random.random() < 0.20: # 20% tỷ lệ dùng chiêu
+            skill = boss_skills.get(battle["boss_attr"], {"name": "Powerful Strike", "mult": 1.4})
+            boss_raw_dmg = int(boss_raw_dmg * skill["mult"])
+            log_msgs.append(f"⚠️ **BOSS SKILL:** {battle['boss_name']} ACTIVATES **[{skill['name']}]**!")
+
+        boss_final_dmg = int(boss_raw_dmg * boss_attr_mult)
+
+        if is_protecting:
+            boss_final_dmg = int(boss_final_dmg * 0.20) # Giảm 80% dmg khi thủ
+            log_msgs.append(f"🛡️ SUCCESSFUL BLOCK! YOU ONLY TAKE **{boss_final_dmg:,} DMG**.")
+        else:
+            log_msgs.append(f"💥 {battle['boss_name']} COUNTER ATTACK, DEALING **{boss_final_dmg:,} DMG**.")
+
+        battle["player_hp"] = max(0, battle["player_hp"] - boss_final_dmg)
+
+        # Kiểm tra nếu người chơi bị Boss hạ gục
+        if battle["player_hp"] <= 0:
+            battle["log"] = "\n".join(log_msgs) + f"\n\n☠️ **DEFEAT!** YOU HAVE BEEN DEFEATED BY {battle['boss_name']}..."
+            embed = self.cog.generate_solo_embed(self.user_id)
+            self.clear_items()
+            await interaction.edit_original_response(embed=embed, view=self)
+            self.cog.active_solo_battles.pop(self.user_id, None)
+            return
+
+        # ==========================================
+        # 5. KẾT THÚC LƯỢT & MỞ KHÓA LẠI GIAO DIỆN
+        # ==========================================
+        battle["turn"] += 1
+        battle["log"] = "\n".join(log_msgs)
+        
+        # Gọi lại hàm mở khóa nút và tính toán lại Cooldown hồi máu
+        self.update_button_states()
+        embed = self.cog.generate_solo_embed(self.user_id)
+        
+        # Sử dụng edit_original_response vì ta đang cập nhật lại sau một khoảng thời gian Defer/Sleep
+        await interaction.edit_original_response(embed=embed, view=self)
+
+    # --- Đăng ký các nút bấm như cũ ---
+    @discord.ui.button(label="⚔️ ATTACK", style=discord.ButtonStyle.danger, row=0)
+    async def attack_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_turn(interaction, "attack")
+
+    @discord.ui.button(label="🛡️ DEFEND", style=discord.ButtonStyle.primary, row=0)
+    async def defend_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_turn(interaction, "defend")
+
+    @discord.ui.button(label="🧪 RECOVERY", style=discord.ButtonStyle.success, row=0)
+    async def heal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_turn(interaction, "heal")
 # ========================================================================
 #                            MAIN COG SYSTEM
 # ========================================================================
@@ -720,7 +907,120 @@ class RPGSystemCog(commands.Cog):
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
         self.live_boss_update_loop.cancel()
-        self.trigger_chain_boss_respawn.start()
+        self.active_solo_battles = {}
+        self.solo_boss_pool = {
+        "Susanoomon": {
+            "name": "Susanoomon (Ancient spirit",
+            "attr": "Vaccine",
+            "hp_mult": 4.0,
+            "atk_mult": 0.20,
+            "rewards": {
+                "digibits": (500, 600),     # Thấp nhất trong bể (mốc 500)
+                "hatch_cores": (100, 120),  # Thấp nhất trong bể (mốc 100)
+                "size_fruits": (3, 3)       # Rớt cố định 3 quả
+            }
+        },
+        "Megidramon": {
+            "name": "Megidramon (Evil dragon)",
+            "attr": "Virus",
+            "hp_mult": 4.5,
+            "atk_mult": 0.18,
+            "rewards": {
+                "digibits": (550, 650),
+                "hatch_cores": (110, 130),
+                "size_fruits": (3, 4)       # Rớt từ 3 đến 4 quả
+            }
+        },
+        "metalgarurumon_boss": {
+            "name": "MetalGarurumon (Blizzard Zone)",
+            "attr": "Data",
+            "hp_mult": 4.2,
+            "atk_mult": 0.24,
+            "rewards": {
+                "digibits": (600, 700),
+                "hatch_cores": (120, 140),
+                "size_fruits": (3, 4)
+            }
+        },
+        "wargreymon_boss": {
+            "name": "WarGreymon (Dragon Combatant)",
+            "attr": "Vaccine",
+            "hp_mult": 4.8,
+            "atk_mult": 0.22,
+            "rewards": {
+                "digibits": (650, 750),
+                "hatch_cores": (130, 150),
+                "size_fruits": (3, 4)
+            }
+        },
+        "Jexmon GX": {
+            "name": "Jesmon GX (Savior of digital world)",
+            "attr": "Data",
+            "hp_mult": 4.6,
+            "atk_mult": 0.26,
+            "rewards": {
+                "digibits": (700, 800),
+                "hatch_cores": (140, 160),
+                "size_fruits": (4, 4)       # Rớt cố định 4 quả
+            }
+        },
+        "Dianamon": {
+            "name": "Dianamon (Omlympos XII)",
+            "attr": "DA",
+            "hp_mult": 4.4,
+            "atk_mult": 0.28,
+            "rewards": {
+                "digibits": (750, 850),
+                "hatch_cores": (150, 170),
+                "size_fruits": (4, 5)       # Rớt từ 4 đến 5 quả
+            }
+        },
+        "Beelzemon": {
+            "name": "Beelzemon Blast Mode (Glutony)",
+            "attr": "Virus",
+            "hp_mult": 5.0,
+            "atk_mult": 0.30,
+            "rewards": {
+                "digibits": (800, 900),
+                "hatch_cores": (160, 180),
+                "size_fruits": (4, 5)
+            }
+        },
+        "Bagramon": {
+            "name": "Bagramon(Sage of Death)",
+            "attr": "Virus",
+            "hp_mult": 5.5,
+            "atk_mult": 0.22,
+            "rewards": {
+                "digibits": (850, 950),
+                "hatch_cores": (170, 190),
+                "size_fruits": (4, 5)
+            }
+        },
+        "Gracenovamon": {
+            "name": "Gracenovamon (Galaxy God)",
+            "attr": "Vaccine",
+            "hp_mult": 6.0,
+            "atk_mult": 0.28,
+            "rewards": {
+                "digibits": (900, 980),
+                "hatch_cores": (180, 195),
+                "size_fruits": (5, 5)       # Rớt cố định 5 quả
+            }
+        },
+        "Zeed Milleniummon": {
+            "name": "Zeed Milleniummon (Dimension Destroyer)",
+            "attr": "Vaccine",
+            "hp_mult": 6.5,              # Boss trâu nhất, khó đánh nhất
+            "atk_mult": 0.32,
+            "rewards": {
+                "digibits": (950, 1000),    # Cao nhất trong bể (mốc 1000)
+                "hatch_cores": (190, 200),  # Cao nhất trong bể (mốc 200)
+                "size_fruits": (5, 5)
+            }
+        }
+    }
+        
 
         
 
@@ -2126,6 +2426,7 @@ class RPGSystemCog(commands.Cog):
                     "created_at": int(time.time())
                 }},
                 upsert=True )
+   
     async def handle_market_buy(self, interaction: discord.Interaction, listing_id: str):
         await interaction.response.defer(ephemeral=True)
         
@@ -2234,6 +2535,89 @@ class RPGSystemCog(commands.Cog):
 
         # Truyền trực tiếp list hàng hóa lấy từ DB vào View để xử lý đồng bộ
         await interaction.followup.send(embed=embed, view=MarketShopView(listings, self), ephemeral=True)
+
+#============================================================================
+#                            SOLO DG
+#============================================================================   
+    def generate_solo_embed(self, user_id: int) -> discord.Embed:
+        battle = self.active_solo_battles[user_id]
+    
+    # Tính toán thanh máu % cho Player và Boss
+        p_percent = max(0.0, min(1.0, battle["player_hp"] / battle["player_max_hp"]))
+        b_percent = max(0.0, min(1.0, battle["boss_hp"] / battle["boss_max_hp"]))
+        
+        p_bar = "🟩" * int(p_percent * 10) + "⬛" * (10 - int(p_percent * 10))
+        b_bar = "🟥" * int(b_percent * 10) + "⬛" * (10 - int(b_percent * 10))
+        
+        embed = discord.Embed(
+            title=f"🏟️ Soro Dungeon {battle['turn']}",
+            color=discord.Color.dark_blue()
+        )
+        
+        embed.add_field(
+            name=f"👤 You (HP: {battle['player_hp']:,} / {battle['player_max_hp']:,})",
+            value=f"{p_bar} ({p_percent * 100:.1f}%)",
+            inline=False
+        )
+        
+        embed.add_field(
+            name=f"😈 BOSS: {battle['boss_name']} [{battle['boss_attr']}] (HP: {battle['boss_hp']:,} / {battle['boss_max_hp']:,})",
+            value=f"{b_bar} ({b_percent * 100:.1f}%)",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📜 Battle logs", 
+            value=f"```md\n{battle['log']}```", 
+            inline=False
+        )
+        
+        embed.set_footer(text="Think carefully before choosing your next action.!")
+        return embed
+
+    @app_commands.command(name="solo_boss", description="Challenge Personal Bosses using a Turn-Based (Stat-Based) mechanism.")
+    async def solo_boss(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True) # Đấu ẩn để tránh rác kênh chat chung
+        user_id = interaction.user.id
+        
+        # Kiểm tra xem người chơi có đang trong trận nào khác không
+        if user_id in self.active_solo_battles:
+            return await interaction.followup.send("❌You have an unfinished match! Finish the old one.", ephemeral=True)
+            
+        player = await rpg_profiles_col.find_one({"user_id": user_id})
+        digimon = self.get_active_digimon(player)
+        if not player or not digimon:
+            return await interaction.followup.send("❌ You haven't set up a Digimon companion or created an RPG profile yet.", ephemeral=True)
+        if player.get("current_hp", 0) <= 0:
+            return await interaction.followup.send("☠️Your Digimon is exhausted. Heal it before battle.", ephemeral=True)
+
+        stats = self.get_total_stats(player)
+        player_max_hp = player.get("max_hp", 3000) # Lấy max hp gốc của người chơi hoặc giả định mặc định
+
+        # ⚖️ CƠ CHẾ SCALE CHỈ SỐ BOSS DỰA TRÊN NGƯỜI CHƠI
+        # Máu Boss gấp 4 lần Máu người chơi. Công Boss bằng 22% Công người chơi.
+        boss_max_hp = int(player_max_hp * 4.0)
+        boss_atk = int(stats["atk"] * 0.30)
+        boss_attr = random.choice(["Vaccine", "Virus", "Data"]) # Thuộc tính ngẫu nhiên tăng tính chiến thuật
+        
+        # Khởi tạo Object trạng thái trận đấu
+        self.active_solo_battles[user_id] = {
+            "player_hp": player_max_hp,
+            "player_max_hp": player_max_hp,
+            "boss_name": f"Mirror {digimon['name']}",
+            "boss_hp": boss_max_hp,
+            "boss_max_hp": boss_max_hp,
+            "boss_atk": boss_atk,
+            "boss_attr": boss_attr,
+            "heal_cd": 0,
+            "turn": 1,
+            "log": "The match has begun! Come up with a suitable strategy.."
+        }
+        
+        view = SoloCombatView(self, user_id)
+        embed = self.generate_solo_embed(user_id)
+        
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
