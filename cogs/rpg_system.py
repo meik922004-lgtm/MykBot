@@ -610,6 +610,39 @@ class SoloCombatView(discord.ui.View):
         else:
             self.heal_btn.disabled = False
             self.heal_btn.label = "🧪 HEAL"
+            
+    # 🟢 THÊM NÚT NÀY: Giúp người chơi chủ động thoát trận nếu muốn đổi Boss hoặc kẹt UI
+    @discord.ui.button(label="🏳️ FLEE", style=discord.ButtonStyle.secondary, row=1)
+    async def flee_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.action_locked: return
+        self.action_locked = True
+        await interaction.response.defer()
+        
+        try:
+            # Xóa trận đấu khỏi bộ nhớ để mở khóa cho người chơi
+            self.cog.active_solo_battles.pop(self.user_id, None)
+            
+            # Khóa toàn bộ nút bấm
+            for child in self.children:
+                child.disabled = True
+                
+            embed = interaction.message.embeds[0]
+            embed.description = "🏳️ **BATTLE CANCELED!** You successfully escaped the dungeon."
+            
+            # Gắn thêm nút New Game ngay sau khi bỏ cuộc
+            new_battle_btn = discord.ui.Button(label="🔄 New Battle", style=discord.ButtonStyle.primary)
+            async def new_battle_callback(btn_interaction: discord.Interaction):
+                if btn_interaction.user.id != self.user_id:
+                    return await btn_interaction.response.send_message("❌ This is not your battle!", ephemeral=True)
+                await btn_interaction.response.defer()
+                await self.cog.start_solo_battle(btn_interaction, self.user_id)
+                
+            new_battle_btn.callback = new_battle_callback
+            self.add_item(new_battle_btn)
+            
+            await interaction.edit_original_response(embed=embed, view=self)
+        finally:
+            self.action_locked = False
 
     async def on_timeout(self) -> None:
         if self.user_id in self.cog.active_solo_battles:
@@ -2894,8 +2927,10 @@ class RPGSystemCog(commands.Cog):
         await interaction.response.defer()
         user_id = interaction.user.id
         
+        # 🟢 Xử lý chống kẹt (Soft-lock): 
+        # Nếu họ đang có trận đang dở mà gõ lại lệnh, tự động dọn dẹp trận cũ thay vì chặn
         if user_id in self.active_solo_battles:
-            return await interaction.followup.send("❌ You already have an ongoing battle! Finish it first.")
+            self.active_solo_battles.pop(user_id, None)
             
         # Gọi hàm tạo trận mới
         await self.start_solo_battle(interaction, user_id)
