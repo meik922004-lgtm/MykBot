@@ -611,6 +611,43 @@ class SoloCombatView(discord.ui.View):
         else:
             self.heal_btn.disabled = False
             self.heal_btn.label = "🧪 HEAL"
+    async def on_timeout(self) -> None:
+        """Kích hoạt tự động khi View hết 300s mà không ai bấm"""
+        # 1. Giải phóng người chơi để họ có thể dùng lại lệnh
+        if self.user_id in self.cog.active_solo_battles:
+            self.cog.active_solo_battles.pop(self.user_id, None)
+        
+        # 2. Làm mờ toàn bộ nút
+        for child in self.children:
+            child.disabled = True
+            
+        # 3. Chỉnh sửa tin nhắn báo hiệu đã hết hạn (nếu View có lưu message)
+        if hasattr(self, 'message') and self.message:
+            try:
+                embed = self.message.embeds[0]
+                embed.description = "⌛ **BATTLE TIMED OUT!** The match was canceled due to a long period of inactivity.."
+                await self.message.edit(embed=embed, view=self)
+            except discord.HTTPException:
+                pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        """Kích hoạt tự động nếu có bất kỳ code nào bị lỗi vặt bên trong View"""
+        # 1. Giải phóng người chơi ngay lập tức
+        if self.user_id in self.cog.active_solo_battles:
+            self.cog.active_solo_battles.pop(self.user_id, None)
+            
+        # 2. Thông báo cho người chơi
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"❌ A system error has occurred! The match has been canceled to avoid account suspension.\nDetails of the errori: `{error}`", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌A system error has occurred! The match has been canceled to avoid account suspension.\nDetails of the errori `{error}`", ephemeral=True)
+            
+        # 3. In lỗi ra console để bạn debug
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
+    # ==========================================
+
+    # ... (giữ nguyên các hàm update_button_states, process_turn,... bên dưới)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -2812,10 +2849,13 @@ class RPGSystemCog(commands.Cog):
         embed = self.generate_solo_embed(user_id)
         
         # Cập nhật tin nhắn hiện tại thành trận đấu mới
+        # Cập nhật tin nhắn hiện tại thành trận đấu mới
         try:
-            await interaction.edit_original_response(content=None, embed=embed, view=view)
+            msg = await interaction.edit_original_response(content=None, embed=embed, view=view)
+            view.message = msg  # 🟢 LƯU LẠI MESSAGE VÀO VIEW
         except discord.errors.NotFound:
-            await interaction.followup.send(embed=embed, view=view)
+            msg = await interaction.followup.send(embed=embed, view=view)
+            view.message = msg  # 🟢 LƯU LẠI MESSAGE VÀO VIEW
     def generate_solo_embed(self, user_id: int) -> discord.Embed:
         battle = self.active_solo_battles[user_id]
     
