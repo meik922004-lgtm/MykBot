@@ -4,7 +4,7 @@ import os
 import threading
 from dotenv import load_dotenv
 from flask import Flask
-
+from Database import db
 # 1. Web server cho Render
 app = Flask(__name__)
 
