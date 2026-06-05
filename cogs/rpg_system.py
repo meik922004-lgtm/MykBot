@@ -1235,34 +1235,6 @@ class RPGSystemCog(commands.Cog):
         embed.set_footer(text="Use /combat or buttons below to fight!")
         return embed    
 
-    @tasks.loop(seconds=60)
-    async def live_boss_update_loop(self):
-        bosses = await world_boss_col.find({"is_active": True}).to_list(None)
-        if not bosses: return
-
-        async with aiohttp.ClientSession() as session: 
-            for boss in bosses:
-                # ⏱️ KIỂM TRA CƠ CHẾ 5 PHÚT KHÔNG CÓ NGƯỜI ĐÁNH
-                now = datetime.utcnow()
-                last_attacked = boss.get("last_attacked_at") or boss.get("spawned_at") or now
-                
-                if (now - last_attacked).total_seconds() >= 300: # 300 giây = 5 phút
-                    if boss.get("max_hp", 0) > 30000: # Chỉ reset nếu HP hiện tại cao hơn sàn tối thiểu
-                        # Tiến hành cập nhật Database đưa Boss về giới hạn thấp nhất
-                        updated_boss = await world_boss_col.find_one_and_update(
-                            {"_id": boss["_id"], "is_active": True},
-                            {"$set": {
-                                "current_hp": 30000,
-                                "hp": 30000,
-                                "max_hp": 30000,
-                                "last_attacked_at": now # Reset mốc thời gian để không bị lặp lại liên tục
-                            }},
-                            return_document=pymongo.ReturnDocument.AFTER
-                        )
-                        if updated_boss:
-                            boss = updated_boss # Thay thế dữ liệu để Embed hiển thị đúng HP mới
-
-
     def generate_origin_gear(self):
         """Tạo ngẫu nhiên 1 trong 3 món trang bị Origin"""
         origin_gears = [
@@ -1304,7 +1276,6 @@ class RPGSystemCog(commands.Cog):
             except Exception:
                 pass
 
-    @live_boss_update_loop.before_loop
     async def before_live_boss_update(self): await self.bot.wait_until_ready()  
     
     @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
