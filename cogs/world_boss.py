@@ -5,7 +5,6 @@ import random
 import time
 import asyncio
 from pymongo import UpdateOne
-from Database import db
 # --- CẤU HÌNH CƠ BẢN ---
 OWNER_IDS = [1283689737567211581] # Thay ID của bạn vào đây
 
