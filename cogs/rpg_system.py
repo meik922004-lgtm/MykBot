@@ -1972,7 +1972,9 @@ class RPGSystemCog(commands.Cog):
                         )
                 except (discord.Forbidden, Exception):
                     continue
-        @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
+
+    
+    @app_commands.command(name="setup_boss_channel", description="Globalchat setting")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
         is_admin = interaction.permissions.administrator if interaction.guild else False
