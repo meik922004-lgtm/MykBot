@@ -1506,48 +1506,15 @@ class RPGSystemCog(commands.Cog):
             self.auto_attack_cache[user_id] = self.auto_attack_cache.get(user_id, 0) + batch_dmg
             dmg_to_sync = self.auto_attack_cache[user_id]
 
-            result = await world_boss_col.find_one_and_update(
-                {"_id": boss["_id"], "is_active": True}, 
-                {
-                    "$inc": {"current_hp": -dmg_to_sync, "hp": -dmg_to_sync, f"damage_log.{str(user_id)}": dmg_to_sync}, 
-                    "$addToSet": {"participants": user_id},
-                    "$set": {"last_attacked_at": datetime.utcnow()} # 🔥 Làm mới thời gian đánh để không bị reset 5 phút
-                },
-                return_document=pymongo.ReturnDocument.AFTER
-            )
-            
-            if not result:
-                self.auto_attack_cache[user_id] = 0
-                continue
-                
-            self.auto_attack_cache[user_id] = 0 
-            current_hp = result.get('current_hp', result.get('hp', 0))
 
-            # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI: 10% tỷ lệ, cố định từ 300 -> 500 sát thương
-            if current_hp > 0 and random.random() < 0.10:
-                boss_dmg = random.randint(300, 750)
-                
-                if player.get("is_protecting"):
-                    boss_dmg = int(boss_dmg * 0.2)
-                    await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-                
-                new_hp = max(0, player.get("current_hp", 0) - boss_dmg)
-                await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
-                
-                if new_hp == 0:
-                    try:
-                        await interaction.followup.send(f"💀 **WARNING:** Defeated by counterattack! Auto-Attack stopped.", ephemeral=True)
-                    except (discord.NotFound, discord.HTTPException): pass
-                    self.auto_attackers.discard(user_id)
-                    break
+            # Mới: Chỉ cần thêm vào buffer
+            boss_id = str(boss["_id"])
+            if boss_id not in self.dmg_buffer: self.dmg_buffer[boss_id] = {}
+            if user_id not in self.dmg_buffer[boss_id]: 
+                self.dmg_buffer[boss_id][user_id] = {"name": user_name, "dmg": 0}
+            self.dmg_buffer[boss_id][user_id]["dmg"] += batch_dmg
 
-            # ⚔️ KHI BOSS CHẾT
-            if current_hp <= 0:
-                await self.distribute_boss_loot(result)
-                try:
-                    await interaction.followup.send(f"🎉 **{boss['name']} defeated!** Auto-attack is searching for the next target...", ephemeral=True)
-                except (discord.NotFound, discord.HTTPException): pass
-                continue
+            continue
     # 🛠️ CHỨC NĂNG 3 & 5: Tối ưu hóa Auto-Attack chạy liên tục cực nhanh cho đến khi hết trận hoặc đạt giới hạn token Discord (15p)
     async def send_dm_warning(self, user_id: str, boss_tier: int):
         """Hàm hỗ trợ gửi DM cảnh báo tránh bị lỗi chặn DM"""
