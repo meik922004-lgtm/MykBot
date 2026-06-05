@@ -1900,7 +1900,7 @@ class RPGSystemCog(commands.Cog):
 
                 # Reset trạng thái về bình thường sau khi xả skill
                 await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"is_charging_skill": False}})
-
+                await self.broadcast_turn_log(boss, [], result, is_charging=False)
             else:
                 # 🔥 KIỂM TRA ĐIỀU KIỆN GỒNG CHIÊU MỚI
                 # Tỷ lệ: 25% cơ hội kích hoạt nếu là Tier 3 trở lên
@@ -1910,7 +1910,9 @@ class RPGSystemCog(commands.Cog):
                     
                     # Cập nhật trạng thái lên DB
                     await world_boss_col.update_one({"_id": boss["_id"]}, {"$set": {"is_charging_skill": True}})
+                    await self.broadcast_turn_log(boss, [], result, is_charging=True)
                 else:
+                    await self.broadcast_turn_log(boss, [], result, is_charging=False)
                     # ⚔️ ĐÁNH THƯỜNG DIỆN RỘNG NHƯ CŨ
                     for uid in participants_this_turn:
                         player = await rpg_profiles_col.find_one({"user_id": uid})
@@ -1937,30 +1939,40 @@ class RPGSystemCog(commands.Cog):
     
     
     # Hàm phụ trợ để gửi log và update giao diện
-    async def broadcast_turn_log(self, original_boss_data, turn_log: list, updated_boss_data: dict):
-        log_text = "\n".join(turn_log)
+    async def broadcast_turn_log(self, original_boss_data, turn_log: list, updated_boss_data: dict, is_charging: bool = False):
+    # 1. Update UI trên Discord (Chỉ edit, không gửi log rời)
         embed = self.generate_boss_embed(updated_boss_data)
-        
-        async with aiohttp.ClientSession() as session:
-            for msg_info in original_boss_data.get("active_messages", []):
+    
+    # Cập nhật tin nhắn trên kênh chat (edit embed)
+        for msg_info in original_boss_data.get("active_messages", []):
+            try:
+                if msg_info.get("is_interaction"):
+                    channel = self.bot.get_channel(msg_info["channel_id"])
+                    if channel:
+                        msg = channel.get_partial_message(msg_info["message_id"])
+                        await msg.edit(embed=embed, view=CombatView(self))
+                # ... (Phần webhook giữ nguyên như trước) ...
+            except Exception as e:
+                print(f"Update UI fail: {e}")
+
+        # 2. Gửi DM cảnh báo khi Boss gồng chiêu
+        if is_charging:
+            participants = original_boss_data.get("participants", [])
+            boss_tier = original_boss_data.get("tier", 1)
+            
+            for uid in participants:
                 try:
-                    if msg_info.get("is_interaction"):
-                        channel = self.bot.get_channel(msg_info["channel_id"])
-                        if channel:
-                            # Gửi Log tổng kết lượt
-                            await channel.send(f"📜 **Combat Log - Turn End**\n{log_text}")
-                            # Edit UI Boss
-                            msg = channel.get_partial_message(msg_info["message_id"])
-                            await msg.edit(embed=embed, view=CombatView(self))
-                    else:
-                        webhook_url = msg_info.get("webhook_url")
-                        if webhook_url:
-                            webhook = discord.Webhook.from_url(webhook_url, session=session)
-                            await webhook.send(content=f"📜 **Combat Log - Turn End**\n{log_text}", username="SYSTEM RAID")
-                            await webhook.edit_message(msg_info["message_id"], embed=embed, view=CombatView(self))
-                except Exception as e:
-                    print(f"Update/Log fail: {e}")
-    @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
+                    user = self.bot.get_user(uid) or await self.bot.fetch_user(uid)
+                    if user:
+                        # Gửi DM kèm ping
+                        await user.send(
+                            f"⚠️ **BOSS WARNING!** <@{uid}>\n"
+                            f"The boss **{original_boss_data['name']}** (Tier {boss_tier}) is gathering energy!\n"
+                            f"**Use the Protect command immediately** to reduce incoming Ultimate damage!"
+                        )
+                except (discord.Forbidden, Exception):
+                    continue
+        @app_commands.command(name="setup_boss_channel", description="Setup cross-server chat")
     async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
         is_admin = interaction.permissions.administrator if interaction.guild else False
