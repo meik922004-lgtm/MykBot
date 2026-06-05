@@ -1055,7 +1055,7 @@ class RPGSystemCog(commands.Cog):
     {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
-        self.live_boss_update_loop.cancel()
+
         self.active_solo_battles = {}
         self.bot = bot
         self.auto_attackers = set() # Lưu user_id
@@ -1275,7 +1275,6 @@ class RPGSystemCog(commands.Cog):
             except Exception:
                 pass
 
-    async def before_live_boss_update(self): await self.bot.wait_until_ready()  
     
     @app_commands.command(name="spawn_boss", description="[Admin] Force spawn a World Boss")
     async def spawn_boss(self, interaction: discord.Interaction, name: str, hp: int):
@@ -1448,7 +1447,6 @@ class RPGSystemCog(commands.Cog):
         embed = self.generate_boss_embed(boss)
         msg = await interaction.followup.send(embed=embed, view=CombatView(self), wait=True)
         await world_boss_col.update_one({"_id": boss["_id"]}, {"$push": {"active_messages": {"channel_id": interaction.channel.id, "message_id": msg.id, "is_interaction": True}}})
-        if not self.live_boss_update_loop.is_running(): self.live_boss_update_loop.start()
 
     async def toggle_auto_attack(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
