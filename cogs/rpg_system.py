@@ -2139,7 +2139,20 @@ class RPGSystemCog(commands.Cog):
             
             # Chạy background task để không làm nghẽn hàm xử lý chính
             self.bot.loop.create_task(instant_update())
-    
+    def balance_damage(self, raw_damage: int) -> int:
+        """
+        Hệ thống cân bằng sát thương:
+        - Dưới 10,000 DMG: Buff x1.5 (Giúp newbie có cảm giác đóng góp).
+        - Trên 100,000 DMG: Giảm hiệu suất 50% cho phần vượt ngưỡng (Chống One-Shot Boss).
+        """
+        LOW_THRESHOLD = 10000
+        HIGH_CAP = 100000
+        
+        if raw_damage < LOW_THRESHOLD:
+            return int(raw_damage * 1.5)
+        elif raw_damage > HIGH_CAP:
+            excess = raw_damage - HIGH_CAP
+            return int(HIGH_CAP + (excess * 0.6)) # Chỉ lấy 50% hiệu quả của phần dư
     @tasks.loop(minutes=1)
     async def global_boss_turn_loop(self):
         active_bosses = await world_boss_col.find({"is_active": True}).to_list(None)
