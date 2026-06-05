@@ -1046,24 +1046,16 @@ class RPGSystemCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.auto_attackers = set()
         self.bot.loop.create_task(self.initialize_market_mega_products())
-        self.auto_attack_cache = {}
         self.HIGH_TIER_GEARS = [
     {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
     {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
     {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
-
         self.active_solo_battles = {}
         self.bot = bot
-        self.auto_attackers = set() # Lưu user_id
-        # Buffer gom sát thương: { boss_id: { user_id: { "name": str, "dmg": int } } }
-        self.dmg_buffer = {} 
-        # Khởi động vòng lặp tổng 1 phút / lần
-        if not self.global_boss_turn_loop.is_running():
-            self.global_boss_turn_loop.start()
+    
         self.solo_boss_pool = {
         "Susanoomon": {
             "name": "Susanoomon (Ancient spirit)",
