@@ -1047,7 +1047,6 @@ class RPGSystemCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.auto_attackers = set()
-        self.live_boss_update_loop.start()
         self.bot.loop.create_task(self.initialize_market_mega_products())
         self.auto_attack_cache = {}
         self.HIGH_TIER_GEARS = [
