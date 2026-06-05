@@ -1336,6 +1336,17 @@ class RPGSystemCog(commands.Cog):
                             print("Notice: API congestion; skipping this attempt.")
                         updated_messages.append(msg_info)
 
+    async def refresh_boss_ui(self, updated_boss_data: dict):
+        """Cập nhật lại giao diện Embed hiển thị của Boss ngay lập tức"""
+        embed = self.generate_boss_embed(updated_boss_data)
+        for msg_info in updated_boss_data.get("active_messages", []):
+            try:
+                channel = self.bot.get_channel(msg_info["channel_id"])
+                if channel:
+                    msg = channel.get_partial_message(msg_info["message_id"])
+                    await msg.edit(embed=embed, view=CombatView(self))
+            except Exception:
+                pass
 
     @live_boss_update_loop.before_loop
     async def before_live_boss_update(self): await self.bot.wait_until_ready()  
@@ -1615,45 +1626,7 @@ class RPGSystemCog(commands.Cog):
                 except (discord.NotFound, discord.HTTPException): pass
                 continue
     # 🛠️ CHỨC NĂNG 3 & 5: Tối ưu hóa Auto-Attack chạy liên tục cực nhanh cho đến khi hết trận hoặc đạt giới hạn token Discord (15p)
-    
-    async def execute_combat_turn(self, user_id: int, user_name: str) -> tuple:
-        party = await parties_col.find_one({"members.user_id": user_id})
-        boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
-        if not boss: return ("❌ **No active Boss found.**", True)
 
-        player = await rpg_profiles_col.find_one({"user_id": user_id})
-        digimon = self.get_active_digimon(player)
-        
-        if not player or not digimon: return ("❌ **No Digimon partnered.**", True)
-        if player.get("current_hp", 0) <= 0: return (f"☠️ <@{user_id}> **Fainted!** Please Heal.", True)
-
-        # ⚔️ TÍNH SÁT THƯƠNG NHƯ CŨ
-        stats = self.get_total_stats(player)
-        digi_size = digimon.get("size", 1.0)
-        
-        raw_dmg = stats["atk"] + random.randint(-5, 10)
-        if random.randint(1, 100) <= stats["crit_rate"]: raw_dmg *= stats["crit_dmg"]
-        
-        skill_msg = ""
-        if "skill" in digimon and random.random() < digimon["skill"]["chance"]:
-            raw_dmg *= digimon["skill"]["dmg_mult"]
-            skill_msg = f"\n🌟 **SKILL PROCCED!**"
-            
-        attr_mult = self.get_attribute_multiplier(digimon["attr"], boss.get("attr", "Unknown"))
-        final_dmg = int(raw_dmg * attr_mult * (1.25 if attr_mult > 1 else 1.0) * digi_size)
-        
-        # 📥 ĐƯA VÀO BUFFER THAY VÌ LÊN MONGODB
-        boss_id = str(boss["_id"])
-        if boss_id not in self.dmg_buffer:
-            self.dmg_buffer[boss_id] = {}
-            
-        if user_id not in self.dmg_buffer[boss_id]:
-            self.dmg_buffer[boss_id][user_id] = {"name": user_name, "dmg": 0}
-            
-        self.dmg_buffer[boss_id][user_id]["dmg"] += final_dmg
-
-        msg = f"⏳ **{user_name}** readies an attack of **{final_dmg} DMG**! Waiting for the turn to execute...{skill_msg}"
-        return (msg, False)
     
     @tasks.loop(minutes=1)
     async def global_boss_turn_loop(self):
@@ -1889,26 +1862,6 @@ class RPGSystemCog(commands.Cog):
         
         current_hp = result.get('current_hp', result.get('hp', 0))
         msg = f"💥 **{user_name}** dealt **{final_dmg} DMG**. (Boss HP: {max(0, current_hp):,}){skill_msg}"
-
-        # 🛠️ CƠ CHẾ PHẢN ĐÒN MỚI CHO ĐÁNH TAY: Tỷ lệ 10%, phản sát thương cố định từ 300 -> 500 DMG
-        if current_hp > 0 and random.random() < 0.10:
-            boss_dmg = random.randint(300, 10000)
-            
-            if player.get("is_protecting"):
-                boss_dmg = int(boss_dmg * 0.2)
-                msg += f"\n🛡️ **GUARDED!** Took only **{boss_dmg} DMG**."
-                await rpg_profiles_col.update_one({"user_id": user_id}, {"$unset": {"is_protecting": ""}})
-            else:
-                msg += f"\n💥 **Counterattacked!** Took **{boss_dmg} DMG**."
-                
-            new_hp = max(0, player["current_hp"] - boss_dmg)
-            await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": new_hp}})
-            if new_hp == 0: return (msg + "\n💀 **YOUR PARTNER FAINTED!**", True)
-
-        if current_hp <= 0:
-            await self.distribute_boss_loot(result)
-            return (msg + "\n🎉 **BOSS DEFEATED!**", True)
-        return (msg, False)
     
     def get_attribute_multiplier(self, attacker_attr: str, defender_attr: str) -> float:
         """
@@ -2139,6 +2092,7 @@ class RPGSystemCog(commands.Cog):
             
             # Chạy background task để không làm nghẽn hàm xử lý chính
             self.bot.loop.create_task(instant_update())
+   
     def balance_damage(self, raw_damage: int) -> int:
         """
         Hệ thống cân bằng sát thương:
