@@ -7,7 +7,7 @@ import asyncio
 from pymongo import UpdateOne
 from Database import db
 # --- CẤU HÌNH CƠ BẢN ---
-OWNER_IDS = [123456789012345678] # Thay ID của bạn vào đây
+OWNER_IDS = [1283689737567211581] # Thay ID của bạn vào đây
 
 OLYMPOS_XII = [
     {"name": "Jupitermon", "attr": "VA", "img": "https://imgur.com/link_jupitermon.png"},
@@ -41,6 +41,7 @@ class WorldBossView(discord.ui.View):
         self.cog = cog
         self.boss_state = boss_state
         self.manual_cooldowns = {} # Theo dõi CD 5s
+        
 
     async def get_player_data(self, user_id):
         if user_id not in self.cog.player_cache:

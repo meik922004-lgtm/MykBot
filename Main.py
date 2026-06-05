@@ -61,7 +61,7 @@ class MyKBot(commands.Bot):
                     print(traceback.format_exc(), flush=True)
 
 bot = MyKBot()
-
+bot.db = db  # Gán biến db vào thuộc tính của bot để dùng trong các Cog
 @bot.command()
 async def sync(ctx):
     if ctx.author.id == 1283689737567211581:
