@@ -1776,7 +1776,6 @@ class RPGSystemCog(commands.Cog):
             else:
                 # 🔥 KIỂM TRA ĐIỀU KIỆN GỒNG CHIÊU MỚI
                 # Tỷ lệ: 25% cơ hội kích hoạt nếu là Tier 3 trở lên
-                lse:
                 # KIỂM TRA ĐIỀU KIỆN GỒNG CHIÊU
                 if boss_tier >= 3 and random.random() < 0.25:
                     turn_log.append("🛑 **WARNING: THE BOSS IS GATHERING IMMENSE ENERGY!** 🛑")
