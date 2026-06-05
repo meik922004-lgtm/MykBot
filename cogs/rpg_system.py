@@ -2152,7 +2152,7 @@ class RPGSystemCog(commands.Cog):
             return int(raw_damage * 1.5)
         elif raw_damage > HIGH_CAP:
             excess = raw_damage - HIGH_CAP
-            return int(HIGH_CAP + (excess * 0.6)) # Chỉ lấy 50% hiệu quả của phần dư
+        return int(HIGH_CAP + (excess * 0.6)) # Chỉ lấy 50% hiệu quả của phần dư
     @tasks.loop(minutes=1)
     async def global_boss_turn_loop(self):
         active_bosses = await world_boss_col.find({"is_active": True}).to_list(None)
