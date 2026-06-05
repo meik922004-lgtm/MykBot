@@ -1447,7 +1447,23 @@ class RPGSystemCog(commands.Cog):
         embed = self.generate_boss_embed(boss)
         msg = await interaction.followup.send(embed=embed, view=CombatView(self), wait=True)
         await world_boss_col.update_one({"_id": boss["_id"]}, {"$push": {"active_messages": {"channel_id": interaction.channel.id, "message_id": msg.id, "is_interaction": True}}})
-
+  
+    async def get_active_boss(self, user_id):
+        # 1. Tìm party của người chơi
+        party = await parties_col.find_one({"members.user_id": user_id})
+        
+        # 2. Xây dựng truy vấn linh hoạt
+        # Tìm Boss có is_active: True VÀ (party_id là của tôi HOẶC không có party_id)
+        query = {
+            "is_active": True,
+            "$or": [
+                {"party_id": str(party["_id"]) if party else None}, 
+                {"party_id": {"$exists": False}},
+                {"party_id": ""}
+            ]
+        }
+        return await world_boss_col.find_one(query)
+        
     async def toggle_auto_attack(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
@@ -1483,10 +1499,12 @@ class RPGSystemCog(commands.Cog):
                 break
 
             party = await parties_col.find_one({"members.user_id": user_id})
-            boss = await world_boss_col.find_one({"is_active": True, "party_id": str(party["_id"]) if party else {"$exists": False}})
+                        # Thay thế phần lấy boss cũ bằng:
+            boss = await self.get_active_boss(user_id)
 
-            # 🔄 NẾU KHÔNG CÓ BOSS: Giữ trạng thái chạy ngầm, đợi boss spawn
             if not boss:
+                # Nếu không tìm thấy, đừng spam log, hãy đợi 1 phút rồi kiểm tra lại
+                await asyncio.sleep(30) 
                 continue
 
             digimon = self.get_active_digimon(player)
