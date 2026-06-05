@@ -2148,13 +2148,21 @@ class RPGSystemCog(commands.Cog):
         LOW_THRESHOLD = 10000
         HIGH_CAP = 100000
         
+        # 1. Sát thương dưới 10k: Buff cho newbie
         if raw_damage < LOW_THRESHOLD:
             return int(raw_damage * 1.5)
+        
+        # 2. Sát thương trên 100k: Giảm 50% hiệu suất phần vượt ngưỡng
         elif raw_damage > HIGH_CAP:
             excess = raw_damage - HIGH_CAP
-        return int(HIGH_CAP + (excess * 0.6)) # Chỉ lấy 50% hiệu quả của phần dư
+            return int(HIGH_CAP + (excess * 0.5)) # Đưa return vào trong khối elif này
+            
+        # 3. Sát thương từ 10k đến 100k: Giữ nguyên hoàn toàn
+        return int(raw_damage)
+
     @tasks.loop(minutes=1)
     async def global_boss_turn_loop(self):
+        # Code logic vòng lặp của bạn tiếp tục ở đây...
         active_bosses = await world_boss_col.find({"is_active": True}).to_list(None)
         
         for boss in active_bosses:
