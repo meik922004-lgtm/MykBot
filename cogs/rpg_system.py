@@ -1326,7 +1326,7 @@ class RPGSystemCog(commands.Cog):
             # --- Siêu Boss Hệ Vaccine ---
             {"name": "Omnimon (Royal Knight)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/omegamon.jpg"},
             {"name": "Alphamon Ouryuken", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/alphamon_ouryuken.jpg"},
-            {"name": "Gallantmon X-Antibody", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/dukemon_x.jpg"},
+            {"name": "Gallantmon X-Antibody", "attr": "Virus", "img": "https://digimon.net/cimages/digimon/dukemon_x.jpg"},
             {"name": "Susanoomon (Ancient)", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/susanoomon.jpg"},
             {"name": "Jesmon GX", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/jesmon_gx.jpg"},
             {"name": "Imperialdramon Paladin Mode", "attr": "Vaccine", "img": "https://digimon.net/cimages/digimon/imperialdramon_pm.jpg"},
