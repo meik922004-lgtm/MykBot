@@ -1227,7 +1227,7 @@ class RPGSystemCog(commands.Cog):
         embed.set_footer(text="Use /combat or buttons below to fight!")
         return embed    
 
-    @tasks.loop(seconds=15)
+    @tasks.loop(seconds=60)
     async def live_boss_update_loop(self):
         bosses = await world_boss_col.find({"is_active": True}).to_list(None)
         if not bosses: return
@@ -1435,7 +1435,7 @@ class RPGSystemCog(commands.Cog):
         HITS_PER_INTERVAL = 2
 
         while user_id in self.auto_attackers:
-            await asyncio.sleep(5)  # Trả về sleep 5s giữ nhịp độ an toàn cho database
+            await asyncio.sleep(10)  # Trả về sleep 5s giữ nhịp độ an toàn cho database
             if user_id not in self.auto_attackers: break
 
             player = await rpg_profiles_col.find_one({"user_id": user_id})
