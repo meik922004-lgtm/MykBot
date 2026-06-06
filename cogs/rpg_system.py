@@ -2133,7 +2133,7 @@ class RPGSystemCog(commands.Cog):
             return await interaction.followup.send("❌ You don't have enough Hatch Cores (50 cores required).", ephemeral=True)
 
         is_vip = profile.get("is_vip", False)
-        available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data["vip"] or is_vip]
+        available = [name for name, data in self.DIGIMON_DATA["rookie"].items() if not data.get("vip", False) or is_vip]
         hatched_name = random.choice(available)
         base_stats = self.DIGIMON_DATA["rookie"][hatched_name]
         size_pct = round(random.uniform(1.00 if is_vip else 0.85, 1.30 if is_vip else 1.25), 3)
