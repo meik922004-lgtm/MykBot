@@ -21,6 +21,29 @@ OWNER_IDS = [1283689737567211581]
 # ========================================================================
 # GLOBAL CONSTANTS & POOLS
 # ========================================================================
+OLYMPOS_XII = [
+    {"name": "Jupitermon", "attr": "VA", "img": "https://imgur.com/link_jupitermon.png"},
+    {"name": "Junomon", "attr": "VI", "img": "https://imgur.com/link_junomon.png"},
+    {"name": "Ceresmon", "attr": "DA", "img": "https://imgur.com/link_ceresmon.png"},
+    {"name": "Bacchusmon", "attr": "VI", "img": "https://imgur.com/link_bacchusmon.png"},
+    {"name": "Apollomon", "attr": "VA", "img": "https://imgur.com/link_apollomon.png"},
+    {"name": "Dianamon", "attr": "DA", "img": "https://imgur.com/link_dianamon.png"},
+    {"name": "Minervamon", "attr": "VI", "img": "https://imgur.com/link_minervamon.png"},
+    {"name": "Marsmon", "attr": "VA", "img": "https://imgur.com/link_marsmon.png"},
+    {"name": "Vulcanusmon", "attr": "DA", "img": "https://imgur.com/link_vulcanusmon.png"},
+    {"name": "Venusmon", "attr": "VA", "img": "https://imgur.com/link_venusmon.png"},
+    {"name": "Mercurymon", "attr": "VI", "img": "https://imgur.com/link_mercurymon.png"},
+    {"name": "Neptunemon", "attr": "VA", "img": "https://imgur.com/link_neptunemon.png"},
+]
+
+# Scale chỉ số Boss theo Tier (Tier 1: 30k HP, 300 ATK)
+BOSS_STATS = {
+    1: {"hp": 30000, "atk": 300},
+    2: {"hp": 150000, "atk": 800},
+    3: {"hp": 500000, "atk": 2000, "skill_dmg_pct": 0.50},
+    4: {"hp": 1500000, "atk": 5000, "skill_dmg_pct": 0.70},
+    5: {"hp": 5000000, "atk": 12000, "skill_dmg_pct": 0.90},
+}
 
 NEW_MEGA_POOL = [
     {"name": "ShineGreymon BM", "stage": "Mega", "attr": "Vaccine", "base_atk": 1270, "base_hp": 15500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/shinegreymon_bm.jpg", "skill": {"name": "Final Shining Burst", "dmg_mult": 1.8, "chance": 0.15}},
@@ -55,7 +78,9 @@ class GearInventorySelect(discord.ui.Select):
         options = []
         self.cog = cog_instance
         
+        # Tách biệt 2 kho đồ
         inventory = profile.get("inventory", [])
+        gears_inventory = profile.get("gears_inventory", [])
         gear = profile.get("gear", {}) 
         
         # 1. Đưa các trang bị ĐANG MẶC vào đầu danh sách để dễ Gỡ (Unequip)
@@ -70,15 +95,11 @@ class GearInventorySelect(discord.ui.Select):
                     emoji="🔓"
                 ))
 
-        # 2. Gom nhóm và đưa các vật phẩm TRONG TÚI vào danh sách
+        # 2. Gom nhóm và đưa các vật phẩm TRONG TÚI (inventory) vào danh sách
         string_counts = {}
-        dict_items = []
-        
         for gear_item in inventory:
             if isinstance(gear_item, str):
                 string_counts[gear_item] = string_counts.get(gear_item, 0) + 1
-            elif isinstance(gear_item, dict):
-                dict_items.append(gear_item)
         
         for gear_str, count in string_counts.items():
             if len(options) >= 25: break
@@ -98,18 +119,24 @@ class GearInventorySelect(discord.ui.Select):
                 value=gear_str 
             ))
             
-        for gear_dict in dict_items:
+        # 3. Đưa các TRANG BỊ BOSS (gears_inventory) vào danh sách
+        for gear_dict in gears_inventory:
             if len(options) >= 25: break
             stats = []
+            
+            # Cập nhật thêm chỉ số cho Vice theo form DB mới
             if "atk" in gear_dict: stats.append(f"ATK +{gear_dict['atk']}")
             if "def" in gear_dict: stats.append(f"DEF +{gear_dict['def']}")
             if "hp" in gear_dict: stats.append(f"HP +{gear_dict['hp']}")
+            if "crit_rate" in gear_dict: stats.append(f"CR +{gear_dict['crit_rate']}%")
+            if "crit_dmg" in gear_dict: stats.append(f"CD +{gear_dict['crit_dmg']}")
+            
             stat_desc = " | ".join(stats) if stats else "No Stats"
             
             options.append(discord.SelectOption(
                 label=f"{gear_dict.get('name', 'Unknown')} ({gear_dict.get('rarity', 'Common')})",
                 description=f"Type: {gear_dict.get('type', 'N/A').upper()} | {stat_desc}",
-                value=gear_dict.get("id", str(uuid.uuid4()))
+                value=gear_dict.get("id", str(uuid.uuid4())) # Lấy ID để tìm chính xác lúc mặc
             ))
 
         if not options:
@@ -120,35 +147,46 @@ class GearInventorySelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         selected_value = self.values[0]
         if selected_value == "empty":
-            return await interaction.response.send_message("❌ Your inventory is empty.!", ephemeral=True)
+            return await interaction.response.send_message("❌ Your inventory is empty!", ephemeral=True)
             
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
+        
+        # Lưu ý: rpg_profiles_col là biến global của bạn, tôi giữ nguyên
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         
         if not profile:
             return await interaction.followup.send("❌ Character data not found.", ephemeral=True)
             
         inventory = profile.get("inventory", [])
+        gears_inventory = profile.get("gears_inventory", [])
         gear = profile.get("gear", {})
 
+        # --- LOGIC GỠ TRANG BỊ ---
         if selected_value.startswith("unequip_"):
             slot = selected_value.replace("unequip_", "")
             item_to_remove = gear.get(slot)
             
-            if item_to_remove:
-                inventory.append(item_to_remove) 
+            if item_to_remove and item_to_remove != "None":
+                # Phân loại để cất đồ vào đúng kho
+                if isinstance(item_to_remove, dict):
+                    gears_inventory.append(item_to_remove) 
+                else:
+                    inventory.append(item_to_remove) # Fallback cho đồ chuẩn cũ (string)
+                
                 gear[slot] = "None"          
                 
                 await rpg_profiles_col.update_one(
                     {"user_id": user_id},
-                    {"$set": {"inventory": inventory, "gear": gear}}
+                    {"$set": {"inventory": inventory, "gears_inventory": gears_inventory, "gear": gear}}
                 )
+                
                 item_name = item_to_remove if isinstance(item_to_remove, str) else item_to_remove.get("name")
                 
-                # [AUTO REFRESH] Cập nhật giao diện kho đồ sau khi gỡ
+                # [AUTO REFRESH] 
                 updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
                 try:
+                    # Chú ý gọi đúng class embed/view của bạn
                     await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
                 except Exception: pass
 
@@ -156,40 +194,51 @@ class GearInventorySelect(discord.ui.Select):
             else:
                 return await interaction.followup.send("❌ Error: This location is not equipped.", ephemeral=True)
 
+        # --- TÌM VẬT PHẨM MÀ NGƯỜI DÙNG CHỌN ---
         target_item = None
         is_dict = False
+        target_list = None # Lưu lại kho chứa vật phẩm để lát remove cho đúng
+
+        # Quét ở túi thường trước (Fruit)
         for item in inventory:
             if isinstance(item, str) and item == selected_value:
                 target_item = item
+                target_list = inventory
                 break
-            elif isinstance(item, dict) and item.get("id") == selected_value:
-                target_item = item
-                is_dict = True
-                break
+                
+        # Nếu không có ở túi thường, quét ở túi đồ Boss (trang bị UUID)
+        if target_item is None:
+            for item in gears_inventory:
+                if isinstance(item, dict) and item.get("id") == selected_value:
+                    target_item = item
+                    is_dict = True
+                    target_list = gears_inventory
+                    break
                 
         if target_item is None:
             return await interaction.followup.send("❌ This item is no longer in your inventory!", ephemeral=True)
             
         item_name = target_item if isinstance(target_item, str) else target_item.get("name", "Unknown")
         
+        # --- LOGIC DÙNG FRUIT (GIỮ NGUYÊN) ---
         if "Fruit" in item_name:
             active_id = profile.get("active_digimon_id")
             digimon_list = profile.get("digimon_list", [])
             active_digi = next((d for d in digimon_list if d["id"] == active_id), None)
             
             if not active_digi:
-                return await interaction.followup.send("❌ You need to activate a Digimon before using a Fruit.!", ephemeral=True)
+                return await interaction.followup.send("❌ You need to activate a Digimon before using a Fruit!", ephemeral=True)
                 
             new_size = round(random.uniform(1, 1.30), 2)
             active_digi["size"] = new_size
-            inventory.remove(target_item)
+            inventory.remove(target_item) # Xóa Fruit khỏi kho
             
             await rpg_profiles_col.update_one(
                 {"user_id": user_id},
                 {"$set": {"inventory": inventory, "digimon_list": digimon_list}}
             )
             
-            # [AUTO REFRESH] Cập nhật giao diện sau khi dùng Fruit
+            # [AUTO REFRESH]
             updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
             try:
                 await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
@@ -197,6 +246,7 @@ class GearInventorySelect(discord.ui.Select):
 
             return await interaction.followup.send(f"🍎 **{item_name}** has been used on **{active_digi['name']}**!\n📏 New size: **{new_size * 100:.1f}%**", ephemeral=True)
             
+        # --- LOGIC MẶC TRANG BỊ ---
         cleaned_name = self.cog.clean_item_name(item_name)
         gear_base_data = self.cog.ITEMS.get(cleaned_name, {}) if not is_dict else target_item
         gear_type = gear_base_data.get("type")
@@ -204,26 +254,35 @@ class GearInventorySelect(discord.ui.Select):
         if gear_type in ["weapon", "armor", "vice"]:
             old_gear = gear.get(gear_type)
             
+            # 1. Cất đồ cũ vào kho tương ứng
             if old_gear and old_gear != "None":
-                inventory.append(old_gear)
+                if isinstance(old_gear, dict):
+                    gears_inventory.append(old_gear)
+                else:
+                    inventory.append(old_gear) # Fallback cho đồ chuẩn cũ (string)
                 
+            # 2. Lắp đồ mới lên người
             gear[gear_type] = target_item
-            inventory.remove(target_item)
             
+            # 3. Xóa đồ mới khỏi kho ban đầu của nó
+            if target_list is not None:
+                target_list.remove(target_item)
+            
+            # 4. Update Database
             await rpg_profiles_col.update_one(
                 {"user_id": user_id},
-                {"$set": {"inventory": inventory, "gear": gear}}
+                {"$set": {"inventory": inventory, "gears_inventory": gears_inventory, "gear": gear}}
             )
             
-            # [AUTO REFRESH] Cập nhật giao diện sau khi mặc đồ mới
+            # [AUTO REFRESH]
             updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
             try:
                 await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
             except Exception: pass
 
-            return await interaction.followup.send(f"✅**{item_name}** has been placed in position**[{gear_type.upper()}]**!", ephemeral=True)
+            return await interaction.followup.send(f"✅ **{item_name}** has been placed in position **[{gear_type.upper()}]**!", ephemeral=True)
             
-        await interaction.followup.send(f"📦Item **{item_name}** cannot be used directly here..", ephemeral=True)
+        await interaction.followup.send(f"📦 Item **{item_name}** cannot be used directly here.", ephemeral=True)
 
 class DigiBagSelect(discord.ui.Select):
     def __init__(self, digimon_list, active_id, cog_instance):
@@ -563,6 +622,629 @@ class MarketShopView(discord.ui.View):
         super().__init__(timeout=180)
         # Tự động nạp menu lựa chọn mua hàng dựa theo dữ liệu thực tế
         self.add_item(MarketBuySelect(listings, cog_instance))
+
+class WorldBossView(discord.ui.View):
+    def __init__(self, cog, boss_state):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.boss_state = boss_state
+        self.manual_cooldowns = {} # Theo dõi CD 5s
+        
+
+    async def get_player_data(self, user_id):
+        if user_id not in self.cog.player_cache:
+            player_data = await self.cog.db.rpg_profiles.find_one({"user_id": user_id})
+            if not player_data: return None
+            
+            self.cog.player_cache[user_id] = {
+                "db_data": player_data,
+                "turn_dmg": 0,
+                "total_dmg": 0,
+                "auto_attack": False,
+                "auto_attack_start_time": 0, # MỚI: Bắt đầu tính giờ Auto
+                "protect": False,
+                "hp": player_data.get('stats', {}).get('hp', 100),
+                "is_dead_notified": False # MỚI: Đánh dấu để không spam tin nhắn chết mỗi phút
+            }
+        return self.cog.player_cache[user_id]
+
+    @discord.ui.button(label="Attack", style=discord.ButtonStyle.danger, custom_id="wb_attack")
+    async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        now = time.time()
+        if interaction.user.id in self.manual_cooldowns and now - self.manual_cooldowns[interaction.user.id] < 5:
+            return await interaction.response.send_message("⏳ Đang hồi chiêu (5s)...", ephemeral=True)
+            
+        p_cache = await self.get_player_data(interaction.user.id)
+        if not p_cache or p_cache['hp'] <= 0:
+            return await interaction.response.send_message("❌ Bạn đã chết hoặc chưa tạo profile!", ephemeral=True)
+
+        self.manual_cooldowns[interaction.user.id] = now
+        
+        # Lấy đầy đủ 4 tham số từ hàm mới
+        dmg, is_crit, used_skill, skill_name = self.cog.calculate_damage(p_cache['db_data'], self.boss_state['attr'])
+        
+        p_cache['turn_dmg'] += dmg
+        p_cache['total_dmg'] += dmg
+        
+        # Build chuỗi thông báo kết quả chi tiết
+        msg = f"💥 Bạn đã tung đòn đánh gây **{dmg:,.0f}** sát thương!"
+        if used_skill: 
+            msg = f"✨ Kỹ năng **[{skill_name}]** kích hoạt! " + msg
+        if is_crit: 
+            msg = f"🔥 **BẠO KÍCH!** " + msg
+            
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @discord.ui.button(label="Auto Attack", style=discord.ButtonStyle.primary, custom_id="wb_auto")
+    async def btn_auto(self, interaction: discord.Interaction, button: discord.ui.Button):
+        p_cache = await self.get_player_data(interaction.user.id)
+        if not p_cache: return await interaction.response.send_message("❌ Chưa có profile!", ephemeral=True)
+        if p_cache['hp'] <= 0: return await interaction.response.send_message("❌ Bạn đã tử trận, không thể bật Auto!", ephemeral=True)
+        
+        p_cache['auto_attack'] = not p_cache['auto_attack']
+        if p_cache['auto_attack']:
+            p_cache['auto_attack_start_time'] = time.time() # Lưu thời điểm bật
+            status = "BẬT (Kéo dài tối đa 15 phút)"
+        else:
+            p_cache['auto_attack_start_time'] = 0
+            status = "TẮT"
+            
+        await interaction.response.send_message(f"🔄 Đã {status} Auto Attack!", ephemeral=True)
+
+    @discord.ui.button(label="Protect", style=discord.ButtonStyle.success, custom_id="wb_protect")
+    async def btn_protect(self, interaction: discord.Interaction, button: discord.ui.Button):
+        p_cache = await self.get_player_data(interaction.user.id)
+        if not p_cache: return await interaction.response.send_message("❌ Chưa có profile!", ephemeral=True)
+        
+        p_cache['protect'] = True
+        await interaction.response.send_message("🛡️ Bạn đã dựng khiên bảo vệ cho lượt này!", ephemeral=True)
+
+    @discord.ui.button(label="Heal", style=discord.ButtonStyle.secondary, custom_id="wb_heal")
+    async def btn_heal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Giả lập bơm máu đơn giản
+        p_cache = await self.get_player_data(interaction.user.id)
+        if not p_cache: return
+        max_hp = p_cache['db_data'].get('stats', {}).get('hp', 100)
+        p_cache['hp'] = max_hp
+        await interaction.response.send_message("💉 Bạn đã hồi đầy máu!", ephemeral=True)
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, custom_id="wb_refresh")
+    async def btn_refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 1. Gọi lại hàm build_boss_embed để lấy dữ liệu sát thương/bảng xếp hạng mới nhất từ cache
+        updated_embed = self.cog.build_boss_embed()
+        
+        # 2. Edit thẳng vào tin nhắn hiện tại chứa nút bấm này
+        await interaction.response.edit_message(embed=updated_embed, view=self)
+
+class WorldBossSystem(commands.Cog):
+    def __init__(self, bot, db):
+        self.bot = bot
+        self.db = bot.db # Thích ứng với khai báo MongoDB của bạn
+        self.boss_channels_col = self.db.boss_channels 
+        self.rpg_profiles = db["rpg_profiles"]
+        self.world_boss = db["world_boss"]
+
+        # Global State
+        self.boss_state = {
+            "active": False,
+            "tier": 1,
+            "hp": 0,
+            "max_hp": 0,
+            "atk": 0,
+            "name": "",
+            "attr": "",
+            "img": "",
+            "charging_skill": False,
+            "message_id": None,
+            "channel_id": None
+        }
+        self.player_cache = {} # Lưu tạm trạng thái player trong turn
+        self.turn = 0
+        
+        # Khởi động loop
+        self.boss_loop.start()
+    @app_commands.command(name="combat", description="Displays the user interface for battling the current World Boss.")
+    async def combat(self, interaction: discord.Interaction):
+        if not self.boss_state["active"]:
+            return await interaction.response.send_message("❌ Hiện tại không có World Boss nào đang xuất hiện!", ephemeral=True)
+            
+        embed = self.build_boss_embed()
+        # View vẫn lưu trạng thái của vòng lặp hiện tại
+        await interaction.response.send_message(embed=embed, view=WorldBossView(self, self.boss_state))
+    import datetime
+
+    @app_commands.command(name="admin_spawn_boss", description="[ADMIN] Create and summon your own custom World Boss")
+    @app_commands.default_permissions(administrator=True) # Yêu cầu quyền Admin trên Discord
+    @app_commands.describe(
+        name="Boss name",
+        hp="Max hp",
+        atk="ATK",
+        attr="Attribute: VA, VI, DA, UN",
+    )
+    # Gợi ý chọn hệ để Admin không nhập sai
+    @app_commands.choices(attr=[
+        app_commands.Choice(name="Vaccine (VA)", value="VA"),
+        app_commands.Choice(name="Virus (VI)", value="VI"),
+        app_commands.Choice(name="Data (DA)", value="DA"),
+        app_commands.Choice(name="Unknown (UN)", value="UN")
+    ])
+    async def admin_spawn_boss(self, interaction: discord.Interaction, name: str, hp: int, atk: int, attr: app_commands.Choice[str]):
+        
+        # 1. Cập nhật trạng thái in-memory cho Boss tùy chỉnh
+        # Đặt tier là "Custom" hoặc 0 để phân biệt với Boss hệ thống
+        self.boss_state.update({
+            "active": True, 
+            "tier": "Custom", 
+            "max_hp": hp, 
+            "hp": hp, 
+            "atk": atk,
+            "name": name, 
+            "attr": attr.value, 
+            "charging_skill": False,
+            "message_id": None,
+            "channel_id": None
+        })
+        
+        # Reset turn và lịch sử người chơi
+        self.player_cache.clear()
+        self.turn = 0
+        
+        # 2. Lưu trạng thái Boss này vào MongoDB
+        boss_db_document = {
+            "$set": {
+                "active": self.boss_state["active"],
+                "tier": self.boss_state["tier"],
+                "hp": self.boss_state["hp"],
+                "max_hp": self.boss_state["max_hp"],
+                "atk": self.boss_state["atk"],
+                "name": self.boss_state["name"],
+                "attr": self.boss_state["attr"],
+                "charging_skill": self.boss_state["charging_skill"],
+                "turn": self.turn,
+                "spawned_at": datetime.datetime.now(datetime.timezone.utc) 
+            }
+        }
+        
+        try:
+            # Ghi đè con Boss hiện tại trong Database thành Boss Admin vừa tạo
+            await self.world_boss.update_one(
+                {"boss_type": "global_boss"}, 
+                boss_db_document, 
+                upsert=True
+            )
+            
+            # Gửi thông báo thành công
+            success_msg = (f"✅ **[ADMIN]** Custom Boss created successfully: **{name}**!\n"
+                           f"⚔️ **HP:** {hp:,} | **ATK:** {atk:,} | **Att:** {attr.value}\n"
+                           f"Players can now use `/combat` to initiate a battle immediately..")
+            
+            await interaction.response.send_message(success_msg, ephemeral=False)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌An error occurred while saving to the database.: {e}", ephemeral=True)
+    # Hàm tính sát thương của người chơi (Yêu cầu 7)
+    def calculate_damage(self, db_data, boss_attr):
+        # 1. Lấy Base Stats
+        stats = db_data.get('stats', {})
+        base_atk = stats.get('atk', 0)
+        base_crit_rate = stats.get('crit_rate', 0)
+        
+        # 2. Lấy All Gear Stats (Equipment, Armor, Vice)
+        gear = db_data.get('gear', {})
+        weapon_atk = gear.get('weapon', {}).get('atk', 0)
+        
+        # Vice thường mang dòng crit rate / crit dmg
+        vice_crit_rate = gear.get('vice', {}).get('crit_rate', 0)
+        # Giả định crit_dmg trong DB là multiplier cộng thêm (VD: crit_dmg = 3 nghĩa là +300% sát thương bạo)
+        vice_crit_dmg = gear.get('vice', {}).get('crit_dmg', 0.0) 
+        
+        # Armor thường không cộng ATK nhưng phòng hờ nếu thiết kế của bạn có
+        armor_atk = gear.get('armor', {}).get('atk', 0)
+
+        # 3. Lấy Active Digimon & Skill
+        active_id = db_data.get('active_digimon_id')
+        digimon_list = db_data.get('digimon_list', [])
+        active_digi = next((d for d in digimon_list if d.get('id') == active_id), {})
+        
+        digi_atk = active_digi.get('atk', 0)
+        digi_attr = active_digi.get('attr', 'NO')
+        digi_size = active_digi.get('size', 1.0)
+        
+        skill = active_digi.get('skill', {})
+        skill_name = skill.get('name', None)
+        skill_dmg_mult = skill.get('dmg_mult', 1.0)
+        skill_chance = skill.get('chance', 0.0)
+        
+        # ---> Bắt đầu tính toán <---
+        
+        # Tổng hợp ATK từ mọi nguồn
+        total_atk = base_atk + weapon_atk + armor_atk + digi_atk
+        
+        # Hệ số Scale Size (VD size 1.218 -> tăng 1.218 lần ATK)
+        total_atk *= digi_size
+        
+        # Khắc hệ (VA > VI > DA > VA)
+        attr_mult = 1.0
+        if (digi_attr == "VA" and boss_attr == "VI") or \
+           (digi_attr == "VI" and boss_attr == "DA") or \
+           (digi_attr == "DA" and boss_attr == "VA"):
+            attr_mult = 1.3 # Khắc hệ +30%
+        elif (digi_attr == "VA" and boss_attr == "DA") or \
+             (digi_attr == "VI" and boss_attr == "VA") or \
+             (digi_attr == "DA" and boss_attr == "VI"):
+            attr_mult = 0.8 # Bị khắc -20%
+            
+        final_dmg = total_atk * attr_mult
+        
+        # Tính toán Kỹ năng (Skill Proc) - Dựa theo Requirement 12
+        used_skill = False
+        if skill_name and random.random() <= skill_chance:
+            final_dmg *= skill_dmg_mult
+            used_skill = True
+        
+        # Tính toán Bạo kích (Crit)
+        total_crit_rate = base_crit_rate + vice_crit_rate
+        # Base bạo kích là 1.5x (150%), cộng thêm hiệu ứng từ Vice
+        total_crit_mult = 1.5 + vice_crit_dmg 
+        
+        is_crit = random.randint(1, 100) <= total_crit_rate
+        if is_crit: 
+            final_dmg *= total_crit_mult
+        
+        # Trả về 4 giá trị để in thông báo skill cho Manual Attack
+        return int(final_dmg), is_crit, used_skill, skill_name
+
+    # Hàm Spawn Boss (Yêu cầu 1, 2)
+    async def spawn_boss(self, tier=1):
+        if tier > 5: tier = 1 # Reset tier sau tier 5
+        
+        boss_data = random.choice(OLYMPOS_XII)
+        stats = BOSS_STATS[tier]
+        
+        # Cập nhật trạng thái ngầm
+        self.boss_state.update({
+            "active": True, "tier": tier,
+            "max_hp": stats["hp"], "hp": stats["hp"], "atk": stats["atk"],
+            "name": boss_data["name"], "attr": boss_data["attr"], "img": boss_data["img"],
+            "charging_skill": False
+        })
+        self.player_cache.clear()
+        self.turn = 0
+        
+        print(f"[WORLD BOSS] {boss_data['name']} (Tier {tier}) It has spawned in the background. Waiting for a player to use /combat!")
+        # Không còn gửi Embed ra kênh nào nữa
+    # --- LỆNH SETUP CHANNEL (Yêu cầu 1) ---
+    @app_commands.command(name="setup_boss_channel", description="Setup channel for World Boss")
+    async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+        is_admin = interaction.permissions.administrator if interaction.guild else False
+        if not (is_admin or interaction.user.id in OWNER_IDS): 
+            return await interaction.followup.send("❌ Access Denied!", ephemeral=True)
+            
+        try:
+            # Lưu thẳng vào DB config
+            await self.boss_channels_col.update_one({}, {"$set": {"channel_id": channel.id, "guild_id": interaction.guild.id}}, upsert=True)
+            await interaction.followup.send("✅ Set global chat succefulll", ephemeral=True)
+            await self.spawn_boss(tier=1)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Lỗi: {e}", ephemeral=True) 
+
+    # --- VÒNG LẶP CHÍNH CƠ CHẾ TURN-BASE (Yêu cầu 9) ---
+    @tasks.loop(seconds=60)
+    async def boss_loop(self):
+        if not self.boss_state["active"]: return
+        self.turn += 1
+        current_time = time.time()
+        # 1. Tính toán sát thương AUTO ATTACK
+        for uid, p_data in self.player_cache.items():
+            if p_data["auto_attack"] and p_data["hp"] > 0:
+                # 15 phút = 15 * 60 = 900 giây
+                if current_time - p_data["auto_attack_start_time"] >= 900:
+                    p_data["auto_attack"] = False
+                    try:
+                        user = self.bot.get_user(uid)
+                        if user: await user.send("⏳ **SYSTEM:** The Auto Attack mode automatically turns off after 15 minutes of continuous operation..")
+                    except: pass
+                else:
+                    dmg_per_hit, _, _, _ = self.calculate_damage(p_data["db_data"], self.boss_state['attr'])
+                    auto_dmg = dmg_per_hit * 8
+                    p_data["turn_dmg"] += auto_dmg
+                    p_data["total_dmg"] += auto_dmg
+        
+        # 2. Boss nhận sát thương
+        total_turn_dmg = sum(p["turn_dmg"] for p in self.player_cache.values())
+        self.boss_state["hp"] -= total_turn_dmg
+        
+        # 3. KẾT THÚC TRẬN ĐÁNH NẾU BOSS CHẾT (Yêu cầu 10)
+        if self.boss_state["hp"] <= 0:
+            self.boss_state["hp"] = 0
+            await self.handle_boss_death()
+            return
+            
+        # 4. LƯỢT BOSS TẤN CÔNG (Yêu cầu 4)
+        bulk_operations = []
+        is_firing_skill = self.boss_state["charging_skill"]
+        
+        for uid, p_data in self.player_cache.items():
+            if p_data["hp"] <= 0: continue
+            
+            dmg_taken = 0
+            hit_by_skill = False
+            
+            # Tính toán lượng máu mất
+            if is_firing_skill:
+                if not p_data["protect"]:
+                    pct = BOSS_STATS[self.boss_state["tier"]]["skill_dmg_pct"]
+                    max_player_hp = p_data["db_data"].get("stats", {}).get("hp", 1000)
+                    dmg_taken = int(max_player_hp * pct) + self.boss_state["atk"] * 3
+                    hit_by_skill = True
+                else:
+                    dmg_taken = 0 # Đã dùng khiên cản skill
+            elif not p_data["protect"]:
+                player_def = p_data["db_data"].get("stats", {}).get("def", 0)
+                dmg_taken = max(1, self.boss_state["atk"] - player_def)
+                
+            p_data["hp"] -= dmg_taken
+            p_data["protect"] = False # Reset khiên mỗi lượt
+            p_data["turn_dmg"] = 0
+            
+            # Chuẩn bị tin nhắn DM thông báo
+            dm_messages = []
+            
+            # Thông báo sài Skill (Nếu Boss xả skill lượt này)
+            if is_firing_skill:
+                if p_data["hp"] > 0: # Chỉ báo ăn skill nếu còn sống (nếu chết thì ghép vào tin báo tử luôn)
+                    if hit_by_skill:
+                        dm_messages.append(f"💥 **{self.boss_state['name']} Just used AOE skill** You lost**{dmg_taken:,.0f} HP**!")
+                    else:
+                        dm_messages.append(f"🛡️ **{self.boss_state['name']} Just used AOE skill!** Your Protect layer completely blocked the attack.!")
+            
+            # Thông báo Tử trận (Kèm hủy Auto)
+            if p_data["hp"] <= 0:
+                p_data["hp"] = 0
+                p_data["auto_attack"] = False # Hủy auto attack ngay lập tức
+                if not p_data.get("is_dead_notified"):
+                    p_data["is_dead_notified"] = True
+                    dm_messages.append(f"💀 **YOU ARE DEAD!** Your health has dropped to 0 after this attack. {self.boss_state['name']}.The Auto Attack system has been automatically deactivated..")
+            
+            # Gửi tin nhắn ngầm cho user
+            if dm_messages:
+                try:
+                    user = self.bot.get_user(uid)
+                    if user: await user.send("\n\n".join(dm_messages))
+                except: pass
+                
+            # Ghi vào DB
+            bulk_operations.append(UpdateOne(
+                {"user_id": uid},
+                {"$set": {"current_hp": max(0, p_data["hp"])}}
+            ))
+            
+        if is_firing_skill: self.boss_state["charging_skill"] = False
+
+        # 5. BOSS CHUẨN BỊ SKILL CHO TURN TỚI (Yêu cầu 4, 5)
+        if self.boss_state["tier"] >= 3 and random.random() < 0.2 and not self.boss_state["charging_skill"]:
+            self.boss_state["charging_skill"] = True
+            # Nhắn tin DM cảnh báo (Yêu cầu 5)
+            for uid, p_data in self.player_cache.items():
+                if p_data["hp"] > 0:
+                    try:
+                        user = self.bot.get_user(uid)
+                        if user: await user.send(f"⚠️ **WARNING FROM THE WORLD BOSS:** {self.boss_state['name']}  about to unleash the Ultimate AoE Skill! Return to your channel and activate **Protect** right before the 1 minute runs out!")
+                    except: pass # Bỏ qua nếu user tắt DM
+
+        # 6. Bulk Write lên DB (Yêu cầu 9)
+        if bulk_operations:
+            await self.db.rpg_profiles.bulk_write(bulk_operations)
+    def build_boss_embed(self):
+        embed = discord.Embed(
+            title=f"👑 [Tier {self.boss_state['tier']}] {self.boss_state['name']} (Hệ {self.boss_state['attr']})", 
+            color=discord.Color.red()
+        )
+        embed.set_image(url=self.boss_state["img"])
+        
+        # Logic thanh máu
+        hp_pct = max(0.0, self.boss_state['hp'] / self.boss_state['max_hp'])
+        hp_bar = int(hp_pct * 10)
+        embed.add_field(
+            name="Chỉ số Boss", 
+            value=f"**HP:** {'🟥'*hp_bar}{'⬛'*(10-hp_bar)} ({self.boss_state['hp']:,.0f}/{self.boss_state['max_hp']:,.0f})\n**ATK:** {self.boss_state['atk']}", 
+            inline=False
+        )
+        embed.add_field(name="⏳ Turn", value=f"Lượt thứ {self.turn} - Cập nhật mỗi phút", inline=False)
+        
+        # Bảng xếp hạng trực tiếp trên UI Boss
+        sorted_players = sorted(self.player_cache.items(), key=lambda x: x[1]['total_dmg'], reverse=True)
+        if sorted_players:
+            lb_text = "\n".join([f"**#{i+1}** <@{uid}>: **{data['total_dmg']:,.0f}** DMG" for i, (uid, data) in enumerate(sorted_players[:10])])
+        else:
+            lb_text = "*Chưa có ai gây sát thương trong vòng lặp này.*"
+            
+        embed.add_field(name="🏆 Bảng Xếp Hạng (Top 10)", value=lb_text, inline=False)
+
+        if self.boss_state['charging_skill']:
+            embed.description = "⚠️ **BOSS ĐANG VẬN SỨC KỸ NĂNG AOE TỐI THƯỢNG! HÃY DÙNG PROTECT NGAY!** ⚠️"
+            
+        return embed
+
+    
+
+    def generate_reward_gear(self, rarity: str, gear_type: str) -> dict:
+        """
+        Tạo ra một object gear chuẩn cấu trúc mới của MongoDB:
+        - weapon chỉ có atk
+        - armor chỉ có def, hp
+        - vice chỉ có crit_rate, crit_dmg
+        - obtained_at lưu dưới dạng Integer Timestamp
+        """
+        # Khởi tạo ID ngẫu nhiên và thời gian hiện tại chuẩn Timestamp Integer
+        gear_id = str(uuid.uuid4())
+        obtained_time = int(time.time()) 
+        
+        gear_data = {
+            "id": gear_id,
+            "type": gear_type,
+            "rarity": rarity,
+            "obtained_at": obtained_time
+        }
+
+        # --- CẤU HÌNH MYTHIC (Khớp tuyệt đối với ảnh của bạn) ---
+        if rarity == "Mythic":
+            if gear_type == "weapon":
+                gear_data.update({
+                    "name": "Omega Artifact Sword",
+                    "atk": 650
+                })
+            elif gear_type == "armor":
+                gear_data.update({
+                    "name": "Alpha Absolute Shield",
+                    "def": 550,
+                    "hp": 1500
+                })
+            elif gear_type == "vice":
+                gear_data.update({
+                    "name": "Miracle Origin Vice", # Cập nhật tên theo hình
+                    "crit_rate": 50,
+                    "crit_dmg": 3
+                })
+
+        # --- CẤU HÌNH ORIGIN (Chỉ số vượt trội hơn Mythic) ---
+        elif rarity == "Origin":
+            if gear_type == "weapon":
+                gear_data.update({
+                    "name": "Origin Susanoo Blade",
+                    "atk": 1200
+                })
+            elif gear_type == "armor":
+                gear_data.update({
+                    "name": "Origin Yggdrasil Mantle",
+                    "def": 1000,
+                    "hp": 3500
+                })
+            elif gear_type == "vice":
+                gear_data.update({
+                    "name": "Origin Chrono Core",
+                    "crit_rate": 75,
+                    "crit_dmg": 5
+                })
+                
+        return gear_data
+        # --- XỬ LÝ PHẦN THƯỞNG VÀ KẾT THÚC (Yêu cầu 8, 10, 11) ---
+    async def handle_boss_death(self):
+        self.boss_state["active"] = False
+        print(f"[WORLD BOSS] {self.boss_state['name']} Defeated! Calculating reward.")
+        
+        # Sắp xếp xếp hạng sát thương
+        sorted_players = sorted(self.player_cache.items(), key=lambda x: x[1]['total_dmg'], reverse=True)
+        tier = self.boss_state["tier"]
+        bulk_updates = []
+        
+        # Bảng xếp hạng thu gọn cho DM
+        leaderboard_str = "\n".join([f"Top {i+1}: <@{uid}> - **{data['total_dmg']:,.0f}** DMG" for i, (uid, data) in enumerate(sorted_players[:10])])
+
+        for rank, (uid, p_data) in enumerate(sorted_players):
+            db_doc = p_data["db_data"]
+            user = self.bot.get_user(uid)
+            
+            # --- 1. Tính toán rớt đồ Basic ---
+            digibit = random.randint(*[(100,200), (150,200), (200,250), (250,300), (500,500)][tier-1])
+            orb = random.randint(*[(10,15), (15,20), (20,25), (26,30), (50,50)][tier-1])
+            core = random.randint(*[(20,50), (30,50), (50,100), (100,150), (200,200)][tier-1])
+            fruit = random.randint(*[(0,1), (0,2), (1,3), (2,4), (5,5)][tier-1])
+            
+            new_gear_obj = None
+            gear_rarity = None
+            
+            # --- 2. Logic Drop Đồ Mythic/Origin ---
+            # Drop Mythic T4 (5%) / Origin T5 (2%)
+            if tier == 4 and random.random() <= 0.05:
+                gear_rarity = "Mythic"
+            elif tier == 5 and random.random() <= 0.02:
+                gear_rarity = "Origin"
+
+            if gear_rarity:
+                # Random rớt ra 1 trong 3 loại: weapon, armor, hoặc vice
+                rng_type = random.choice(["weapon", "armor", "vice"])
+                new_gear_obj = self.generate_reward_gear(gear_rarity, rng_type)
+
+            # --- 3. Cơ chế phân biệt trùng lặp và Xây dựng Query MongoDB ---
+            gear_inv = db_doc.get("gears_inventory", [])
+            msg_gear_drop = ""
+            
+            update_query = {
+                "$inc": {
+                    "digibit": digibit,
+                    "orb": orb,
+                    "hatch_core": core
+                }
+            }
+
+            if new_gear_obj:
+                # Kiểm tra xem tên đồ đã có trong mảng gears_inventory của DB người chơi chưa
+                is_duplicate = any(g.get("name") == new_gear_obj["name"] for g in gear_inv)
+                
+                if is_duplicate:
+                    compensate_bit = 5000 if gear_rarity == "Mythic" else 15000
+                    update_query["$inc"]["digibit"] += compensate_bit # Cộng dồn thêm tiền bồi thường
+                    digibit += compensate_bit # Cập nhật biến để hiển thị DM cho đúng
+                    msg_gear_drop = f"🔄 Dropped a duplicate **{new_gear_obj['name']}**! Automatically transformed into **{compensate_bit} Digibit**."
+                else:
+                    msg_gear_drop = f"🌟 **CONGRATULATIONS! YOU HAVE RECEIVED EQUIPMENT** {gear_rarity.upper()}: **{new_gear_obj['name']}**"
+                    
+                    # Chuẩn bị Query Push đồ mới vào mảng gears_inventory
+                    update_query.setdefault("$push", {})
+                    update_query["$push"]["gears_inventory"] = new_gear_obj
+
+            # 4. Push size reroll fruit vào array inventory nếu có
+            if fruit > 0:
+                fruits_array = ["Size Reroll Fruit" for _ in range(fruit)]
+                update_query.setdefault("$push", {})
+                
+                # Nếu đã có trường $push (ví dụ vừa thêm gear ở trên), ta gộp chung lại
+                if "inventory" in update_query.get("$push", {}):
+                     update_query["$push"]["inventory"]["$each"].extend(fruits_array)
+                else:
+                    update_query["$push"]["inventory"] = {"$each": fruits_array}
+
+            # Gom lệnh Update lại cho user hiện tại
+            bulk_updates.append(UpdateOne({"user_id": uid}, update_query))
+
+            # --- 5. Gửi DM cho người chơi ---
+            if user:
+                embed_dm = discord.Embed(title=f"Battle log: {self.boss_state['name']} (Tier {tier}) have defeated!", color=discord.Color.gold())
+                embed_dm.add_field(name="Individual achievements", value=f"🏆 Rank: **{rank + 1}**\n⚔️ Total damage: **{p_data['total_dmg']:,.0f}**", inline=False)
+                
+                rewards_text = f"💰 **Digibit:** {digibit}\n🔮 **Orb:** {orb}\n🥚 **Hatch Core:** {core}\n🍎 **Size Reroll Fruit:** {fruit}"
+                if msg_gear_drop: 
+                    rewards_text += f"\n\n{msg_gear_drop}"
+                
+                embed_dm.add_field(name="🎁 Reward", value=rewards_text, inline=False)
+                embed_dm.add_field(name="📊 Damage Ranking (Top 10)", value=leaderboard_str, inline=False)
+                
+                try: 
+                    await user.send(embed=embed_dm)
+                except discord.Forbidden: 
+                    # Người chơi chặn DM từ Bot
+                    pass 
+                except Exception as e:
+                    print(f"Failed to send DM to {uid}: {e}")
+
+        # Thực thi bulk write phần thưởng
+        if bulk_updates:
+            try:
+                # Đảm bảo bạn gọi đúng biến Database mà bạn đã gán (self.rpg_profiles)
+                await self.rpg_profiles.bulk_write(bulk_updates)
+                print(f"[WORLD BOSS]Reward paid successfully to{len(bulk_updates)} participants.")
+            except Exception as e:
+                print(f"[DATABASE ERROR] Error when Bulk Write Boss Rewards: {e}")
+
+        # Chờ 1 giây và gọi boss mới (Tier tiếp theo) ngầm
+        await asyncio.sleep(1)
+        # Check logic của bạn, nếu custom die thì auto back to 1
+        next_tier = 1 if self.boss_state["tier"] == "Custom" else tier + 1 
+        await self.spawn_boss(tier=next_tier)
+
+
 
 
 
