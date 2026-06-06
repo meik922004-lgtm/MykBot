@@ -12,7 +12,7 @@ from cogs.party_finder import handle_cross_server_chat
 from Database import rpg_profiles_col, world_boss_col, boss_channels_col, parties_col
 import pymongo
 from pymongo import UpdateOne
-
+import math
 farm_logs_buffer = {}
 cross_messages_col = rpg_profiles_col.database["cross_chat_logs"]
 market_col = rpg_profiles_col.database["rpg_marketplace"]
@@ -379,16 +379,79 @@ class BulkSellDigiSelect(discord.ui.Select):
 
 # --- UI MỚI CHO TÚI DIGIMON CHỨA CẢ MENU CHỌN VÀ NÚT BÁN ---
 class DigiBagView(discord.ui.View):
-    def __init__(self, digimon_list, active_id, cog_instance, timeout=180):
+    def __init__(self, full_digimon_list, active_id, cog_instance, timeout=180):
         super().__init__(timeout=timeout)
         self.cog = cog_instance
+        self.full_digimon_list = full_digimon_list
+        self.active_id = active_id
         
-        # Menu 1: Chọn 1 Digimon để kích hoạt làm bạn đồng hành
-        self.add_item(DigiBagSelect(digimon_list, active_id, cog_instance))
+        # Thiết lập phân trang
+        self.current_page = 0
+        self.items_per_page = 25
+        self.max_pages = max(1, math.ceil(len(full_digimon_list) / self.items_per_page))
         
-        # Menu 2: Chọn nhiều Digimon để bán lấy Digibits
-        self.add_item(BulkSellDigiSelect(digimon_list, active_id, cog_instance))
+        # Khởi tạo giao diện lần đầu
+        self.update_components()
 
+    def update_components(self):
+        """Xóa các thành phần cũ và vẽ lại dựa trên trang hiện tại."""
+        self.clear_items()
+        
+        # Cắt danh sách Digimon cho trang hiện tại
+        start_idx = self.current_page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        current_page_digimon = self.full_digimon_list[start_idx:end_idx]
+
+        # Thêm Menu 1: Chọn 1 Digimon để kích hoạt
+        self.add_item(DigiBagSelect(current_page_digimon, self.active_id, self.cog))
+        
+        # Thêm Menu 2: Chọn nhiều Digimon để bán
+        self.add_item(BulkSellDigiSelect(current_page_digimon, self.active_id, self.cog))
+
+        # Nếu danh sách dài hơn 1 trang, vẽ thêm nút chuyển trang
+        if self.max_pages > 1:
+            # Nút Prev
+            btn_prev = discord.ui.Button(
+                label="⬅️ Prev", 
+                style=discord.ButtonStyle.primary, 
+                disabled=(self.current_page == 0)
+            )
+            btn_prev.callback = self.prev_page_callback
+            self.add_item(btn_prev)
+
+            # Nút hiển thị số trang (Chỉ để nhìn, không bấm được)
+            btn_page_indicator = discord.ui.Button(
+                label=f"Page {self.current_page + 1}/{self.max_pages}", 
+                style=discord.ButtonStyle.secondary, 
+                disabled=True
+            )
+            self.add_item(btn_page_indicator)
+
+            # Nút Next
+            btn_next = discord.ui.Button(
+                label="Next ➡️", 
+                style=discord.ButtonStyle.primary, 
+                disabled=(self.current_page == self.max_pages - 1)
+            )
+            btn_next.callback = self.next_page_callback
+            self.add_item(btn_next)
+
+    async def prev_page_callback(self, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_components()
+        await self.refresh_message(interaction)
+
+    async def next_page_callback(self, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_components()
+        await self.refresh_message(interaction)
+        
+    async def refresh_message(self, interaction: discord.Interaction):
+        """Cập nhật lại tin nhắn sau khi bấm chuyển trang"""
+        # Cập nhật footer của Embed để khớp số trang
+        embed = interaction.message.embeds[0]
+        embed.set_footer(text=f"Trang {self.current_page + 1}/{self.max_pages} | Tổng: {len(self.full_digimon_list)} Digimon")
+        await interaction.response.edit_message(embed=embed, view=self)
 class InventoryView(discord.ui.View):
     def __init__(self, select_menu=None, profile=None, cog_instance=None, timeout=180):
         super().__init__(timeout=timeout)
@@ -503,8 +566,10 @@ class ProfileView(discord.ui.View):
         if not digi_list: return await interaction.followup.send("❌ Your bag is empty!", ephemeral=True)
         
         embed = discord.Embed(title="🐾 Your Digimon Bag", description=f"You have {len(digi_list)} Digimon.", color=discord.Color.gold())
-        await interaction.followup.send(embed=embed, view=DigiBagView(digi_list[:25], profile.get("active_digimon_id"), self.cog), ephemeral=True)
-
+        embed.set_footer(text=f"Trang 1/{max(1, math.ceil(len(digi_list)/25))} | Tổng: {len(digi_list)} Digimon")
+        
+        # SỬA Ở ĐÂY: Truyền digi_list thay vì digi_list[:25]
+        await interaction.followup.send(embed=embed, view=DigiBagView(digi_list, profile.get("active_digimon_id"), self.cog), ephemeral=True)
     @discord.ui.button(label="Equipment storage", style=discord.ButtonStyle.primary, emoji="🎒", row=2)
     async def open_inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
