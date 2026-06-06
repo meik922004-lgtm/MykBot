@@ -1904,6 +1904,37 @@ class RPGSystemCog(commands.Cog):
         except Exception:
             pass
 
+    def get_attribute_multiplier(self, attacker_type: str, defender_type: str) -> float:
+        """
+        Tính toán hệ số sát thương dựa trên tam giác khắc hệ:
+        VA > VI, VI > DA, DA > VA
+        """
+        # Chuẩn hóa chữ hoa và xóa khoảng trắng thừa để tránh lỗi nhập liệu
+        atk = str(attacker_type).upper().strip()
+        dfn = str(defender_type).upper().strip()
+        
+        # Định nghĩa quy tắc: Key (Hệ tấn công) thắng Value (Hệ phòng thủ)
+        rules = {
+            "Vaccine" : "Virus",  # Vaccine thắng Virus
+            "Virus " :  "Data",  # Virus thắng Data
+            "Data" : "Vaccine"   # Data thắng Vaccine
+        }
+        
+        # 1. Trường hợp 2 bên cùng hệ -> Giữ nguyên sát thương
+        if atk == dfn:
+            return 1.0
+            
+        # 2. Trường hợp hệ tấn công KHẮC hệ phòng thủ -> Tăng sát thương (x1.5)
+        if rules.get(atk) == dfn:
+            return 1.5
+            
+        # 3. Trường hợp hệ tấn công BỊ KHẮC bởi hệ phòng thủ -> Giảm sát thương (x0.5)
+        if rules.get(dfn) == atk:
+            return 0.5
+            
+        # 4. Trường hợp xuất hiện hệ lạ không nằm trong tam giác (ví dụ: Free, Unknown...)
+        return 1.0
+
     async def handle_evolve(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
