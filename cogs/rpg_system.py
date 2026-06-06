@@ -2867,7 +2867,7 @@ class WorldBossTurnBased(commands.Cog):
         # Lưu tin nhắn vào hệ thống để Vòng lặp tự động cập nhật
         self.active_dashboards[interaction.channel_id] = msg
 
+
 async def setup(bot):
-    cog = WorldBossTurnBased(bot)
-    await bot.add_cog(cog)
-    bot.add_view(WorldBossView(cog)) # Bind view để nút vẫn hoạt động khi bot restart
+    await bot.add_cog(RPGSystemCog(bot))
+    await bot.add_cog(WorldBossTurnBased(bot))
