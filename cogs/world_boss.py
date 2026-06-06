@@ -502,4 +502,4 @@ class WorldBossSystem(commands.Cog):
         await asyncio.sleep(1)
         await self.spawn_boss(tier=tier + 1)
 async def setup(bot):
-    await bot.add_cog(WorldBossSystem(bot))
+    await bot.add_cog(WorldBossSystem(bot, bot.db))
