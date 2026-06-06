@@ -2840,3 +2840,4 @@ class WorldBossTurnBased(commands.Cog):
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 async def setup(bot):
     await bot.add_cog(RPGSystemCog(bot))
+    await bot.add_cog(WorldBossTurnBased(bot))
