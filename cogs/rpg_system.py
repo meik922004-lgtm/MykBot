@@ -1211,22 +1211,17 @@ class RPGSystemCog(commands.Cog):
         "Gizamon": "Cyclonemon", "Cyclonemon": "Megadramon", "Megadramon": "Machinedramon",
         "Chuumon": "Scumon", "Scumon": "Garbagemon", "Garbagemon": "PlatinumNumemon"
     }
-    
-    HATCH_CORE_COST = 50
 
+    HATCH_CORE_COST = 50
     def __init__(self, bot):
         self.bot = bot
-        self.auto_attackers = set()
-        self.live_boss_update_loop.start()
         self.bot.loop.create_task(self.initialize_market_mega_products())
-        self.auto_attack_cache = {}
         self.HIGH_TIER_GEARS = [
     {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
     {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
     {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
     {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
     {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
-        self.live_boss_update_loop.cancel()
         self.active_solo_battles = {}
         self.solo_boss_pool = {
         "Susanoomon": {
@@ -2530,6 +2525,7 @@ ORIGIN_GEAR_TEMPLATES = {
 class WorldBossTurnBased(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        
         
         # BỘ NHỚ LƯU TRỮ TREO MÁY (Bền vững qua các đời Boss)
         self.persistent_auto_attackers = {}
