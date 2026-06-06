@@ -1197,22 +1197,6 @@ class RPGSystemCog(commands.Cog):
 
    #==============================================
 
-    @app_commands.command(name="setup_boss_channel", description="Globalchat setting")
-    async def setup_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        await interaction.response.defer(ephemeral=True)
-        is_admin = interaction.permissions.administrator if interaction.guild else False
-        if not (is_admin or interaction.user.id in OWNER_IDS): 
-            return await interaction.followup.send("❌ Access Denied!", ephemeral=True)
-            
-        try:
-            webhook = next((w for w in await channel.webhooks() if w.user == self.bot.user), None) or await channel.create_webhook(name="DMW Relay")
-            await boss_channels_col.update_one({"guild_id": interaction.guild_id}, {"$set": {"channel_id": channel.id, "webhook_url": webhook.url}}, upsert=True)
-            await interaction.followup.send("✅ Success! The Global channel has been set up.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Error: Lack of `Manage Webhooks` permission.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)    
-
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild: return

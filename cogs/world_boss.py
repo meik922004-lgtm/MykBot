@@ -301,7 +301,7 @@ class WorldBossSystem(commands.Cog):
         try:
             # Lưu thẳng vào DB config
             await self.boss_channels_col.update_one({}, {"$set": {"channel_id": channel.id, "guild_id": interaction.guild.id}}, upsert=True)
-            await interaction.followup.send("✅ Đã cài đặt kênh World Boss thành công. Đang triệu hồi...", ephemeral=True)
+            await interaction.followup.send("✅ Set global chat succefulll", ephemeral=True)
             await self.spawn_boss(tier=1)
         except Exception as e:
             await interaction.followup.send(f"❌ Lỗi: {e}", ephemeral=True) 
