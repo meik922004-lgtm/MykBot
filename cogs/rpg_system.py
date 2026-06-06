@@ -2494,41 +2494,93 @@ class RPGSystemCog(commands.Cog):
 #==================================================================
 #                              WORLD BOSS
 #==================================================================
+
+# ========================================================================
+# CẤU HÌNH BỂ TƯỚNG OLYMPOS XII & TRANG BỊ ORIGIN
+# ========================================================================
 OLYMPOS_XII = [
     "Jupitermon", "Junomon", "Neptunemon", "Ceresmon", "Apollomon", 
     "Dianamon", "Vulcanusmon", "Marsmon", "Minervamon", "Mercurymon", 
     "Venusmon", "Bacchusmon"
 ]
 
-# Đã chỉnh sửa structure bám sát DB (Sử dụng rarity và đặt stats trực tiếp)
 ORIGIN_GEAR_TEMPLATES = {
     "weapon": {
         "name": "Origin Eternal Judgement", "type": "weapon",
-        "atk": 1200, "def": 0, "hp": 1000,
-        "rarity": "Origin",
+        "atk": 1200, "def": 0, "hp": 1000, "rarity": "Origin",
         "description": "A low chance of converting a small portion of the player's ATK into pure damage.."
     },
     "armor": {
         "name": "Origin Aegis of Olympus", "type": "armor",
-        "atk": 0, "def": 600, "hp": 4500,
-        "rarity": "Origin",
+        "atk": 0, "def": 600, "hp": 4500, "rarity": "Origin",
         "description": "Low chance of blocking a certain amount of incoming damage and restoring HP.."
     },
     "vice": {
         "name": "Origin Cosmic Chrono", "type": "vice",
-        "atk": 400, "def": 150, "hp": 1500,
-        "rarity": "Origin",
+        "atk": 400, "def": 150, "hp": 1500, "rarity": "Origin",
         "description": "Low chance of significantly increasing damage when triggering a critical hit.."
     }
 }
 
+# ========================================================================
+# VIEW ĐIỀU KHIỂN GIAO DIỆN CÔNG KHAI
+# ========================================================================
+class WorldBossView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Toggle Auto Attack", style=discord.ButtonStyle.success, custom_id="wb_auto_btn")
+    async def auto_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        if user_id in self.cog.persistent_auto_attackers:
+            del self.cog.persistent_auto_attackers[user_id]
+            await interaction.response.send_message("🔴 You have **TURNED OFF** Auto Attack mode.", ephemeral=True)
+        else:
+            p = await rpg_profiles_col.find_one({"user_id": user_id})
+            if p and p.get("current_hp", 0) <= 0:
+                return await interaction.response.send_message("❌ Your Digimon has 0 HP. Please heal it first.!", ephemeral=True)
+            self.cog.persistent_auto_attackers[user_id] = time.time() - 15
+            await interaction.response.send_message("🟢 Auto Attack AFK mode successfully activated!", ephemeral=True)
+
+    @discord.ui.button(label="Activate Protect", style=discord.ButtonStyle.secondary, custom_id="wb_protect_btn")
+    async def protect_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        if user_id not in self.cog.boss_state["participants"]: 
+            self.cog.boss_state["participants"][user_id] = {"protect": False}
+        self.cog.boss_state["participants"][user_id]["protect"] = True
+        await interaction.response.send_message("🛡️ You have activated the defensive state for the Boss's turn.!", ephemeral=True)
+
+    @discord.ui.button(label="Heal", style=discord.ButtonStyle.primary, emoji="💊", custom_id="wb_heal_btn")
+    async def heal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        p = await rpg_profiles_col.find_one({"user_id": user_id})
+        if not p: return await interaction.response.send_message("❌ Your profile could not be found!", ephemeral=True)
+        
+        active_id = p.get("active_digimon_id")
+        digi = next((d for d in p.get("digimon_list", []) if d.get("id") == active_id), {})
+        base_hp = digi.get("base_hp", 1000) + digi.get("train_hp", 0)
+        gear_hp = sum(g.get("hp", 0) for g in p.get("gear", {}).values() if isinstance(g, dict))
+        max_hp = base_hp + gear_hp
+        
+        curr_time = int(time.time())
+        if curr_time - p.get("last_heal", 0) < 15:
+            return await interaction.response.send_message(f"⏳ Healing is on cooldown! Wait. {15 - (curr_time - p.get('last_heal', 0))}s.", ephemeral=True)
+        
+        await rpg_profiles_col.update_one({"user_id": user_id}, {"$set": {"current_hp": max_hp, "last_heal": curr_time}})
+        await interaction.response.send_message(f"💊 Full Blood Recovered (**{max_hp:,} HP**)!Auto Attack will continue if it is enabled..", ephemeral=True)
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, emoji="🔄", custom_id="wb_refresh_btn")
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = self.cog.generate_boss_embed()
+        await interaction.response.edit_message(embed=embed)
+
+
 class WorldBossTurnBased(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        
-        
-        # BỘ NHỚ LƯU TRỮ TREO MÁY (Bền vững qua các đời Boss)
         self.persistent_auto_attackers = {}
+        self.active_dashboards = {}  # {channel_id: message_object} để Auto-Refresh
 
         self.boss_state = {
             "active": False,
@@ -2537,9 +2589,10 @@ class WorldBossTurnBased(commands.Cog):
             "max_hp": 30000,
             "hp": 30000,
             "base_atk": 200,
-            "phase": "player_turn",  
+            "phase": "PLAYER_TURN",  
             "phase_timer": 60,       
-            "damage_buffer": {},     
+            "turn_damage": {},      # Sát thương trong 1 turn (để trừ máu Boss)
+            "total_damage": {},     # Sát thương tổng để xếp hạng Top 10
             "participants": {},     
             "upcoming_aoe": False    
         }
@@ -2549,7 +2602,39 @@ class WorldBossTurnBased(commands.Cog):
         self.world_boss_loop.cancel()
 
     # ========================================================================
-    # VÒNG LẶP ĐIỀU PHỐI TRẬN ĐẤU (ENGINE CHẠY NGẦM)
+    # TẠO GIAO DIỆN EMBED (CHUẨN FORM ẢNH)
+    # ========================================================================
+    def generate_boss_embed(self):
+        color = discord.Color.red() if self.boss_state["phase"] == "BOSS_TURN" else discord.Color.green()
+        embed = discord.Embed(
+            title="⚔️ THE BATTLE HALL OF THE GODS",
+            description=f"Current boss: **{self.boss_state['boss_name']}**",
+            color=color
+        )
+        embed.add_field(
+            name="HP Boss", 
+            value=f"❤️ {max(0, self.boss_state['hp']):,} / {self.boss_state['max_hp']:,}", 
+            inline=False
+        )
+        
+        status_text = f"⏳ turn: **{self.boss_state['phase']}** ({self.boss_state['phase_timer']}s left)"
+        embed.add_field(name="Status", value=status_text, inline=False)
+
+        # Xây dựng Bảng xếp hạng Top 10
+        leaderboard_text = ""
+        if not self.boss_state["total_damage"]:
+            leaderboard_text = "*No one has inflicted any damage*"
+        else:
+            sorted_dmg = sorted(self.boss_state["total_damage"].items(), key=lambda x: x[1], reverse=True)[:10]
+            for idx, (uid, dmg) in enumerate(sorted_dmg, 1):
+                medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else "🔹"
+                leaderboard_text += f"{medal} <@{uid}> - **{dmg:,}** dmg\n"
+                
+        embed.add_field(name="🏆 TOP 10 DAMAGE", value=leaderboard_text, inline=False)
+        return embed
+
+    # ========================================================================
+    # VÒNG LẶP ĐIỀU PHỐI (CÓ AUTO-REFRESH MESSAGE)
     # ========================================================================
     @tasks.loop(seconds=1)
     async def world_boss_loop(self):
@@ -2557,14 +2642,23 @@ class WorldBossTurnBased(commands.Cog):
             await self.spawn_olympos_boss()
             return
 
-        if self.boss_state["phase"] == "player_turn":
+        # Tính năng Tự động Refresh bảng giao diện mỗi 5 giây
+        if self.boss_state["phase_timer"] % 5 == 0:
+            for channel_id, msg in list(self.active_dashboards.items()):
+                try:
+                    await msg.edit(embed=self.generate_boss_embed())
+                except discord.NotFound:
+                    del self.active_dashboards[channel_id] # Xóa khỏi bộ nhớ nếu tin nhắn bị user xóa
+                except Exception:
+                    pass
+
+        if self.boss_state["phase"] == "PLAYER_TURN":
             self.boss_state["phase_timer"] -= 1
             current_now = time.time()
             
             for user_id in list(self.persistent_auto_attackers.keys()):
                 if current_now - self.persistent_auto_attackers[user_id] >= 20:
                     profile = await rpg_profiles_col.find_one({"user_id": user_id})
-                    # Sửa DB logic: current_hp nằm ngoài root
                     if not profile or profile.get("current_hp", 0) <= 0:
                         if user_id in self.persistent_auto_attackers:
                             del self.persistent_auto_attackers[user_id]
@@ -2580,7 +2674,7 @@ class WorldBossTurnBased(commands.Cog):
             if self.boss_state["phase_timer"] <= 0:
                 await self.transition_to_boss_turn()
 
-        elif self.boss_state["phase"] == "boss_turn":
+        elif self.boss_state["phase"] == "BOSS_TURN":
             await self.execute_boss_turn()
 
     async def spawn_olympos_boss(self):
@@ -2593,9 +2687,9 @@ class WorldBossTurnBased(commands.Cog):
         self.boss_state.update({
             "active": True, "boss_name": f"[Tier {tier}] {boss_name}",
             "tier": tier, "max_hp": int(max_hp), "hp": int(max_hp),
-            "base_atk": int(base_atk), "phase": "player_turn",
-            "phase_timer": 60, "damage_buffer": {}, "participants": {},
-            "upcoming_aoe": False
+            "base_atk": int(base_atk), "phase": "PLAYER_TURN",
+            "phase_timer": 60, "turn_damage": {}, "total_damage": {}, 
+            "participants": {}, "upcoming_aoe": False
         })
         
         await world_boss_col.update_one(
@@ -2605,20 +2699,17 @@ class WorldBossTurnBased(commands.Cog):
         )
 
     # ========================================================================
-    # XỬ LÝ SÁT THƯƠNG AUTO ATTACK (ĐÃ KHỚP MONGODB)
+    # XỬ LÝ SÁT THƯƠNG AUTO ATTACK
     # ========================================================================
     async def process_auto_attack(self, user_id):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         if not profile: return
 
-        # Tìm Digimon đang active từ danh sách
         active_id = profile.get("active_digimon_id")
         digi = next((d for d in profile.get("digimon_list", []) if d.get("id") == active_id), {})
         if not digi: return
 
         base_atk = digi.get("base_atk", 100) + digi.get("train_atk", 0)
-        
-        # Lấy trang bị từ Root
         gear = profile.get("gear", {})
         gear_atk_bonus = sum(g.get("atk", 0) for g in gear.values() if isinstance(g, dict))
         total_atk = base_atk + gear_atk_bonus
@@ -2638,10 +2729,8 @@ class WorldBossTurnBased(commands.Cog):
             if random.random() < 0.05: calculated_dmg *= 1.3
             if random.random() < 0.05: calculated_dmg *= 1.2
 
-        if has_origin_weapon and random.random() < 0.08:
-            calculated_dmg += (total_atk * 0.15)
-        if has_origin_vice and random.random() < 0.10:
-            calculated_dmg *= 1.4
+        if has_origin_weapon and random.random() < 0.08: calculated_dmg += (total_atk * 0.15)
+        if has_origin_vice and random.random() < 0.10: calculated_dmg *= 1.4
 
         if not is_mega or calculated_dmg < 2000:
             calculated_dmg *= 1.6
@@ -2649,15 +2738,19 @@ class WorldBossTurnBased(commands.Cog):
             tier_penalty = {1: 0.65, 2: 0.75, 3: 0.85, 4: 0.95, 5: 1.0}
             calculated_dmg *= tier_penalty.get(self.boss_state["tier"], 1.0)
 
-        self.boss_state["damage_buffer"][user_id] = self.boss_state["damage_buffer"].get(user_id, 0) + int(calculated_dmg)
+        final_dmg = int(calculated_dmg)
+        self.boss_state["turn_damage"][user_id] = self.boss_state["turn_damage"].get(user_id, 0) + final_dmg
+        self.boss_state["total_damage"][user_id] = self.boss_state["total_damage"].get(user_id, 0) + final_dmg
 
     async def transition_to_boss_turn(self):
-        self.boss_state["hp"] -= sum(self.boss_state["damage_buffer"].values())
+        self.boss_state["hp"] -= sum(self.boss_state["turn_damage"].values())
+        self.boss_state["turn_damage"] = {} # Reset sát thương của turn để chuẩn bị turn sau
+        
         if self.boss_state["hp"] <= 0:
             await self.distribute_rewards()
             self.boss_state["active"] = False
             return
-        self.boss_state["phase"] = "boss_turn"
+        self.boss_state["phase"] = "BOSS_TURN"
 
     # ========================================================================
     # BOSS PHẢN CÔNG & QUÉT ĐỘC CHIÊU AOE
@@ -2677,10 +2770,8 @@ class WorldBossTurnBased(commands.Cog):
             is_mega = digi.get("stage") == "Mega"
             has_protect = self.boss_state["participants"][user_id]["protect"]
 
-            # Tính Max HP cho đòn AOE
             base_hp = digi.get("base_hp", 1000) + digi.get("train_hp", 0)
-            gear = profile.get("gear", {})
-            gear_hp = sum(g.get("hp", 0) for g in gear.values() if isinstance(g, dict))
+            gear_hp = sum(g.get("hp", 0) for g in profile.get("gear", {}).values() if isinstance(g, dict))
             max_hp = base_hp + gear_hp
 
             final_received_dmg = base_boss_dmg
@@ -2693,45 +2784,41 @@ class WorldBossTurnBased(commands.Cog):
                 if not is_mega: final_received_dmg *= 0.7
                 if has_protect: final_received_dmg *= 0.6
 
-            has_origin_armor = gear.get("armor", {}).get("rarity") == "Origin" if isinstance(gear.get("armor"), dict) else False
+            has_origin_armor = profile.get("gear", {}).get("armor", {}).get("rarity") == "Origin" if isinstance(profile.get("gear", {}).get("armor"), dict) else False
 
             if has_origin_armor and random.random() < 0.12:
                 final_received_dmg = int(final_received_dmg * 0.7)
-                await rpg_profiles_col.update_one(
-                    {"user_id": user_id}, {"$inc": {"current_hp": int(max_hp * 0.10)}}
-                )
+                await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"current_hp": int(max_hp * 0.10)}})
 
-            # Cập nhật máu vào thư mục root theo thiết kế DB
-            await rpg_profiles_col.update_one(
-                {"user_id": user_id}, {"$inc": {"current_hp": -int(final_received_dmg)}}
-            )
+            await rpg_profiles_col.update_one({"user_id": user_id}, {"$inc": {"current_hp": -int(final_received_dmg)}})
 
             updated_profile = await rpg_profiles_col.find_one({"user_id": user_id})
             if updated_profile and updated_profile.get("current_hp", 0) <= 0:
                 if user_id in self.persistent_auto_attackers:
                     del self.persistent_auto_attackers[user_id]
-                await self.send_dm_safely(user_id, "💀 *Auto Attack has stopped:** Your Digimon has run out of HP. Please use the Heal button to continue AFK!")
+                await self.send_dm_safely(user_id, "💀 **You have died!** Your Digimon has run out of HP Press the 💊 Health button in the lobby to continue!")
 
         self.boss_state["upcoming_aoe"] = random.random() < 0.15
 
         if self.boss_state["upcoming_aoe"]:
             for u_id in self.boss_state["participants"].keys():
-                await self.send_dm_safely(u_id, f"⚠️ **WARNING:** Boss `{self.boss_state['boss_name']}` preparing to use  AOE skill next turn! Press use protect to reduce damage..")
+                await self.send_dm_safely(u_id, f"⚠️ **WARNING** Boss `{self.boss_state['boss_name']}` preparing to use AOE skillủ.")
 
-        self.boss_state.update({"phase": "player_turn", "phase_timer": 60, "damage_buffer": {}})
+        self.boss_state.update({"phase": "PLAYER_TURN", "phase_timer": 60})
 
     async def distribute_rewards(self):
         tier = self.boss_state["tier"]
         reward_config = {
             1: {"digibit": (300, 500), "orb": (20, 30), "core": (50, 60), "coin": (1, 1)},
-            2: {"digibit": (500, 600), "orb": (30, 40), "core": (60, 70), "coin": (1, 2)},
-            3: {"digibit": (700, 800), "orb": (40, 50), "core": (71, 100), "coin": (2, 2)},
-            4: {"digibit": (800, 900), "orb": (50, 60), "core": (100, 150), "coin": (2, 3)},
-            5: {"digibit": (1000, 1500), "orb": (70, 70), "core": (150, 200), "coin": (3, 3)}
+            2: {"digibit": (550, 650), "orb": (30, 40), "core": (60, 70), "coin": (1, 2)},
+            3: {"digibit": (750, 850), "orb": (40, 50), "core": (71, 100), "coin": (2, 2)},
+            4: {"digibit": (950, 1100), "orb": (50, 60), "core": (100, 150), "coin": (2, 3)},
+            5: {"digibit": (1500, 1200), "orb": (70, 70), "core": (150, 200), "coin": (3, 3)}
         }
         cfg = reward_config.get(tier, reward_config[1])
 
-        for user_id, accumulated_dmg in self.boss_state["damage_buffer"].items():
+        # Trao quà dựa trên Top Xếp Hạng (total_damage)
+        for user_id, accumulated_dmg in self.boss_state["total_damage"].items():
             if accumulated_dmg <= 0: continue
 
             r_digibit, r_orb, r_core, r_coin = random.randint(*cfg["digibit"]), random.randint(*cfg["orb"]), random.randint(*cfg["core"]), random.randint(*cfg["coin"])
@@ -2752,8 +2839,8 @@ class WorldBossTurnBased(commands.Cog):
             if dropped_gear:
                 await rpg_profiles_col.update_one({"user_id": user_id}, {"$push": {"inventory": dropped_gear}})
 
-            reward_msg = f"🏆 **BOSS DEFEATED:** You earned it.c **{accumulated_dmg:,}** dmg\n🎁 **Reward:** `{r_digibit}` Bits | `{r_orb}` Orbs | `{r_core}` Cores | `{r_coin}` MyK Coins"
-            if dropped_gear: reward_msg += f"\n🔥 **DROPPED GEAR:** [{dropped_gear['rarity']}] **{dropped_gear['name']}**!"
+            reward_msg = f"🏆 **BOSS DEFEATED:** you deal **{accumulated_dmg:,}** dmg\n🎁 **Reward** `{r_digibit}` Bits | `{r_orb}` Orbs | `{r_core}` Cores | `{r_coin}` MyK Coins"
+            if dropped_gear: reward_msg += f"\n🔥 **Special:** [{dropped_gear['rarity']}] **{dropped_gear['name']}**!"
             await self.send_dm_safely(user_id, reward_msg)
 
     async def send_dm_safely(self, user_id, message_str):
@@ -2763,81 +2850,24 @@ class WorldBossTurnBased(commands.Cog):
         except Exception: pass
 
     # ========================================================================
-    # GIAO DIỆN ĐIỀU KHIỂN (AUTO, PROTECT VÀ NÚT HỒI MÁU)
+    # COMMAND GỌI BẢNG ĐIỀU KHIỂN CÔNG KHAI
     # ========================================================================
-    @app_commands.command(name="worldboss", description="Join the  World Boss battle hall.")
+    @app_commands.command(name="combat", description="World Boss Battle Hall Open (Public)")
     async def worldboss(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        # Không dùng ephemeral=True nữa để tin nhắn hiển thị công khai
+        await interaction.response.defer(ephemeral=False)
         if not self.boss_state["active"]:
-            return await interaction.followup.send("Currently no World Bosses appeared", ephemeral=True)
+            return await interaction.followup.send("Currently, no World Bosses are present..", ephemeral=True)
 
-        user_id = interaction.user.id
-        is_auto_on = user_id in self.persistent_auto_attackers
-
-        embed = discord.Embed(
-            title=f"⚔️ THE BATTLE HALL OF THE GODS",
-            description=f"Boss hiện tại: **{self.boss_state['boss_name']}**",
-            color=discord.Color.red() if self.boss_state["phase"] == "boss_turn" else discord.Color.green()
-        )
-        embed.add_field(name="HP Boss", value=f"❤️ {self.boss_state['hp']:,} / {self.boss_state['max_hp']:,}", inline=False)
-        embed.add_field(name="Status", value=f"⏳ turn: **{self.boss_state['phase'].upper()}** ({self.boss_state['phase_timer']}s left)", inline=True)
-        embed.add_field(name="Auto Attack", value=f"{'🟢 Turning on' if is_auto_on else '🔴 Turning off'}", inline=True)
-
-        view = discord.ui.View(timeout=None)
+        embed = self.generate_boss_embed()
+        view = WorldBossView(self)
         
-        # 1. NÚT AUTO ATTACK
-        auto_btn = discord.ui.Button(label="Turning off auto" if is_auto_on else "Turning on auto", style=discord.ButtonStyle.danger if is_auto_on else discord.ButtonStyle.success, custom_id=f"wb_auto_{user_id}")
-        async def auto_callback(inter: discord.Interaction):
-            if inter.user.id in self.persistent_auto_attackers:
-                del self.persistent_auto_attackers[inter.user.id]
-                await inter.response.send_message("🔴 Auto Attack mode has been turned off..", ephemeral=True)
-            else:
-                p = await rpg_profiles_col.find_one({"user_id": inter.user.id})
-                if p and p.get("current_hp", 0) <= 0:
-                    return await inter.response.send_message("❌ Your Digimon has 0 HP. Heal it first!", ephemeral=True)
-                self.persistent_auto_attackers[inter.user.id] = time.time() - 15
-                await inter.response.send_message("🟢Auto Attack AFK mode successfully activated.!", ephemeral=True)
-        auto_btn.callback = auto_callback
-        view.add_item(auto_btn)
-
-        # 2. NÚT PROTECT
-        protect_btn = discord.ui.Button(label="Activate Protect", style=discord.ButtonStyle.secondary, custom_id=f"wb_protect_{user_id}")
-        async def protect_callback(inter: discord.Interaction):
-            if inter.user.id not in self.boss_state["participants"]: self.boss_state["participants"][inter.user.id] = {"protect": False}
-            self.boss_state["participants"][inter.user.id]["protect"] = True
-            await inter.response.send_message("🛡️ You have activated the protect!", ephemeral=True)
-        protect_btn.callback = protect_callback
-        view.add_item(protect_btn)
-
-        # 3. NÚT HỒI MÁU CÁ NHÂN NGAY TẠI TRẬN ĐẤU
-        heal_btn = discord.ui.Button(label="Heal", style=discord.ButtonStyle.primary, emoji="💊", custom_id=f"wb_heal_{user_id}")
-        async def heal_callback(inter: discord.Interaction):
-            p = await rpg_profiles_col.find_one({"user_id": inter.user.id})
-            if not p: return await inter.response.send_message("❌Your profile was not found.!", ephemeral=True)
-            
-            # Lấy Max HP chính xác từ DB
-            active_id = p.get("active_digimon_id")
-            digi = next((d for d in p.get("digimon_list", []) if d.get("id") == active_id), {})
-            base_hp = digi.get("base_hp", 1000) + digi.get("train_hp", 0)
-            gear_hp = sum(g.get("hp", 0) for g in p.get("gear", {}).values() if isinstance(g, dict))
-            max_hp = base_hp + gear_hp
-            
-            # Check cooldown 15s tránh spam server
-            curr_time = int(time.time())
-            if curr_time - p.get("last_heal", 0) < 60:
-                return await inter.response.send_message(f"⏳ Health regeneration is on cooldown! Please wait. {60 - (curr_time - p.get('last_heal', 0))} second.", ephemeral=True)
-            
-            # Cập nhật vào DB
-            await rpg_profiles_col.update_one(
-                {"user_id": inter.user.id},
-                {"$set": {"current_hp": max_hp, "last_heal": curr_time}}
-            )
-            await inter.response.send_message(f"💊 Full Blood Recovered (**{max_hp:,} HP**) for your Digimon!", ephemeral=True)
+        msg = await interaction.followup.send(embed=embed, view=view)
         
-        heal_btn.callback = heal_callback
-        view.add_item(heal_btn)
+        # Lưu tin nhắn vào hệ thống để Vòng lặp tự động cập nhật
+        self.active_dashboards[interaction.channel_id] = msg
 
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 async def setup(bot):
-    await bot.add_cog(RPGSystemCog(bot))
-    await bot.add_cog(WorldBossTurnBased(bot))
+    cog = WorldBossTurnBased(bot)
+    await bot.add_cog(cog)
+    bot.add_view(WorldBossView(cog)) # Bind view để nút vẫn hoạt động khi bot restart
