@@ -13,6 +13,7 @@ from Database import rpg_profiles_col, world_boss_col, boss_channels_col, partie
 import pymongo
 from pymongo import UpdateOne
 import math
+import copy
 farm_logs_buffer = {}
 cross_messages_col = rpg_profiles_col.database["cross_chat_logs"]
 market_col = rpg_profiles_col.database["rpg_marketplace"]
@@ -54,20 +55,20 @@ OLYMPOS_XII_DATA = {
 ORIGIN_GEAR_TEMPLATES = {
     "weapon": {
         "name": "Origin Eternal Judgement (Weapon)",
-        "tier": "Origin",
-        "stats": {"atk": 1200, "def": 0, "hp": 1000},
+        "rarity": "Origin",
+        "rarity": {"atk": 1200, "def": 0, "hp": 1000},
         "description": "The low chance causes a small portion of the player's ATK to become damage."
     },
     "armor": {
         "name": "Origin Aegis of Olympus (Armor)",
-        "tier": "Origin",
-        "stats": {"atk": 0, "def": 600, "hp": 4500},
+        "rarity": "Origin",
+        "stats": {"def": 600, "hp": 4500},
         "description": "Low chance of blocking a certain amount of incoming damage and restoring HP.."
     },
     "vice": {
         "name": "Origin Cosmic Chrono (Vice)",
-        "tier": "Origin",
-        "stats": {"atk": 400, "def": 150, "hp": 1500},
+        "rarity": "Origin",
+        "stats": {"crit_dmg":5, "crit_rate":70},
         "description": "Low chance of significantly increasing damage when triggering a critical hit.."
     }
 }
@@ -141,8 +142,8 @@ class GearInventorySelect(discord.ui.Select):
                 if is_vice and ("atk" in gear_dict or "hp" in gear_dict):
                     for old_key in ["atk", "def", "hp"]:
                         if old_key in gear_dict: del gear_dict[old_key]
-                    gear_dict["crit_rate"] = 50 
-                    gear_dict["crit_dmg"] = 3.0
+                    gear_dict["crit_rate"] = 70 
+                    gear_dict["crit_dmg"] = 5.0
                 target_stats = gear_dict
             
             if is_vice:
@@ -267,8 +268,21 @@ class GearInventorySelect(discord.ui.Select):
             
         cleaned_name = self.cog.clean_item_name(item_name)
         gear_base_data = self.cog.ITEMS.get(cleaned_name, {}) if not is_dict else target_item
+        
+        # 1. Cố gắng lấy type từ dữ liệu sẵn có
         gear_type = gear_base_data.get("type")
         
+        # 2. SỬA LỖI TẠI ĐÂY: Nếu đồ Origin/Mythic cũ trong DB bị thiếu key "type", tự động đoán qua tên
+        if not gear_type and is_dict:
+            name_lower = item_name.lower()
+            if "weapon" in name_lower or "sword" in name_lower or "judgement" in name_lower:
+                gear_type = "weapon"
+            elif "armor" in name_lower or "aegis" in name_lower or "shield" in name_lower:
+                gear_type = "armor"
+            elif "vice" in name_lower or "chrono" in name_lower:
+                gear_type = "vice"
+        
+        # 3. Tiếp tục logic mặc đồ
         if gear_type in ["weapon", "armor", "vice"]:
             old_gear = gear.get(gear_type)
             
@@ -289,9 +303,10 @@ class GearInventorySelect(discord.ui.Select):
                 await interaction.message.edit(embed=generate_inventory_embed(updated_profile), view=InventoryView(profile=updated_profile, cog_instance=self.cog))
             except Exception: pass
 
-            return await interaction.followup.send(f"✅**{item_name}** has been placed in position**[{gear_type.upper()}]**!", ephemeral=True)
+            return await interaction.followup.send(f"✅ **{item_name}** has been placed in position **[{gear_type.upper()}]**!", ephemeral=True)
             
-        await interaction.followup.send(f"📦Item **{item_name}** cannot be used directly here..", ephemeral=True)
+        await interaction.followup.send(f"📦 Item **{item_name}** cannot be used directly here..", ephemeral=True)
+
 
 class DigiBagSelect(discord.ui.Select):
     def __init__(self, digimon_list, active_id, cog_instance):
@@ -1378,7 +1393,7 @@ class RPGSystemCog(commands.Cog):
         },
         "Zeed Milleniummon": {
             "name": "Zeed Milleniummon (Dimension Destroyer)",
-            "attr": "Virus  ",
+            "attr": "Virus",
             "hp_mult": 12,
             "atk_mult": 0.14,
             "def_mult": 1,
@@ -1701,36 +1716,41 @@ class RPGSystemCog(commands.Cog):
 
         # Hàm helper để lấy chỉ số dù là Mythic (phẳng) hay Origin (lồng)
         def get_stats_from_item(item):
-            # Nếu item là dict, kiểm tra xem nó có key 'stats' không
-            if isinstance(item, dict):
-                return item.get("stats", item)
-            # Nếu là string (đồ chuỗi), lấy từ kho ITEMS
-            elif item and item != "None":
+            # Nếu là None hoặc chuỗi "None" thì trả về trống
+            if not item or item == "None":
+                return {}
+            
+            # Nếu item là String (đồ thường)
+            if isinstance(item, str):
                 name = self.clean_item_name(item)
                 return self.ITEMS.get(name, {})
+            
+            # Nếu item là Dict (Mythic/Origin)
+            if isinstance(item, dict):
+                # Ưu tiên lấy từ key "stats", nếu không có thì lấy chính nó (phẳng)
+                # Đảm bảo trả về dict rỗng nếu dữ liệu bị lỗi
+                return item.get("stats") if "stats" in item else item
+                
             return {}
 
         # --- Xử lý Vũ khí ---
         w_stats = get_stats_from_item(gear.get("weapon"))
-        total_atk += w_stats.get("atk", 0)
+        total_atk += float(w_stats.get("atk", 0))
 
         # --- Xử lý Áo giáp ---
         a_stats = get_stats_from_item(gear.get("armor"))
-        total_hp += a_stats.get("hp", 0)
-        total_def += a_stats.get("def", 0)
+        total_hp += int(a_stats.get("hp", 0))
+        total_def += float(a_stats.get("def", 0))
 
         # --- Xử lý Vice ---
         v_stats = get_stats_from_item(gear.get("vice"))
-        total_crit_rate += v_stats.get("crit_rate", 0)
-        total_crit_dmg += v_stats.get("crit_dmg", 0)
-
-        return {
-            "hp": total_hp, 
-            "atk": total_atk, 
-            "def": total_def, 
-            "crit_rate": total_crit_rate, 
-            "crit_dmg": total_crit_dmg
-        }
+        total_crit_rate += float(v_stats.get("crit_rate", 0))
+        # Sửa lỗi: Nếu crit_dmg là dạng phần trăm (ví dụ: 12.0 là 12%)
+        # Bạn nên quy đổi về hệ số cộng dồn. Ví dụ: 1.0 (base) + 0.12 = 1.12
+        crit_dmg_bonus = float(v_stats.get("crit_dmg", 0))
+        if crit_dmg_bonus > 1: # Nếu dữ liệu lưu là 12.0 thay vì 0.12
+            crit_dmg_bonus /= 100
+        total_crit_dmg += crit_dmg_bonus
 
     async def refresh_profile_message(self, message: discord.Message, user_id: int):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
@@ -2820,13 +2840,12 @@ class WorldBossTurnBased(commands.Cog):
             await self.spawn_olympos_boss()
             return
 
-        # Tính năng Tự động Refresh bảng giao diện mỗi 30 GIÂY (Chỉ update 1 lần mỗi turn)
         if self.boss_state["phase_timer"] % 10 == 0:
             for channel_id, msg in list(self.active_dashboards.items()):
                 try:
                     await msg.edit(embed=self.generate_boss_embed())
                 except discord.NotFound:
-                    del self.active_dashboards[channel_id] # Xóa khỏi bộ nhớ nếu tin nhắn bị user xóa
+                    del self.active_dashboards[channel_id] 
                 except Exception:
                     pass
 
@@ -2835,8 +2854,13 @@ class WorldBossTurnBased(commands.Cog):
             current_now = time.time()
             
             for user_id in list(self.persistent_auto_attackers.keys()):
-                # GIẢM THỜI GIAN AUTO ATTACK XUỐNG 10 GIÂY
-                if current_now - self.persistent_auto_attackers[user_id] >= 10:
+                # ✅ Lấy thời gian an toàn
+                last_attack_time = self.persistent_auto_attackers.get(user_id)
+                if last_attack_time is None:
+                    continue
+                
+                # ✅ SỬA LỖI TẠI ĐÂY: Sử dụng trực tiếp biến last_attack_time
+                if current_now - last_attack_time >= 10:
                     profile = await rpg_profiles_col.find_one({"user_id": user_id})
                     if not profile or profile.get("current_hp", 0) <= 0:
                         if user_id in self.persistent_auto_attackers:
@@ -3038,6 +3062,10 @@ class WorldBossTurnBased(commands.Cog):
         }
         cfg = reward_config.get(tier, reward_config[1])
 
+        import copy
+        import uuid
+        import time
+
         for user_id, accumulated_dmg in self.boss_state["total_damage"].items():
             if accumulated_dmg <= 0: continue
 
@@ -3047,7 +3075,6 @@ class WorldBossTurnBased(commands.Cog):
                 r_core = random.randint(*cfg["core"])
                 r_coin = random.randint(*cfg["coin"])
 
-                # LƯU Ý: Đã sửa lại tên field chuẩn theo database của bạn
                 await rpg_profiles_col.update_one(
                     {"user_id": user_id},
                     {"$inc": {
@@ -3058,20 +3085,23 @@ class WorldBossTurnBased(commands.Cog):
                     }}
                 )
 
-                ddropped_gear_raw = None
+                dropped_gear_raw = None
                 roll = random.random()
                 
                 if tier == 4 and roll < 0.10:
                     dropped_gear_raw = random.choice(self.HIGH_TIER_GEARS)
                 elif tier == 5:
                     if roll < 0.15: 
+                        # Đảm bảo bạn đã khai báo ORIGIN_GEAR_TEMPLATES ở Global
                         dropped_gear_raw = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
                     elif roll < 0.25: 
                         dropped_gear_raw = random.choice(self.HIGH_TIER_GEARS)
 
+                # Khởi tạo tin nhắn cơ bản trước
+                reward_msg = f"🏆 **BOSS DEFEATED:** You dealt **{accumulated_dmg:,}** dmg\n🎁 **Rewards:** `{r_digibit}` Bits | `{r_orb}` Orbs | `{r_core}` Cores | `{r_coin}` MyK Coins"
+
+                # Chỉ xử lý trang bị NẾU người chơi thực sự rớt đồ
                 if dropped_gear_raw:
-                    # SỬA Ở ĐÂY: Copy dict để không dính template gốc và gắn ID duy nhất
-                    import copy
                     dropped_gear = copy.deepcopy(dropped_gear_raw)
                     dropped_gear["id"] = str(uuid.uuid4()) # Gắn ID chuẩn
                     dropped_gear["obtained_at"] = int(time.time())
@@ -3081,9 +3111,10 @@ class WorldBossTurnBased(commands.Cog):
                         {"$push": {"inventory": dropped_gear}}
                     )
 
-                reward_msg = f"🏆 **BOSS DEFEATED:** You dealt **{accumulated_dmg:,}** dmg\n🎁 **Rewards:** `{r_digibit}` Bits | `{r_orb}` Orbs | `{r_core}` Cores | `{r_coin}` MyK Coins"
-                if dropped_gear: 
-                    reward_msg += f"\n🔥 **ITEM DROPPED:** [{dropped_gear['rarity']}] **{dropped_gear['name']}**!"
+                    # ✅ SỬA LỖI KEYERROR TẠI ĐÂY
+                    rarity_label = dropped_gear.get('rarity', dropped_gear.get('tier', 'Origin'))
+                    reward_msg += f"\n🔥 **ITEM DROPPED:** [{rarity_label}] **{dropped_gear['name']}**!"
+
                 await self.send_dm_safely(user_id, reward_msg)
                 
             except Exception as e:
