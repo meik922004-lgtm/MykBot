@@ -132,7 +132,6 @@ class GearInventorySelect(discord.ui.Select):
             if len(options) >= 25: break
             stats = []
             
-            # SỬA LỖI: Trích xuất linh hoạt cả cấu trúc phẳng (Mythic) lẫn cấu trúc lồng trong "stats" (Origin)
             target_stats = gear_dict.get("stats", gear_dict)
             
             if "atk" in target_stats: stats.append(f"ATK +{target_stats['atk']}")
@@ -143,16 +142,16 @@ class GearInventorySelect(discord.ui.Select):
             
             stat_desc = " | ".join(stats) if stats else "No Stats"
             
-            # Lấy độ hiếm/bậc tương ứng để hiển thị nhãn dán
             rarity_label = gear_dict.get('rarity', gear_dict.get('tier', 'Common'))
+            
+            # SỬA LỖI Ở ĐÂY: KHÔNG DÙNG uuid.uuid4() MÀ PHẢI DÙNG FALLBACK ID TĨNH
+            fallback_id = f"no_id_{gear_dict.get('name', 'Unknown')}"
             
             options.append(discord.SelectOption(
                 label=f"{gear_dict.get('name', 'Unknown')} ({rarity_label})",
                 description=f"Type: {gear_dict.get('type', 'N/A').upper()} | {stat_desc}",
-                value=gear_dict.get("id", str(uuid.uuid4()))
+                value=gear_dict.get("id", fallback_id)[:100]
             ))
-        if not options:
-            options = [discord.SelectOption(label="The warehouse is empty.", value="empty")]
             
         super().__init__(placeholder="🎒 Choose equipment to Wear, Use, or Remove..", options=options)
 
@@ -202,8 +201,10 @@ class GearInventorySelect(discord.ui.Select):
                 target_item = item
                 break
             elif isinstance(item, dict):
-                # SỬA Ở ĐÂY: Kiểm tra cả ID thực lẫn ID dự phòng (fallback)
-                item_val = item.get("id", f"no_id_{item.get('name', 'Unknown')}")[:100]
+                # SỬA LỖI Ở ĐÂY: Quét tìm theo ID thật HOẶC fallback ID tĩnh
+                fallback_id = f"no_id_{item.get('name', 'Unknown')}"
+                item_val = item.get("id", fallback_id)[:100]
+                
                 if item_val == selected_value:
                     target_item = item
                     is_dict = True
