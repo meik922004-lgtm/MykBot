@@ -2575,7 +2575,7 @@ class WorldBossView(discord.ui.View):
             auto_base_dmg = int(auto_base_dmg * 1.6)
             tier_penalty_text = "\n🛡️ **Newbie Buff:** `+60% damage`"
         else:
-            tier_penalty = {1: 0.65, 2: 0.75, 3: 0.85, 4: 0.95, 5: 1.0}
+            tier_penalty = {1: 0.90, 2: 0.95, 3: 1, 4: 1, 5: 1}
             penalty = tier_penalty.get(tier, 1.0)
             auto_base_dmg = int(auto_base_dmg * penalty)
             if penalty < 1.0:
@@ -2939,7 +2939,7 @@ class WorldBossTurnBased(commands.Cog):
                 if tier == 4 and roll < 0.10:
                     dropped_gear = random.choice(self.HIGH_TIER_GEARS)
                     
-                # Boss Tier 5: Rớt đồ Origin (3%) hoặc rớt đồ Mythic (10%)
+                # Boss Tier 5: Rớt đồ Origin (15%) hoặc rớt đồ Mythic (25%)
                 elif tier == 5:
                     if roll < 0.15: 
                         dropped_gear = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
