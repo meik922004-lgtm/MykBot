@@ -2735,7 +2735,7 @@ class WorldBossTurnBased(commands.Cog):
         if not is_mega or calculated_dmg < 2000:
             calculated_dmg *= 1.6
         else:
-            tier_penalty = {1: 0.65, 2: 0.75, 3: 0.85, 4: 0.95, 5: 1.0}
+            tier_penalty = {1: 0.80, 2: 0.90, 3: 0.95, 4: 0.95, 5: 1.0}
             calculated_dmg *= tier_penalty.get(self.boss_state["tier"], 1.0)
 
         final_dmg = int(calculated_dmg)
@@ -2809,7 +2809,7 @@ class WorldBossTurnBased(commands.Cog):
 
         if self.boss_state["upcoming_aoe"]:
             for u_id in self.boss_state["participants"].keys():
-                await self.send_dm_safely(u_id, f"⚠️ **WARNING** Boss `{self.boss_state['boss_name']}` preparing to use AOE skillủ.")
+                await self.send_dm_safely(u_id, f"⚠️ **WARNING** Boss `{self.boss_state['boss_name']}` preparing to use AOE skill.")
 
         self.boss_state.update({"phase": "PLAYER_TURN", "phase_timer": 60})
 
