@@ -3027,7 +3027,7 @@ class WorldBossTurnBased(commands.Cog):
         if not self.boss_state["active"]:
             return await interaction.followup.send("Currently, no World Bosses are present..", ephemeral=True)
 
-        embed = self.generate_boss_embed()
+        embed = await self.generate_boss_embed()
         view = WorldBossView(self)
         
         msg = await interaction.followup.send(embed=embed, view=view)
