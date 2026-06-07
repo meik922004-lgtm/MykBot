@@ -51,27 +51,6 @@ OLYMPOS_XII_DATA = {
     "Mercurymon": "Virus", "Venusmon": "Vaccine", "Bacchusmon": "Virus"
 }
 
-# Định nghĩa chỉ số trang bị Origin (Vượt trội hơn Mythic)
-ORIGIN_GEAR_TEMPLATES = {
-    "weapon": {
-        "name": "Origin Eternal Judgement (Weapon)",
-        "rarity": "Origin",
-        "rarity": {"atk": 1200, "def": 0, "hp": 1000},
-        "description": "The low chance causes a small portion of the player's ATK to become damage."
-    },
-    "armor": {
-        "name": "Origin Aegis of Olympus (Armor)",
-        "rarity": "Origin",
-        "stats": {"def": 600, "hp": 4500},
-        "description": "Low chance of blocking a certain amount of incoming damage and restoring HP.."
-    },
-    "vice": {
-        "name": "Origin Cosmic Chrono (Vice)",
-        "rarity": "Origin",
-        "stats": {"crit_dmg":5, "crit_rate":70},
-        "description": "Low chance of significantly increasing damage when triggering a critical hit.."
-    }
-}
 # Cache cho hệ thống Auto Attack tối ưu hóa (Yêu cầu 7)
 auto_attack_cache = {} 
 
@@ -143,7 +122,7 @@ class GearInventorySelect(discord.ui.Select):
                     for old_key in ["atk", "def", "hp"]:
                         if old_key in gear_dict: del gear_dict[old_key]
                     gear_dict["crit_rate"] = 70 
-                    gear_dict["crit_dmg"] = 5.0
+                    gear_dict["crit_dmg"] = 12.0
                 target_stats = gear_dict
             
             if is_vice:
@@ -2578,7 +2557,7 @@ ORIGIN_GEAR_TEMPLATES = {
         "name": "Origin Aegis of Olympus (Armor)",
         "rarity": "Origin",
         "type": "armor",
-        "stats": {"atk": 0, "def": 600, "hp": 4500},
+        "stats": {"def": 600, "hp": 4500},
         "description": "Low chance of blocking a certain amount of incoming damage and restoring HP.."
     },
     "vice": {
@@ -2751,7 +2730,7 @@ class WorldBossTurnBased(commands.Cog):
             "hp": 30000,
             "base_atk": 200,
             "phase": "PLAYER_TURN",  
-            "phase_timer": 60,       
+            "phase_timer": 30,       
             "turn_damage": {},      # Sát thương trong 1 turn (để trừ máu Boss)
             "total_damage": {},     # Sát thương tổng để xếp hạng Top 10
             "participants": {},     
@@ -2917,7 +2896,7 @@ class WorldBossTurnBased(commands.Cog):
             "hp": int(max_hp),
             "base_atk": int(base_atk), 
             "phase": "PLAYER_TURN",
-            "phase_timer": 60, 
+            "phase_timer": 30, 
             "turn_damage": {}, 
             "total_damage": {}, 
             "participants": {}, 
