@@ -1752,6 +1752,14 @@ class RPGSystemCog(commands.Cog):
             crit_dmg_bonus /= 100
         total_crit_dmg += crit_dmg_bonus
 
+        return {
+            "hp": total_hp, 
+            "atk": total_atk, 
+            "def": total_def, 
+            "crit_rate": total_crit_rate, 
+            "crit_dmg": total_crit_dmg
+        }
+
     async def refresh_profile_message(self, message: discord.Message, user_id: int):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
         digimon = self.get_active_digimon(profile)
