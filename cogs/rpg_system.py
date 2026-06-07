@@ -2779,21 +2779,28 @@ class WorldBossTurnBased(commands.Cog):
             await self.execute_boss_turn()
 
     async def spawn_olympos_boss(self):
-        tier = random.choices([1, 2, 3, 4, 5], weights=[40, 30, 15, 10, 5])[0]
+        # 1. Lấy thông tin boss hiện tại để biết đang ở Tier mấy
+        boss_meta = await world_boss_col.find_one({"meta_id": "current_boss"})
         
-        # Chọn ngẫu nhiên Boss và lấy Hệ (Attribute) tương ứng
+        # Nếu chưa có Tier, bắt đầu từ 1. Nếu đã có, lấy tier hiện tại + 1 (loop 1-5)
+        current_tier = boss_meta.get("tier", 0) if boss_meta else 0
+        next_tier = (current_tier % 5) + 1
+        
+        # 2. Chọn Boss (Vẫn ngẫu nhiên tên, nhưng Tier là cố định theo chu kỳ)
         base_boss_name = random.choice(list(OLYMPOS_XII_DATA.keys()))
         boss_attr = OLYMPOS_XII_DATA[base_boss_name]
-        boss_name = f"[Tier {tier}] {base_boss_name}"
+        boss_name = f"[Tier {next_tier}] {base_boss_name}"
         
-        max_hp = 30000 * (tier ** 1.8)
-        base_atk = 200 * (tier ** 1.3)
+        # Công thức tính chỉ số
+        max_hp = 30000 * (next_tier ** 1.8)
+        base_atk = 200 * (next_tier ** 1.3)
 
+        # 3. Cập nhật State
         self.boss_state.update({
             "active": True, 
             "boss_name": boss_name,
-            "attribute": boss_attr,  # Lưu Hệ của Boss vào State
-            "tier": tier, 
+            "attribute": boss_attr,
+            "tier": next_tier, 
             "max_hp": int(max_hp), 
             "hp": int(max_hp),
             "base_atk": int(base_atk), 
@@ -2805,12 +2812,21 @@ class WorldBossTurnBased(commands.Cog):
             "upcoming_aoe": False
         })
         
+        # 4. Lưu lại Tier mới vào DB để vòng sau gọi tiếp
         await world_boss_col.update_one(
             {"meta_id": "current_boss"},
-            {"$set": {"name": base_boss_name, "attribute": boss_attr, "tier": tier, "hp": int(max_hp), "max_hp": int(max_hp), "status": "alive"}},
+            {
+                "$set": {
+                    "name": base_boss_name, 
+                    "attribute": boss_attr, 
+                    "tier": next_tier, 
+                    "hp": int(max_hp), 
+                    "max_hp": int(max_hp), 
+                    "status": "alive"
+                }
+            },
             upsert=True
         )
-
     # ========================================================================
     # XỬ LÝ SÁT THƯƠNG AUTO ATTACK
     # ========================================================================
