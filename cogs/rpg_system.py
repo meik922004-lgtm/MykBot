@@ -2703,15 +2703,29 @@ class WorldBossTurnBased(commands.Cog):
     # ========================================================================
     # TẠO GIAO DIỆN EMBED (CHUẨN FORM ẢNH)
     # ========================================================================
-    def generate_boss_embed(self):
+    async def generate_boss_embed(self):
+        # Kiểm tra xem boss có đang hoạt động không
+        latest_boss = await world_boss_col.find_one({"meta_id": "current_boss"})
+        if latest_boss:
+            self.boss_state.update(latest_boss)
+            self.boss_state["active"] = (latest_boss.get("status") == "alive")
+
+        # 2. Kiểm tra trạng thái
+        if not self.boss_state.get("active", False):
+            embed = discord.Embed(
+                title="⚔️ THE BATTLE HALL OF THE GODS",
+                description="⏳ *No boss currently active. Please wait for the next spawn...*",
+                color=discord.Color.light_gray()
+            )
+            return embed
+
+        # Nếu active thì mới tiếp tục xử lý
         color = discord.Color.red() if self.boss_state["phase"] == "BOSS_TURN" else discord.Color.green()
-        
-        # Lấy Attribute từ boss_state, nếu là phiên cũ chưa có thì để Unknown
         boss_attr = self.boss_state.get("attribute", "Unknown")
-        
+
         embed = discord.Embed(
             title="⚔️ THE BATTLE HALL OF THE GODS",
-            description=f"Current boss: **{self.boss_state['boss_name']}**\n🧬 Attribute: **{boss_attr}**",
+            description=f"Current boss: **{self.boss_state.get('boss_name', 'Unknown')}**\n🧬 Attribute: **{boss_attr}**",
             color=color
         )
         
