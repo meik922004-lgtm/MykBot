@@ -1216,12 +1216,6 @@ class RPGSystemCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.loop.create_task(self.initialize_market_mega_products())
-        self.HIGH_TIER_GEARS = [
-    {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
-    {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
-    {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0,"rarity": "Mythic"},
-    {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
-    {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg":3.0, "rarity": "Mythic"}]
         self.active_solo_battles = {}
         self.solo_boss_pool = {
         "Susanoomon": {
@@ -2581,7 +2575,13 @@ class WorldBossTurnBased(commands.Cog):
         self.bot = bot
         self.persistent_auto_attackers = {}
         self.active_dashboards = {}  # {channel_id: message_object} để Auto-Refresh
-
+        self.HIGH_TIER_GEARS = [
+            {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
+            {"name": "Alpha Absolute Shield", "type": "armor", "def": 550, "hp": 1500, "rarity": "Mythic"},
+            {"name": "Ultimate Omegamon Vice", "type": "vice", "crit_rate": 20, "crit_dmg": 5.0, "rarity": "Mythic"},
+            {"name": "Crimson End Armor", "type": "armor", "def": 600, "hp": 3500, "rarity": "Mythic"},
+            {"name": "Miracle Origin Vice", "type": "vice", "crit_rate": 50, "crit_dmg": 3.0, "rarity": "Mythic"}
+        ]
         self.boss_state = {
             "active": False,
             "boss_name": "",
@@ -2744,12 +2744,19 @@ class WorldBossTurnBased(commands.Cog):
 
     async def transition_to_boss_turn(self):
         self.boss_state["hp"] -= sum(self.boss_state["turn_damage"].values())
-        self.boss_state["turn_damage"] = {} # Reset sát thương của turn để chuẩn bị turn sau
+        self.boss_state["turn_damage"] = {} # Reset sát thương của turn
         
         if self.boss_state["hp"] <= 0:
-            await self.distribute_rewards()
-            self.boss_state["active"] = False
+            # ĐÁNH DẤU BOSS CHẾT NGAY LẬP TỨC để chặn vòng lặp vô hạn
+            self.boss_state["active"] = False 
+            
+            # An toàn gọi hàm trao quà, nếu lỗi cũng không làm kẹt Boss mới
+            try:
+                await self.distribute_rewards()
+            except Exception as e:
+                print(f"[WorldBoss] Error calc reward: {e}")
             return
+            
         self.boss_state["phase"] = "BOSS_TURN"
 
     # ========================================================================
@@ -2810,39 +2817,60 @@ class WorldBossTurnBased(commands.Cog):
         tier = self.boss_state["tier"]
         reward_config = {
             1: {"digibit": (300, 500), "orb": (20, 30), "core": (50, 60), "coin": (1, 1)},
-            2: {"digibit": (550, 650), "orb": (30, 40), "core": (60, 70), "coin": (1, 2)},
-            3: {"digibit": (750, 850), "orb": (40, 50), "core": (71, 100), "coin": (2, 2)},
-            4: {"digibit": (950, 1100), "orb": (50, 60), "core": (100, 150), "coin": (2, 3)},
-            5: {"digibit": (1500, 1200), "orb": (70, 70), "core": (150, 200), "coin": (3, 3)}
+            2: {"digibit": (500, 600), "orb": (30, 40), "core": (60, 70), "coin": (1, 2)},
+            3: {"digibit": (700, 800), "orb": (40, 50), "core": (71, 100), "coin": (2, 2)},
+            4: {"digibit": (800, 900), "orb": (50, 60), "core": (100, 150), "coin": (2, 3)},
+            5: {"digibit": (1000, 1500), "orb": (70, 70), "core": (150, 200), "coin": (3, 3)}
         }
         cfg = reward_config.get(tier, reward_config[1])
 
-        # Trao quà dựa trên Top Xếp Hạng (total_damage)
         for user_id, accumulated_dmg in self.boss_state["total_damage"].items():
             if accumulated_dmg <= 0: continue
 
-            r_digibit, r_orb, r_core, r_coin = random.randint(*cfg["digibit"]), random.randint(*cfg["orb"]), random.randint(*cfg["core"]), random.randint(*cfg["coin"])
+            try:
+                r_digibit = random.randint(*cfg["digibit"])
+                r_orb = random.randint(*cfg["orb"])
+                r_core = random.randint(*cfg["core"])
+                r_coin = random.randint(*cfg["coin"])
 
-            await rpg_profiles_col.update_one(
-                {"user_id": user_id},
-                {"$inc": {"digibits": r_digibit, "orbs": r_orb, "hatch_cores": r_core, "myk_coins": r_coin}}
-            )
+                # LƯU Ý: Đã sửa lại tên field chuẩn theo database của bạn
+                await rpg_profiles_col.update_one(
+                    {"user_id": user_id},
+                    {"$inc": {
+                        "digibit": r_digibit, 
+                        "orb": r_orb, 
+                        "hatch_core": r_core, 
+                        "myk_coin": r_coin
+                    }}
+                )
 
-            dropped_gear = None
-            roll = random.random()
-            if tier == 4 and roll < 0.10:
-                dropped_gear = {"name": "Mythic Equipment Box", "rarity": "Mythic", "atk": 600}
-            elif tier == 5:
-                if roll < 0.03: dropped_gear = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
-                elif roll < 0.13: dropped_gear = {"name": "Mythic Divine Core", "rarity": "Mythic", "atk": 600}
+                dropped_gear = None
+                roll = random.random()
+                
+                # Boss Tier 4: Rớt đồ Mythic ngẫu nhiên từ list HIGH_TIER_GEARS (10%)
+                if tier == 4 and roll < 0.10:
+                    dropped_gear = random.choice(self.HIGH_TIER_GEARS)
+                    
+                # Boss Tier 5: Rớt đồ Origin (3%) hoặc rớt đồ Mythic (10%)
+                elif tier == 5:
+                    if roll < 0.03: 
+                        dropped_gear = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
+                    elif roll < 0.13: 
+                        dropped_gear = random.choice(self.HIGH_TIER_GEARS)
 
-            if dropped_gear:
-                await rpg_profiles_col.update_one({"user_id": user_id}, {"$push": {"inventory": dropped_gear}})
+                if dropped_gear:
+                    await rpg_profiles_col.update_one(
+                        {"user_id": user_id}, 
+                        {"$push": {"inventory": dropped_gear}}
+                    )
 
-            reward_msg = f"🏆 **BOSS DEFEATED:** you deal **{accumulated_dmg:,}** dmg\n🎁 **Reward** `{r_digibit}` Bits | `{r_orb}` Orbs | `{r_core}` Cores | `{r_coin}` MyK Coins"
-            if dropped_gear: reward_msg += f"\n🔥 **Special:** [{dropped_gear['rarity']}] **{dropped_gear['name']}**!"
-            await self.send_dm_safely(user_id, reward_msg)
-
+                reward_msg = f"🏆 **BOSS DEFEATED:** You dealt **{accumulated_dmg:,}** dmg\n🎁 **Rewards:** `{r_digibit}` Bits | `{r_orb}` Orbs | `{r_core}` Cores | `{r_coin}` MyK Coins"
+                if dropped_gear: 
+                    reward_msg += f"\n🔥 **ITEM DROPPED:** [{dropped_gear['rarity']}] **{dropped_gear['name']}**!"
+                await self.send_dm_safely(user_id, reward_msg)
+                
+            except Exception as e:
+                print(f"[WorldBoss] Lỗi trao quà cho {user_id}: {e}")
     async def send_dm_safely(self, user_id, message_str):
         try:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
