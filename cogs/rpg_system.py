@@ -2492,11 +2492,20 @@ class RPGSystemCog(commands.Cog):
 # ========================================================================
 # CẤU HÌNH BỂ TƯỚNG OLYMPOS XII & TRANG BỊ ORIGIN
 # ========================================================================
-OLYMPOS_XII = [
-    "Jupitermon", "Junomon", "Neptunemon", "Ceresmon", "Apollomon", 
-    "Dianamon", "Vulcanusmon", "Marsmon", "Minervamon", "Mercurymon", 
-    "Venusmon", "Bacchusmon"
-]
+OLYMPOS_XII_DATA = {
+    "Jupitermon": "Vaccine", 
+    "Junomon": "Virus", 
+    "Neptunemon": "Vaccine", 
+    "Ceresmon": "Data", 
+    "Apollomon": "Vaccine", 
+    "Dianamon": "Data", 
+    "Vulcanusmon": "Data", 
+    "Marsmon": "Vaccine", 
+    "Minervamon": "Virus", 
+    "Mercurymon": "Virus", 
+    "Venusmon": "Vaccine", 
+    "Bacchusmon": "Virus"
+}
 
 ORIGIN_GEAR_TEMPLATES = {
     "weapon": {
@@ -2523,6 +2532,96 @@ class WorldBossView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
+
+    @discord.ui.button(label="Check DPS", style=discord.ButtonStyle.secondary, emoji="📊", custom_id="wb_check_dps_btn")
+    async def check_dps_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        p = await rpg_profiles_col.find_one({"user_id": user_id})
+        
+        if not p or "active_digimon_id" not in p:
+            return await interaction.response.send_message("❌ You haven't activated any Digimon yet.!", ephemeral=True)
+
+        active_id = p.get("active_digimon_id")
+        digi = next((d for d in p.get("digimon_list", []) if d.get("id") == active_id), {})
+        if not digi:
+            return await interaction.response.send_message("❌ No Digimon data found!", ephemeral=True)
+
+        # 1. Thu thập chỉ số cơ bản
+        base_atk = digi.get("base_atk", 100) + digi.get("train_atk", 0)
+        gear = p.get("gear", {})
+        gear_atk_bonus = sum(g.get("atk", 0) for g in gear.values() if isinstance(g, dict))
+        total_atk = base_atk + gear_atk_bonus
+
+        # 2. Tính toán hệ số nhân
+        size_mult = digi.get("size", 1.0)
+        attr_mult = 1.0
+        
+        boss_attr = self.cog.boss_state.get("attribute", "Unknown")
+        player_attr = digi.get("attr", "Unknown")
+        
+        # Bảng khắc hệ tiêu chuẩn (Ví dụ)
+        matrix = {
+            "Vaccine": {"Virus": 1.3, "Data": 0.7},
+            "Virus": {"Data": 1.3, "Vaccine": 0.7},
+            "Data": {"Vaccine": 1.3, "Virus": 0.7}
+        }
+        attr_mult = matrix.get(player_attr, {}).get(boss_attr, 1.0)
+        
+        attr_text = "Advantage (+30%)" if attr_mult > 1.0 else "Disadvantage (-30%)" if attr_mult < 1.0 else "same attribute"
+
+        # 3. Tính toán các mốc sát thương
+        # - Sát thương 1 Hit cơ bản (Manual Attack)
+        manual_hit_dmg = int(total_atk * size_mult * attr_mult)
+        
+        # - Sát thương 1 Tick Auto Attack (Tương đương 3.5 hit mỗi 20s)
+        auto_base_dmg = int(manual_hit_dmg * 3.5)
+        
+        # Xử lý phạt Tier/Level
+        is_mega = digi.get("stage") == "Mega"
+        tier = self.cog.boss_state.get("tier", 1)
+        tier_penalty_text = ""
+        
+        if not is_mega or auto_base_dmg < 2000:
+            auto_base_dmg = int(auto_base_dmg * 1.6)
+            tier_penalty_text = "\n🛡️ **Newbie Buff:** `+60% damage`"
+        else:
+            tier_penalty = {1: 0.65, 2: 0.75, 3: 0.85, 4: 0.95, 5: 1.0}
+            penalty = tier_penalty.get(tier, 1.0)
+            auto_base_dmg = int(auto_base_dmg * penalty)
+            if penalty < 1.0:
+                tier_penalty_text = f"\n📉 **Tier Boss pressure:** `Decrease {(1 - penalty)*100:.0f}% damage`"
+
+        # 4. Hiển thị trang bị Origin / Passive
+        has_origin_weapon = gear.get("weapon", {}).get("rarity") == "Origin" if isinstance(gear.get("weapon"), dict) else False
+        has_origin_vice = gear.get("vice", {}).get("rarity") == "Origin" if isinstance(gear.get("vice"), dict) else False
+        
+        passive_text = ""
+        if is_mega:
+            passive_text += "- 🌟 There is a 5% chance to gain `+30% ATK` or `+20% Bonus Attack` every 20 seconds..\n"
+        if has_origin_weapon:
+            passive_text += f"- ⚔️ An 8% chance to activate Origin Weapon deals additional damage. `{int(total_atk * 0.15):,}` DMG.\n"
+        if has_origin_vice:
+            passive_text += "- 📿 T10% chance to activate Origin Vice `x1.4` total DMG.\n"
+
+        if not passive_text:
+            passive_text = "*There is no particular intrinsic trigger.t.*"
+
+        # 5. Xây dựng bản báo cáo Log
+        report_msg = (
+            f"📊 **DPS ANALYSIS TABLE**\n\n"
+            f"**1. Baseline Index:**\n"
+            f"- Size Ratio: `{size_mult * 100:.1f}%`\n"
+            f"- Total ATK (Base + Gear): `{total_atk:,}`\n"
+            f"- Counter-system({player_attr} vs {boss_attr}): `{attr_text}`\n"
+            f"{tier_penalty_text}\n\n"
+            f"**2. Estimated Damage:**\n"
+            f"🗡️ **Manual Attack (1 Hit):** `~ {manual_hit_dmg:,}` DMG\n"
+            f"🤖 **Auto Attack (every 20s):** `~ {auto_base_dmg:,}` DMG *(not including luck)*\n\n"
+            f"**3. Hidden Passive Activation Rate (RNG):**\n"
+            f"{passive_text}"
+        )
+
+        await interaction.response.send_message(report_msg, ephemeral=True)
 
     @discord.ui.button(label="Toggle Auto Attack", style=discord.ButtonStyle.success, custom_id="wb_auto_btn")
     async def auto_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2606,11 +2705,16 @@ class WorldBossTurnBased(commands.Cog):
     # ========================================================================
     def generate_boss_embed(self):
         color = discord.Color.red() if self.boss_state["phase"] == "BOSS_TURN" else discord.Color.green()
+        
+        # Lấy Attribute từ boss_state, nếu là phiên cũ chưa có thì để Unknown
+        boss_attr = self.boss_state.get("attribute", "Unknown")
+        
         embed = discord.Embed(
             title="⚔️ THE BATTLE HALL OF THE GODS",
-            description=f"Current boss: **{self.boss_state['boss_name']}**",
+            description=f"Current boss: **{self.boss_state['boss_name']}**\n🧬 Attribute: **{boss_attr}**",
             color=color
         )
+        
         embed.add_field(
             name="HP Boss", 
             value=f"❤️ {max(0, self.boss_state['hp']):,} / {self.boss_state['max_hp']:,}", 
@@ -2620,10 +2724,9 @@ class WorldBossTurnBased(commands.Cog):
         status_text = f"⏳ turn: **{self.boss_state['phase']}** ({self.boss_state['phase_timer']}s left)"
         embed.add_field(name="Status", value=status_text, inline=False)
 
-        # Xây dựng Bảng xếp hạng Top 10
         leaderboard_text = ""
         if not self.boss_state["total_damage"]:
-            leaderboard_text = "*No one has inflicted any damage*"
+            leaderboard_text = "*No damage dealt yet*"
         else:
             sorted_dmg = sorted(self.boss_state["total_damage"].items(), key=lambda x: x[1], reverse=True)[:10]
             for idx, (uid, dmg) in enumerate(sorted_dmg, 1):
@@ -2631,8 +2734,6 @@ class WorldBossTurnBased(commands.Cog):
                 leaderboard_text += f"{medal} <@{uid}> - **{dmg:,}** dmg\n"
                 
         embed.add_field(name="🏆 TOP 10 DAMAGE", value=leaderboard_text, inline=False)
-        return embed
-
     # ========================================================================
     # VÒNG LẶP ĐIỀU PHỐI (CÓ AUTO-REFRESH MESSAGE)
     # ========================================================================
@@ -2679,22 +2780,34 @@ class WorldBossTurnBased(commands.Cog):
 
     async def spawn_olympos_boss(self):
         tier = random.choices([1, 2, 3, 4, 5], weights=[40, 30, 15, 10, 5])[0]
-        boss_name = random.choice(OLYMPOS_XII)
+        
+        # Chọn ngẫu nhiên Boss và lấy Hệ (Attribute) tương ứng
+        base_boss_name = random.choice(list(OLYMPOS_XII_DATA.keys()))
+        boss_attr = OLYMPOS_XII_DATA[base_boss_name]
+        boss_name = f"[Tier {tier}] {base_boss_name}"
         
         max_hp = 30000 * (tier ** 1.8)
         base_atk = 200 * (tier ** 1.3)
 
         self.boss_state.update({
-            "active": True, "boss_name": f"[Tier {tier}] {boss_name}",
-            "tier": tier, "max_hp": int(max_hp), "hp": int(max_hp),
-            "base_atk": int(base_atk), "phase": "PLAYER_TURN",
-            "phase_timer": 60, "turn_damage": {}, "total_damage": {}, 
-            "participants": {}, "upcoming_aoe": False
+            "active": True, 
+            "boss_name": boss_name,
+            "attribute": boss_attr,  # Lưu Hệ của Boss vào State
+            "tier": tier, 
+            "max_hp": int(max_hp), 
+            "hp": int(max_hp),
+            "base_atk": int(base_atk), 
+            "phase": "PLAYER_TURN",
+            "phase_timer": 60, 
+            "turn_damage": {}, 
+            "total_damage": {}, 
+            "participants": {}, 
+            "upcoming_aoe": False
         })
         
         await world_boss_col.update_one(
             {"meta_id": "current_boss"},
-            {"$set": {"name": boss_name, "tier": tier, "hp": int(max_hp), "max_hp": int(max_hp), "status": "alive"}},
+            {"$set": {"name": base_boss_name, "attribute": boss_attr, "tier": tier, "hp": int(max_hp), "max_hp": int(max_hp), "status": "alive"}},
             upsert=True
         )
 
