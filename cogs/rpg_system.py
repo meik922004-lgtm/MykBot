@@ -82,10 +82,8 @@ class GearInventorySelect(discord.ui.Select):
     def __init__(self, profile: dict, cog_instance):
         options = []
         self.cog = cog_instance
-        
         inventory = profile.get("inventory", [])
-        gear = profile.get("gear", {}) 
-        
+        gear = profile.get("gear", {})  
         # 1. Đưa các trang bị ĐANG MẶC vào đầu danh sách để dễ Gỡ (Unequip)
         for slot in ["weapon", "armor", "vice"]:
             item = gear.get(slot)
@@ -108,6 +106,7 @@ class GearInventorySelect(discord.ui.Select):
             elif isinstance(gear_item, dict):
                 dict_items.append(gear_item)
         
+        # Vòng lặp 1: Dành cho vật phẩm thường dạng chuỗi (String)
         for gear_str, count in string_counts.items():
             if len(options) >= 25: break
             cleaned_name = cog_instance.clean_item_name(gear_str)
@@ -117,6 +116,8 @@ class GearInventorySelect(discord.ui.Select):
             if "atk" in gear_data: stats.append(f"ATK +{gear_data['atk']}")
             if "def" in gear_data: stats.append(f"DEF +{gear_data['def']}")
             if "hp" in gear_data: stats.append(f"HP +{gear_data['hp']}")
+            if "crit_rate" in gear_data: stats.append(f"CT +{gear_data['crit_rate']}%")
+            if "crit_dmg" in gear_data: stats.append(f"CD +{gear_data['crit_dmg']}%")
             stat_desc = " | ".join(stats) if stats else "Consumable"
             
             quantity_label = f" x{count}" if count > 1 else ""
@@ -126,20 +127,30 @@ class GearInventorySelect(discord.ui.Select):
                 value=gear_str 
             ))
             
+        # Vòng lặp 2: Dành cho vật phẩm chỉ số dạng Dict (Mythic / Origin)
         for gear_dict in dict_items:
             if len(options) >= 25: break
             stats = []
-            if "atk" in gear_dict: stats.append(f"ATK +{gear_dict['atk']}")
-            if "def" in gear_dict: stats.append(f"DEF +{gear_dict['def']}")
-            if "hp" in gear_dict: stats.append(f"HP +{gear_dict['hp']}")
+            
+            # SỬA LỖI: Trích xuất linh hoạt cả cấu trúc phẳng (Mythic) lẫn cấu trúc lồng trong "stats" (Origin)
+            target_stats = gear_dict.get("stats", gear_dict)
+            
+            if "atk" in target_stats: stats.append(f"ATK +{target_stats['atk']}")
+            if "def" in target_stats: stats.append(f"DEF +{target_stats['def']}")
+            if "hp" in target_stats: stats.append(f"HP +{target_stats['hp']}")
+            if "crit_rate" in target_stats: stats.append(f"CT +{target_stats['crit_rate']}%")
+            if "crit_dmg" in target_stats: stats.append(f"CD +{target_stats['crit_dmg']}%")
+            
             stat_desc = " | ".join(stats) if stats else "No Stats"
             
+            # Lấy độ hiếm/bậc tương ứng để hiển thị nhãn dán
+            rarity_label = gear_dict.get('rarity', gear_dict.get('tier', 'Common'))
+            
             options.append(discord.SelectOption(
-                label=f"{gear_dict.get('name', 'Unknown')} ({gear_dict.get('rarity', 'Common')})",
+                label=f"{gear_dict.get('name', 'Unknown')} ({rarity_label})",
                 description=f"Type: {gear_dict.get('type', 'N/A').upper()} | {stat_desc}",
                 value=gear_dict.get("id", str(uuid.uuid4()))
             ))
-
         if not options:
             options = [discord.SelectOption(label="The warehouse is empty.", value="empty")]
             
@@ -190,10 +201,13 @@ class GearInventorySelect(discord.ui.Select):
             if isinstance(item, str) and item == selected_value:
                 target_item = item
                 break
-            elif isinstance(item, dict) and item.get("id") == selected_value:
-                target_item = item
-                is_dict = True
-                break
+            elif isinstance(item, dict):
+                # SỬA Ở ĐÂY: Kiểm tra cả ID thực lẫn ID dự phòng (fallback)
+                item_val = item.get("id", f"no_id_{item.get('name', 'Unknown')}")[:100]
+                if item_val == selected_value:
+                    target_item = item
+                    is_dict = True
+                    break
                 
         if target_item is None:
             return await interaction.followup.send("❌ This item is no longer in your inventory!", ephemeral=True)
@@ -2498,20 +2512,26 @@ OLYMPOS_XII = [
     "Dianamon", "Vulcanusmon", "Marsmon", "Minervamon", "Mercurymon", 
     "Venusmon", "Bacchusmon"]
 
-ORIGIN_GEAR_TEMPLATES = {
+OORIGIN_GEAR_TEMPLATES = {
     "weapon": {
-        "name": "Origin Eternal Judgement", "type": "weapon",
-        "atk": 1200, "def": 0, "hp": 1000, "rarity": "Origin",
-        "description": "A low chance of converting a small portion of the player's ATK into pure damage.."
+        "name": "Origin Eternal Judgement (Weapon)",
+        "tier": "Origin",
+        "type": "weapon",
+        "stats": {"atk": 1200, "def": 0, "hp": 1000},
+        "description": "The low chance causes a small portion of the player's ATK to become damage."
     },
     "armor": {
-        "name": "Origin Aegis of Olympus", "type": "armor",
-        "atk": 0, "def": 600, "hp": 4500, "rarity": "Origin",
+        "name": "Origin Aegis of Olympus (Armor)",
+        "tier": "Origin",
+        "type": "armor",
+        "stats": {"atk": 0, "def": 600, "hp": 4500},
         "description": "Low chance of blocking a certain amount of incoming damage and restoring HP.."
     },
     "vice": {
-        "name": "Origin Cosmic Chrono", "type": "vice",
-        "atk": 400, "def": 150, "hp": 1500, "rarity": "Origin",
+        "name": "Origin Cosmic Chrono (Vice)",
+        "tier": "Origin",
+        "type": "vice",
+        "stats": {"crit_rate": 70, "crit_dmg": 12.0}, # ĐÃ ĐỔI: Sử dụng crit_rate (CT) và crit_dmg (CD) vượt trội hơn Mythic
         "description": "Low chance of significantly increasing damage when triggering a critical hit.."
     }
 }
@@ -3012,21 +3032,24 @@ class WorldBossTurnBased(commands.Cog):
                     }}
                 )
 
-                dropped_gear = None
+                ddropped_gear_raw = None
                 roll = random.random()
                 
-                # Boss Tier 4: Rớt đồ Mythic ngẫu nhiên từ list HIGH_TIER_GEARS (10%)
                 if tier == 4 and roll < 0.10:
-                    dropped_gear = random.choice(self.HIGH_TIER_GEARS)
-                    
-                # Boss Tier 5: Rớt đồ Origin (15%) hoặc rớt đồ Mythic (25%)
+                    dropped_gear_raw = random.choice(self.HIGH_TIER_GEARS)
                 elif tier == 5:
                     if roll < 0.15: 
-                        dropped_gear = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
+                        dropped_gear_raw = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
                     elif roll < 0.25: 
-                        dropped_gear = random.choice(self.HIGH_TIER_GEARS)
+                        dropped_gear_raw = random.choice(self.HIGH_TIER_GEARS)
 
-                if dropped_gear:
+                if dropped_gear_raw:
+                    # SỬA Ở ĐÂY: Copy dict để không dính template gốc và gắn ID duy nhất
+                    import copy
+                    dropped_gear = copy.deepcopy(dropped_gear_raw)
+                    dropped_gear["id"] = str(uuid.uuid4()) # Gắn ID chuẩn
+                    dropped_gear["obtained_at"] = int(time.time())
+
                     await rpg_profiles_col.update_one(
                         {"user_id": user_id}, 
                         {"$push": {"inventory": dropped_gear}}
