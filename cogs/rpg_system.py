@@ -207,22 +207,34 @@ class GearInventorySelect(discord.ui.Select):
             else:
                 return await interaction.followup.send("❌ Error: This location is not equipped.", ephemeral=True)
 
+        selected_value = self.values[0]
+        inventory = profile.get("inventory", [])
+        
         target_item = None
         is_dict = False
-        for item in inventory:
-            if isinstance(item, str) and item == selected_value:
-                target_item = item
-                break
-            elif isinstance(item, dict):
-                # SỬA LỖI Ở ĐÂY: Quét tìm theo ID thật HOẶC fallback ID tĩnh
-                fallback_id = f"no_id_{item.get('name', 'Unknown')}"
-                item_val = item.get("id", fallback_id)[:100]
-                
-                if item_val == selected_value:
+        
+        # SỬA LỖI TẠI ĐÂY: Nếu trúng fallback_id dạng định danh độc nhất, bóc tách lấy thẳng vị trí item
+        if selected_value.startswith("no_id_"):
+            try:
+                parts = selected_value.split("_")
+                target_idx = int(parts[2]) # Lấy giá trị biến idx (vị trí phần tử thứ 2 sau dấu _)
+                if target_idx < len(inventory):
+                    target_item = inventory[target_idx]
+                    is_dict = isinstance(target_item, dict)
+            except Exception:
+                pass
+
+        # Biện pháp Back-up: Nếu không phải fallback_id hoặc trích xuất lỗi, dùng lại logic quét cũ
+        if target_item is None:
+            for item in inventory:
+                if isinstance(item, str) and item == selected_value:
                     target_item = item
-                    is_dict = True
                     break
-                
+                elif isinstance(item, dict):
+                    if item.get("id") == selected_value:
+                        target_item = item
+                        is_dict = True
+                        break
         if target_item is None:
             return await interaction.followup.send("❌ This item is no longer in your inventory!", ephemeral=True)
             
