@@ -2801,9 +2801,12 @@ class WorldBossTurnBased(commands.Cog):
         next_tier = (current_tier % 5) + 1
         
         # 2. Chọn Boss (Vẫn ngẫu nhiên tên, nhưng Tier là cố định theo chu kỳ)
-        base_boss_name = random.choice(list(OLYMPOS_XII_DATA.keys()))
+        boss_names = list(OLYMPOS_XII_DATA.keys())
+        base_boss_name = random.choice(boss_names)
         boss_attr = OLYMPOS_XII_DATA[base_boss_name]
-        boss_name = f"[Tier {next_tier}] {base_boss_name}"
+        
+        # Đảm bảo boss_name là string rõ ràng
+        boss_full_name = f"[Tier {next_tier}] {base_boss_name}"
         
         # Công thức tính chỉ số
         max_hp = 30000 * (next_tier ** 1.8)
