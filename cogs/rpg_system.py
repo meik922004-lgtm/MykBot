@@ -2566,24 +2566,24 @@ OLYMPOS_XII = [
     "Dianamon", "Vulcanusmon", "Marsmon", "Minervamon", "Mercurymon", 
     "Venusmon", "Bacchusmon"]
 
-OORIGIN_GEAR_TEMPLATES = {
+ORIGIN_GEAR_TEMPLATES = {
     "weapon": {
         "name": "Origin Eternal Judgement (Weapon)",
-        "tier": "Origin",
+        "rarity": "Origin",
         "type": "weapon",
-        "stats": {"atk": 1200, "def": 0, "hp": 1000},
+        "stats": {"atk": 1200},
         "description": "The low chance causes a small portion of the player's ATK to become damage."
     },
     "armor": {
         "name": "Origin Aegis of Olympus (Armor)",
-        "tier": "Origin",
+        "rarity": "Origin",
         "type": "armor",
         "stats": {"atk": 0, "def": 600, "hp": 4500},
         "description": "Low chance of blocking a certain amount of incoming damage and restoring HP.."
     },
     "vice": {
         "name": "Origin Cosmic Chrono (Vice)",
-        "tier": "Origin",
+        "rarity": "Origin",
         "type": "vice",
         "stats": {"crit_rate": 70, "crit_dmg": 12.0}, # ĐÃ ĐỔI: Sử dụng crit_rate (CT) và crit_dmg (CD) vượt trội hơn Mythic
         "description": "Low chance of significantly increasing damage when triggering a critical hit.."
