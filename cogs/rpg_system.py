@@ -2941,9 +2941,9 @@ class WorldBossTurnBased(commands.Cog):
                     
                 # Boss Tier 5: Rớt đồ Origin (3%) hoặc rớt đồ Mythic (10%)
                 elif tier == 5:
-                    if roll < 0.03: 
+                    if roll < 0.15: 
                         dropped_gear = ORIGIN_GEAR_TEMPLATES[random.choice(["weapon", "armor", "vice"])]
-                    elif roll < 0.13: 
+                    elif roll < 0.25: 
                         dropped_gear = random.choice(self.HIGH_TIER_GEARS)
 
                 if dropped_gear:
