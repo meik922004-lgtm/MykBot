@@ -128,12 +128,37 @@ class GearInventorySelect(discord.ui.Select):
             ))
             
         # Vòng lặp 2: Dành cho vật phẩm chỉ số dạng Dict (Mythic / Origin)
+        # Vòng lặp 2: Dành cho vật phẩm chỉ số dạng Dict (Mythic / Origin)
         for gear_dict in dict_items:
             if len(options) >= 25: break
+            
+            # 1. NHẬN DIỆN: Kiểm tra xem món đồ này có phải hệ Vice không
+            gear_name_lower = gear_dict.get('name', '').lower()
+            is_vice = (gear_dict.get('type') == 'vice' or 'vice' in gear_name_lower or 'chrono' in gear_name_lower)
+            
+            # 2. AUTO-MIGRATION: Nếu là Vice cũ còn sót chỉ số ATK/HP, tự động đổi sang CT/CD
+            if "stats" in gear_dict:
+                # Cấu trúc của đồ Origin (chỉ số bọc trong key "stats")
+                if is_vice and ("atk" in gear_dict["stats"] or "hp" in gear_dict["stats"]):
+                    gear_dict["stats"] = {"crit_rate": 70, "crit_dmg": 12.0} # Chỉ số Origin Vice mới
+                target_stats = gear_dict["stats"]
+            else:
+                # Cấu trúc phẳng của đồ Mythic cũ
+                if is_vice and ("atk" in gear_dict or "hp" in gear_dict):
+                    # Xóa sạch các key chỉ số cũ tránh xung đột
+                    for old_key in ["atk", "def", "hp"]:
+                        if old_key in gear_dict: del gear_dict[old_key]
+                    # Nạp chỉ số Mythic Vice mới (Bạn có thể tùy chỉnh lại con số này theo ý muốn)
+                    gear_dict["crit_rate"] = 50 
+                    gear_dict["crit_dmg"] = 3.0
+                target_stats = gear_dict
+            
+            # Đồng bộ lại trường type cho chuẩn hệ vice
+            if is_vice:
+                gear_dict["type"] = "vice"
+
+            # 3. ĐỌC CHỈ SỐ ĐỂ HIỂN THỊ RA MENU
             stats = []
-            
-            target_stats = gear_dict.get("stats", gear_dict)
-            
             if "atk" in target_stats: stats.append(f"ATK +{target_stats['atk']}")
             if "def" in target_stats: stats.append(f"DEF +{target_stats['def']}")
             if "hp" in target_stats: stats.append(f"HP +{target_stats['hp']}")
@@ -141,10 +166,9 @@ class GearInventorySelect(discord.ui.Select):
             if "crit_dmg" in target_stats: stats.append(f"CD +{target_stats['crit_dmg']}%")
             
             stat_desc = " | ".join(stats) if stats else "No Stats"
-            
             rarity_label = gear_dict.get('rarity', gear_dict.get('tier', 'Common'))
             
-            # SỬA LỖI Ở ĐÂY: KHÔNG DÙNG uuid.uuid4() MÀ PHẢI DÙNG FALLBACK ID TĨNH
+            # Dùng fallback_id tĩnh dựa trên tên để xử lý đồ cũ không có ID
             fallback_id = f"no_id_{gear_dict.get('name', 'Unknown')}"
             
             options.append(discord.SelectOption(
