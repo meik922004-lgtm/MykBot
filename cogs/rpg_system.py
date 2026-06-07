@@ -2492,20 +2492,10 @@ class RPGSystemCog(commands.Cog):
 # ========================================================================
 # CẤU HÌNH BỂ TƯỚNG OLYMPOS XII & TRANG BỊ ORIGIN
 # ========================================================================
-OLYMPOS_XII_DATA = {
-    "Jupitermon": "Vaccine", 
-    "Junomon": "Virus", 
-    "Neptunemon": "Vaccine", 
-    "Ceresmon": "Data", 
-    "Apollomon": "Vaccine", 
-    "Dianamon": "Data", 
-    "Vulcanusmon": "Data", 
-    "Marsmon": "Vaccine", 
-    "Minervamon": "Virus", 
-    "Mercurymon": "Virus", 
-    "Venusmon": "Vaccine", 
-    "Bacchusmon": "Virus"
-}
+OLYMPOS_XII = [
+    "Jupitermon", "Junomon", "Neptunemon", "Ceresmon", "Apollomon", 
+    "Dianamon", "Vulcanusmon", "Marsmon", "Minervamon", "Mercurymon", 
+    "Venusmon", "Bacchusmon"]
 
 ORIGIN_GEAR_TEMPLATES = {
     "weapon": {
@@ -2703,51 +2693,34 @@ class WorldBossTurnBased(commands.Cog):
     # ========================================================================
     # TẠO GIAO DIỆN EMBED (CHUẨN FORM ẢNH)
     # ========================================================================
-    async def generate_boss_embed(self):
-        # Kiểm tra xem boss có đang hoạt động không
-        latest_boss = await world_boss_col.find_one({"meta_id": "current_boss"})
-        if latest_boss:
-            self.boss_state.update(latest_boss)
-            self.boss_state["active"] = (latest_boss.get("status") == "alive")
-
-        # 2. Kiểm tra trạng thái
-        if not self.boss_state.get("active", False):
-            embed = discord.Embed(
-                title="⚔️ THE BATTLE HALL OF THE GODS",
-                description="⏳ *No boss currently active. Please wait for the next spawn...*",
-                color=discord.Color.light_gray()
-            )
-            return embed
-
-        # Nếu active thì mới tiếp tục xử lý
+    def generate_boss_embed(self):
         color = discord.Color.red() if self.boss_state["phase"] == "BOSS_TURN" else discord.Color.green()
-        boss_attr = self.boss_state.get("attribute", "Unknown")
-
         embed = discord.Embed(
             title="⚔️ THE BATTLE HALL OF THE GODS",
-            description=f"Current boss: **{self.boss_state.get('boss_name', 'Unknown')}**\n🧬 Attribute: **{boss_attr}**",
+            description=f"Current boss: **{self.boss_state['boss_name']}**",
             color=color
         )
-        
         embed.add_field(
             name="HP Boss", 
             value=f"❤️ {max(0, self.boss_state['hp']):,} / {self.boss_state['max_hp']:,}", 
             inline=False
         )
-        
+
         status_text = f"⏳ turn: **{self.boss_state['phase']}** ({self.boss_state['phase_timer']}s left)"
         embed.add_field(name="Status", value=status_text, inline=False)
 
+        # Xây dựng Bảng xếp hạng Top 10
         leaderboard_text = ""
         if not self.boss_state["total_damage"]:
-            leaderboard_text = "*No damage dealt yet*"
+            leaderboard_text = "*No one has inflicted any damage*"
         else:
             sorted_dmg = sorted(self.boss_state["total_damage"].items(), key=lambda x: x[1], reverse=True)[:10]
             for idx, (uid, dmg) in enumerate(sorted_dmg, 1):
                 medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else "🔹"
                 leaderboard_text += f"{medal} <@{uid}> - **{dmg:,}** dmg\n"
-                
+
         embed.add_field(name="🏆 TOP 10 DAMAGE", value=leaderboard_text, inline=False)
+        return embed
     # ========================================================================
     # VÒNG LẶP ĐIỀU PHỐI (CÓ AUTO-REFRESH MESSAGE)
     # ========================================================================
@@ -2793,51 +2766,26 @@ class WorldBossTurnBased(commands.Cog):
             await self.execute_boss_turn()
 
     async def spawn_olympos_boss(self):
-        # 1. Lấy thông tin boss hiện tại để biết đang ở Tier mấy
-        boss_meta = await world_boss_col.find_one({"meta_id": "current_boss"})
-        
-        # Nếu chưa có Tier, bắt đầu từ 1. Nếu đã có, lấy tier hiện tại + 1 (loop 1-5)
-        current_tier = boss_meta.get("tier", 0) if boss_meta else 0
-        next_tier = (current_tier % 5) + 1
-        
-        base_boss_name = random.choice(list(OLYMPOS_XII_DATA.keys()))
-        boss_attr = OLYMPOS_XII_DATA[base_boss_name]
-        boss_name = f"[Tier {next_tier}] {base_boss_name}" # Biến đã được định nghĩa!
-        
-        # Công thức tính chỉ số
-        max_hp = 30000 * (next_tier ** 1.8)
-        base_atk = 200 * (next_tier ** 1.3)
+        tier = random.choices([1, 2, 3, 4, 5], weights=[40, 30, 15, 10, 5])[0]
+        boss_name = random.choice(OLYMPOS_XII)
 
-        # 3. Cập nhật State
+        max_hp = 30000 * (tier ** 2)
+        base_atk = 200 * (tier ** 1.5)
+
         self.boss_state.update({
-            "active": True, 
-            "boss_name": boss_name,
-            "attribute": boss_attr,
-            "tier": next_tier, 
-            "max_hp": int(max_hp), 
-            "hp": int(max_hp),
-            "base_atk": int(base_atk), 
-            "phase": "PLAYER_TURN",
-            "phase_timer": 60, 
-            "turn_damage": {}, 
-            "total_damage": {}, 
-            "participants": {}, 
-            "upcoming_aoe": False
+            "active": True, "boss_name": f"[Tier {tier}] {boss_name}",
+            "tier": tier, "max_hp": int(max_hp), "hp": int(max_hp),
+            "base_atk": int(base_atk), "phase": "PLAYER_TURN",
+            "phase_timer": 60, "turn_damage": {}, "total_damage": {}, 
+            "participants": {}, "upcoming_aoe": False
         })
-        
-        # 4. Lưu lại Tier mới vào DB để vòng sau gọi tiếp
+
         await world_boss_col.update_one(
             {"meta_id": "current_boss"},
-            {"$set": {
-                "name": base_boss_name, 
-                "attribute": boss_attr, 
-                "tier": next_tier, 
-                "hp": int(max_hp), 
-                "max_hp": int(max_hp), 
-                "status": "alive"
-            }},
+            {"$set": {"name": boss_name, "tier": tier, "hp": int(max_hp), "max_hp": int(max_hp), "status": "alive"}},
             upsert=True
         )
+
     # ========================================================================
     # XỬ LÝ SÁT THƯƠNG AUTO ATTACK
     # ========================================================================
@@ -3027,7 +2975,7 @@ class WorldBossTurnBased(commands.Cog):
         if not self.boss_state["active"]:
             return await interaction.followup.send("Currently, no World Bosses are present..", ephemeral=True)
 
-        embed = await self.generate_boss_embed()
+        embed = self.generate_boss_embed()
         view = WorldBossView(self)
         
         msg = await interaction.followup.send(embed=embed, view=view)
