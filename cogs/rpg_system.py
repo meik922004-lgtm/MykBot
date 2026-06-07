@@ -2805,7 +2805,7 @@ class WorldBossTurnBased(commands.Cog):
         has_origin_weapon = gear.get("weapon", {}).get("rarity") == "Origin" if isinstance(gear.get("weapon"), dict) else False
         has_origin_vice = gear.get("vice", {}).get("rarity") == "Origin" if isinstance(gear.get("vice"), dict) else False
 
-        size_mult = digi.get("size", 1.0)
+        size_mult = digi.get("size", 1.5)
         attr_mult = 1.0
         if digi.get("attr") == "Data": attr_mult = 1.3
         elif digi.get("attr") == "Virus": attr_mult = 0.7
@@ -2823,7 +2823,7 @@ class WorldBossTurnBased(commands.Cog):
         if not is_mega or calculated_dmg < 2000:
             calculated_dmg *= 1.6
         else:
-            tier_penalty = {1: 0.80, 2: 0.90, 3: 0.95, 4: 0.95, 5: 1.0}
+            tier_penalty = {1: 0.9, 2: 0.95, 3: 1, 4: 1.2, 5: 1.4}
             calculated_dmg *= tier_penalty.get(self.boss_state["tier"], 1.0)
 
         final_dmg = int(calculated_dmg)
@@ -2877,7 +2877,7 @@ class WorldBossTurnBased(commands.Cog):
                 if has_protect: final_received_dmg = int(final_received_dmg * 0.5)
             else:
                 if not is_mega: final_received_dmg *= 0.7
-                if has_protect: final_received_dmg *= 0.6
+                if has_protect: final_received_dmg *= 0.3
 
             has_origin_armor = profile.get("gear", {}).get("armor", {}).get("rarity") == "Origin" if isinstance(profile.get("gear", {}).get("armor"), dict) else False
 
@@ -2893,7 +2893,7 @@ class WorldBossTurnBased(commands.Cog):
                     del self.persistent_auto_attackers[user_id]
                 await self.send_dm_safely(user_id, "💀 **You have died!** Your Digimon has run out of HP Press the 💊 Health button in the lobby to continue!")
 
-        self.boss_state["upcoming_aoe"] = random.random() < 0.15
+        self.boss_state["upcoming_aoe"] = random.random() < 0.05
 
         if self.boss_state["upcoming_aoe"]:
             for u_id in self.boss_state["participants"].keys():
