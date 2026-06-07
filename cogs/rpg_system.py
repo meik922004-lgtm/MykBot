@@ -2800,13 +2800,9 @@ class WorldBossTurnBased(commands.Cog):
         current_tier = boss_meta.get("tier", 0) if boss_meta else 0
         next_tier = (current_tier % 5) + 1
         
-        # 2. Chọn Boss (Vẫn ngẫu nhiên tên, nhưng Tier là cố định theo chu kỳ)
-        boss_names = list(OLYMPOS_XII_DATA.keys())
-        base_boss_name = random.choice(boss_names)
+        base_boss_name = random.choice(list(OLYMPOS_XII_DATA.keys()))
         boss_attr = OLYMPOS_XII_DATA[base_boss_name]
-        
-        # Đảm bảo boss_name là string rõ ràng
-        boss_full_name = f"[Tier {next_tier}] {base_boss_name}"
+        boss_name = f"[Tier {next_tier}] {base_boss_name}" # Biến đã được định nghĩa!
         
         # Công thức tính chỉ số
         max_hp = 30000 * (next_tier ** 1.8)
@@ -2832,16 +2828,14 @@ class WorldBossTurnBased(commands.Cog):
         # 4. Lưu lại Tier mới vào DB để vòng sau gọi tiếp
         await world_boss_col.update_one(
             {"meta_id": "current_boss"},
-            {
-                "$set": {
-                    "name": base_boss_name, 
-                    "attribute": boss_attr, 
-                    "tier": next_tier, 
-                    "hp": int(max_hp), 
-                    "max_hp": int(max_hp), 
-                    "status": "alive"
-                }
-            },
+            {"$set": {
+                "name": base_boss_name, 
+                "attribute": boss_attr, 
+                "tier": next_tier, 
+                "hp": int(max_hp), 
+                "max_hp": int(max_hp), 
+                "status": "alive"
+            }},
             upsert=True
         )
     # ========================================================================
