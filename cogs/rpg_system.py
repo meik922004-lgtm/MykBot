@@ -115,14 +115,14 @@ class GearInventorySelect(discord.ui.Select):
             
             if "stats" in gear_dict:
                 if is_vice and ("atk" in gear_dict["stats"] or "hp" in gear_dict["stats"]):
-                    gear_dict["stats"] = {"crit_rate": 70, "crit_dmg": 1200.0}
+                    gear_dict["stats"] = {"crit_rate": 70, "crit_dmg": 700.0}
                 target_stats = gear_dict["stats"]
             else:
                 if is_vice and ("atk" in gear_dict or "hp" in gear_dict):
                     for old_key in ["atk", "def", "hp"]:
                         if old_key in gear_dict: del gear_dict[old_key]
                     gear_dict["crit_rate"] = 70 
-                    gear_dict["crit_dmg"] = 1200.0
+                    gear_dict["crit_dmg"] = 700.0
                 target_stats = gear_dict
             
             if is_vice:
@@ -2564,7 +2564,7 @@ ORIGIN_GEAR_TEMPLATES = {
         "name": "Origin Cosmic Chrono (Vice)",
         "rarity": "Origin",
         "type": "vice",
-        "stats": {"crit_rate": 70, "crit_dmg": 1200.0}, # ĐÃ ĐỔI: Sử dụng crit_rate (CT) và crit_dmg (CD) vượt trội hơn Mythic
+        "stats": {"crit_rate": 70, "crit_dmg": 700.0}, # ĐÃ ĐỔI: Sử dụng crit_rate (CT) và crit_dmg (CD) vượt trội hơn Mythic
         "description": "Low chance of significantly increasing damage when triggering a critical hit.."
     }
 }
