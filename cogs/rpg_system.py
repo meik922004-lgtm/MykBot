@@ -128,7 +128,6 @@ class GearInventorySelect(discord.ui.Select):
             ))
             
         # Vòng lặp 2: Dành cho vật phẩm chỉ số dạng Dict (Mythic / Origin)
-        # Vòng lặp 2: Dành cho vật phẩm chỉ số dạng Dict (Mythic / Origin)
         for gear_dict in dict_items:
             if len(options) >= 25: break
             
