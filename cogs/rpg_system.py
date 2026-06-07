@@ -1698,39 +1698,39 @@ class RPGSystemCog(commands.Cog):
         total_def, total_crit_rate, total_crit_dmg = 10, 0, 1.0
 
         gear = profile.get("gear", {"weapon": "None", "armor": "None", "vice": "None"})
-        
-        # --- Xử lý Vũ khí (Weapon) ---
-        weapon = gear.get("weapon")
-        if isinstance(weapon, dict):  # Đồ Mythic
-            total_atk += weapon.get("atk", 0)
-        elif weapon and weapon != "None":  # Đồ chuỗi (Divine / Thường)
-            w_name = self.clean_item_name(weapon)
-            if w_name in self.ITEMS: 
-                total_atk += self.ITEMS[w_name].get("atk", 0)
 
-        # --- Xử lý Áo giáp (Armor) ---
-        armor = gear.get("armor")
-        if isinstance(armor, dict):  # Đồ Mythic
-            total_hp += armor.get("hp", 0)
-            total_def += armor.get("def", 0)
-        elif armor and armor != "None":  # Đồ chuỗi
-            a_name = self.clean_item_name(armor)
-            if a_name in self.ITEMS:
-                total_hp += self.ITEMS[a_name].get("hp", 0)
-                total_def += self.ITEMS[a_name].get("def", 0)
-                
+        # Hàm helper để lấy chỉ số dù là Mythic (phẳng) hay Origin (lồng)
+        def get_stats_from_item(item):
+            # Nếu item là dict, kiểm tra xem nó có key 'stats' không
+            if isinstance(item, dict):
+                return item.get("stats", item)
+            # Nếu là string (đồ chuỗi), lấy từ kho ITEMS
+            elif item and item != "None":
+                name = self.clean_item_name(item)
+                return self.ITEMS.get(name, {})
+            return {}
+
+        # --- Xử lý Vũ khí ---
+        w_stats = get_stats_from_item(gear.get("weapon"))
+        total_atk += w_stats.get("atk", 0)
+
+        # --- Xử lý Áo giáp ---
+        a_stats = get_stats_from_item(gear.get("armor"))
+        total_hp += a_stats.get("hp", 0)
+        total_def += a_stats.get("def", 0)
+
         # --- Xử lý Vice ---
-        vice = gear.get("vice")
-        if isinstance(vice, dict):  # Đồ Mythic
-            total_crit_rate += vice.get("crit_rate", 0)
-            total_crit_dmg += vice.get("crit_dmg", 0)
-        elif vice and vice != "None":  # Đồ chuỗi
-            v_name = self.clean_item_name(vice)
-            if v_name in self.ITEMS:
-                total_crit_rate += self.ITEMS[v_name].get("crit_rate", 0)
-                total_crit_dmg += self.ITEMS[v_name].get("crit_dmg", 0)
-                
-        return {"hp": total_hp, "atk": total_atk, "def": total_def, "crit_rate": total_crit_rate, "crit_dmg": total_crit_dmg}
+        v_stats = get_stats_from_item(gear.get("vice"))
+        total_crit_rate += v_stats.get("crit_rate", 0)
+        total_crit_dmg += v_stats.get("crit_dmg", 0)
+
+        return {
+            "hp": total_hp, 
+            "atk": total_atk, 
+            "def": total_def, 
+            "crit_rate": total_crit_rate, 
+            "crit_dmg": total_crit_dmg
+        }
 
     async def refresh_profile_message(self, message: discord.Message, user_id: int):
         profile = await rpg_profiles_col.find_one({"user_id": user_id})
