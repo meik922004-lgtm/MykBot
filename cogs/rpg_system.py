@@ -33,8 +33,99 @@ NEW_MEGA_POOL = [
     {"name": "Piedmon", "stage": "Mega", "attr": "Virus", "base_atk": 1230, "base_hp": 15000, "base_price": 600, "img": "https://digimon.net/cimages/digimon/piemon.jpg", "skill": {"name": "Trump Sword", "dmg_mult": 1.9, "chance": 0.12}},
     {"name": "Valkyrimon", "stage": "Mega", "attr": "Vaccine", "base_atk": 1210, "base_hp": 13800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/valkyrimon.jpg", "skill": {"name": "Fenrir Sword", "dmg_mult": 1.6, "chance": 0.20}},
     {"name": "Vikemon", "stage": "Mega", "attr": "Free", "base_atk": 1280, "base_hp": 16800, "base_price": 600, "img": "https://digimon.net/cimages/digimon/vikemon.jpg", "skill": {"name": "Arctic Blizzard", "dmg_mult": 1.7, "chance": 0.18}},
-    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "base_atk": 1130, "base_hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}}
+    { "name": "GranKuwagamon", "stage": "Mega", "attr": "Virus", "base_atk": 1130, "base_hp": 14500, "base_price": 600, "img": "https://digimon.net/cimages/digimon/grankuwagamon.jpg", "skill": {"name": "Dimension Scissor", "dmg_mult": 1.8, "chance": 0.15}},
+    {
+        "name": "Omegamon",
+        "stage": "Mega",
+        "attr": "Vaccine",
+        "base_atk": 1650,
+        "base_hp": 22000,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/omegamon.jpg",
+        "skill": {"name": "Grey Sword", "dmg_mult": 3.2, "chance": 0.20}
+    },
+    {
+        "name": "Alphamon Ouryuken",
+        "stage": "Mega",
+        "attr": "Vaccine",
+        "base_atk": 1750,
+        "base_hp": 24000,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/alphamon_ouryuken.jpg",
+        "skill": {"name": "Ultimate War Blade King Dragon Sword", "dmg_mult": 3.5, "chance": 0.15}
+    },
+    {
+        "name": "Omegamon Alter-S",
+        "stage": "Mega",
+        "attr": "Virus",
+        "base_atk": 1680,
+        "base_hp": 21500,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/omegamon_alter-s.jpg",
+        "skill": {"name": "Grey Cannon", "dmg_mult": 3.1, "chance": 0.22}
+    },
+    {
+        "name": "Chaosmon",
+        "stage": "Mega",
+        "attr": "Vaccine",
+        "base_atk": 1720,
+        "base_hp": 20000,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/chaosmon.jpg",
+        "skill": {"name": "Bantyo Blade", "dmg_mult": 3.4, "chance": 0.18}
+    },
+    {
+        "name": "Imperialdramon FM",
+        "stage": "Mega",
+        "attr": "Vaccine",
+        "base_atk": 1580,
+        "base_hp": 23000,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/imperialdramon_fm.jpg",
+        "skill": {"name": "Giga Death", "dmg_mult": 3.0, "chance": 0.25}
+    },
+    {
+        "name": "Fanglongmon",
+        "stage": "Mega",
+        "attr": "Data",
+        "base_atk": 1600,
+        "base_hp": 26000,
+        "base_price": 100000,
+        "img": "https://digimon.net/cimages/digimon/huanglongmon.jpg",
+        "skill": {"name": "Taikyoku", "dmg_mult": 3.3, "chance": 0.15}
+    },
+    {
+        "name": "Shoutmon X7",
+        "stage": "Mega",
+        "attr": "Data",
+        "base_atk": 1620,
+        "base_hp": 22500,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/shoutmon_x7.jpg",
+        "skill": {"name": "Xros Seven Great Victorize", "dmg_mult": 3.2, "chance": 0.20}
+    },
+    {
+        "name": "Darkness Bagramon",
+        "stage": "Mega",
+        "attr": "Virus",
+        "base_atk": 1700,
+        "base_hp": 23500,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/darknessbagramon.jpg",
+        "skill": {"name": "Eternal Underworld", "dmg_mult": 3.4, "chance": 0.16}
+    },
+    {
+        "name": "Susanoomon",
+        "stage": "Mega",
+        "attr": "Vaccine",
+        "base_atk": 1740,
+        "base_hp": 25000,
+        "base_price": 10000,
+        "img": "https://digimon.net/cimages/digimon/susanoomon.jpg",
+        "skill": {"name": "Celestial Blade", "dmg_mult": 3.5, "chance": 0.15}
+    }
 ]
+
 
 HIGH_TIER_GEARS = [
     {"name": "Omega Artifact Sword", "type": "weapon", "atk": 650, "rarity": "Mythic"},
@@ -655,7 +746,6 @@ class MarketBuySelect(discord.ui.Select):
         options = []
         
         for item in listings:
-            # Xác định Tiền tố/Hậu tố hiển thị dựa trên tính chất sản phẩm
             is_digimon = item.get("listing_type") == "digimon"
             emoji = "🧬" if is_digimon else "🛒"
             rarity = item.get("item_data", {}).get("rarity", "Mega" if is_digimon else "Regular")
@@ -669,27 +759,91 @@ class MarketBuySelect(discord.ui.Select):
                 )
             )
             
+        # Xử lý an toàn nếu danh sách trống
         if not options:
             options = [discord.SelectOption(label="The market is currently empty.", value="empty")]
-            
-        super().__init__(
-            placeholder="🛒 Choose an item/digimon from the list to buy...",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
+            super().__init__(
+                placeholder="🛒 The market is empty...",
+                min_values=1, max_values=1, options=options, disabled=True
+            )
+        else:
+            super().__init__(
+                placeholder="🛒 Choose an item/digimon from the list to buy...",
+                min_values=1, max_values=1, options=options,
+            )
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "empty":
             return await interaction.response.send_message("❌ Currently, no items are available for sale.", ephemeral=True)
-        # Gọi hàm xử lý giao dịch tập trung đã được điều hướng ở trên
+        # Truyền ID vật phẩm sang hàm xử lý mua
         await self.cog.handle_market_buy(interaction, self.values[0])
 
 class MarketShopView(discord.ui.View):
-    def __init__(self, listings: list, cog_instance):
-        super().__init__(timeout=180)
-        # Tự động nạp menu lựa chọn mua hàng dựa theo dữ liệu thực tế
-        self.add_item(MarketBuySelect(listings, cog_instance))
+    def __init__(self, full_listings: list, cog_instance, timeout=180):
+        super().__init__(timeout=timeout)
+        self.cog = cog_instance
+        self.full_listings = full_listings
+        
+        # --- THIẾT LẬP PHÂN TRANG ---
+        self.current_page = 0
+        self.items_per_page = 25
+        self.max_pages = max(1, math.ceil(len(full_listings) / self.items_per_page))
+        
+        # Gọi hàm để vẽ UI lần đầu tiên
+        self.update_components()
+
+    def update_components(self):
+        """Xóa UI cũ và vẽ lại Select Menu + Nút bấm dựa trên trang hiện tại."""
+        self.clear_items()
+        
+        # ✂️ Thuật toán cắt mảng (Slicing): Chỉ lấy đúng 25 vật phẩm cho trang hiện tại
+        start_idx = self.current_page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        current_page_listings = self.full_listings[start_idx:end_idx]
+
+        # 1. Thêm Menu Mua Hàng
+        self.add_item(MarketBuySelect(current_page_listings, self.cog))
+
+        # 2. Thêm các nút điều hướng (Chỉ hiện khi có nhiều hơn 1 trang)
+        if self.max_pages > 1:
+            btn_prev = discord.ui.Button(
+                label="⬅️ Prev", 
+                style=discord.ButtonStyle.primary, 
+                disabled=(self.current_page == 0)
+            )
+            btn_prev.callback = self.prev_page_callback
+            self.add_item(btn_prev)
+
+            btn_indicator = discord.ui.Button(
+                label=f"Page {self.current_page + 1}/{self.max_pages}", 
+                style=discord.ButtonStyle.secondary, 
+                disabled=True
+            )
+            self.add_item(btn_indicator)
+
+            btn_next = discord.ui.Button(
+                label="Next ➡️", 
+                style=discord.ButtonStyle.primary, 
+                disabled=(self.current_page == self.max_pages - 1)
+            )
+            btn_next.callback = self.next_page_callback
+            self.add_item(btn_next)
+
+    async def prev_page_callback(self, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_components()
+        await self.refresh_message(interaction)
+
+    async def next_page_callback(self, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_components()
+        await self.refresh_message(interaction)
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        """Làm mới lại Embed Message để cập nhật Footer số trang."""
+        embed = interaction.message.embeds[0]
+        embed.set_footer(text=f"Trang {self.current_page + 1}/{self.max_pages} | total: {len(self.full_listings)} item selling")
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
 import asyncio  # 🔥 Bắt buộc phải có ở đầu file để chạy độ trễ
