@@ -3,16 +3,20 @@ from discord.ext import commands
 from discord import app_commands  # Thư viện bắt buộc để dùng Slash Command
 import json
 from pymongo import MongoClient 
-
+import os
 class ShopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
-        # KẾT NỐI MONGODB (Giữ nguyên cấu trúc của bạn)
-        mongo_uri = "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0"
+        # SẠCH 100%: Chỉ gọi từ Render, không để lộ một ký tự mật khẩu nào trong code
+        mongo_uri = os.getenv("MONGO_URI")
+        
         self.cluster = MongoClient(mongo_uri)
         self.db = self.cluster["database0"]
         self.collection = self.db["shop_subscriptions"]
+        
+        # Bộ nhớ đệm (Cache) trên RAM
+        self.subs_cache = {}
 
     # ==========================================
     # SLASH COMMAND: /additem
