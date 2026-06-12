@@ -1,36 +1,38 @@
 import discord
 from discord.ext import commands
+from discord import app_commands  # Thư viện bắt buộc để dùng Slash Command
 import json
-
-# Nếu bạn dùng thư viện async (như motor), hãy đổi pymongo thành motor.motor_asyncio
 from pymongo import MongoClient 
 
 class ShopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
-        # KẾT NỐI MONGODB
-        # Mẹo: Hãy copy chuỗi kết nối này từ file Database.py hiện tại của bạn
+        # KẾT NỐI MONGODB (Giữ nguyên cấu trúc của bạn)
         mongo_uri = "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0"
         self.cluster = MongoClient(mongo_uri)
-        
-        # Trỏ vào database0 giống như trong ảnh của bạn
         self.db = self.cluster["database0"]
-        
-        # Khởi tạo collection mới cho tính năng này
         self.collection = self.db["shop_subscriptions"]
 
-    @commands.command(name="additem")
-    async def canh_do(self, ctx, item_name: str, max_price: int):
-        """Lệnh cho user: !canh_do "Bravery Energy" 1200"""
+    # ==========================================
+    # SLASH COMMAND: /additem
+    # ==========================================
+    @app_commands.command(name="additem", description="Đăng ký nhận thông báo khi vật phẩm có giá nhỏ hơn hoặc bằng mức mong muốn")
+    @app_commands.describe(
+        item_name="Nhập chính xác tên vật phẩm cần theo dõi (Ví dụ: Bravery Energy)",
+        max_price="Nhập mức giá tối đa (Hệ thống sẽ tìm các shop có giá NHỎ HƠN HOẶC BẰNG mức này)"
+    )
+    async def additem(self, interaction: discord.Interaction, item_name: str, max_price: int):
+        # Slash Command sử dụng interaction thay vì ctx
+        await interaction.response.defer(ephemeral=True) # Tạo trạng thái "Bot đang suy nghĩ..." để tránh bị timeout
+        
         item_key = item_name.lower().strip()
-        user_id = ctx.author.id
+        user_id = interaction.user.id # Lấy ID người dùng từ interaction
 
         # Tìm xem vật phẩm này đã có ai đăng ký chưa
         item_doc = self.collection.find_one({"_id": item_key})
 
         if item_doc:
-            # Nếu đã có, kiểm tra xem user này có trong danh sách chưa
             subscribers = item_doc.get("subscribers", [])
             user_exists = False
             
@@ -43,50 +45,55 @@ class ShopTracker(commands.Cog):
             if not user_exists:
                 subscribers.append({"user_id": user_id, "max_price": max_price})
                 
-            # Lưu lại vào MongoDB
             self.collection.update_one(
                 {"_id": item_key}, 
                 {"$set": {"subscribers": subscribers}}
             )
         else:
-            # Tạo mới document trong DB nếu vật phẩm chưa ai canh
             new_doc = {
                 "_id": item_key,
                 "subscribers": [{"user_id": user_id, "max_price": max_price}]
             }
             self.collection.insert_one(new_doc)
 
-        await ctx.send(f"✅ Đã ghi nhận vào Database! Bot sẽ ping khi có **{item_name}** với giá <= **{max_price:,}**.")
+        # Phản hồi lại cho người dùng biết
+        await interaction.followup.send(f"✅ Đã ghi nhận vào Database! Bot sẽ ping khi có **{item_name}** với giá <= **{max_price:,}**.")
 
-    @commands.command(name="removeitem")
-    async def huy_canh(self, ctx, item_name: str):
-        """Lệnh hủy theo dõi: !huy_canh "Bravery Energy" """
+    # ==========================================
+    # SLASH COMMAND: /removeitem
+    # ==========================================
+    @app_commands.command(name="removeitem", description="Hủy theo dõi một vật phẩm cụ thể")
+    @app_commands.describe(item_name="Nhập tên vật phẩm muốn hủy canh giá")
+    async def removeitem(self, interaction: discord.Interaction, item_name: str):
+        await interaction.response.defer(ephemeral=True)
+        
         item_key = item_name.lower().strip()
-        user_id = ctx.author.id
+        user_id = interaction.user.id
 
         item_doc = self.collection.find_one({"_id": item_key})
         
         if item_doc:
             subscribers = item_doc.get("subscribers", [])
-            # Lọc bỏ user hiện tại ra khỏi danh sách
             new_subscribers = [sub for sub in subscribers if sub["user_id"] != user_id]
             
             if not new_subscribers:
-                # Nếu không còn ai theo dõi item này, xóa luôn khỏi Database cho nhẹ
                 self.collection.delete_one({"_id": item_key})
             else:
                 self.collection.update_one(
                     {"_id": item_key}, 
                     {"$set": {"subscribers": new_subscribers}}
                 )
-            await ctx.send(f"❌ Đã hủy theo dõi vật phẩm: **{item_name}**.")
+            await interaction.followup.send(f"❌ Đã hủy theo dõi vật phẩm: **{item_name}**.")
         else:
-            await ctx.send("Bạn chưa đăng ký theo dõi vật phẩm này.")
+            await interaction.followup.send("Bạn chưa đăng ký theo dõi vật phẩm này.")
 
+    # ==========================================
+    # LISTENER: LẮNG NGHE WEBHOOK (Giữ nguyên)
+    # ==========================================
     @commands.Cog.listener()
     async def on_message(self, message):
-        BRIDGE_CHANNEL_ID = 1515038293643759728  # ID kênh ẩn nhận JSON
-        PUBLIC_ALERT_CHANNEL_ID = 1515038293643759727 # ID kênh thông báo public
+        BRIDGE_CHANNEL_ID = 1515038293643759728  
+        PUBLIC_ALERT_CHANNEL_ID = 1515038293643759727 
 
         if message.channel.id == BRIDGE_CHANNEL_ID and message.attachments:
             for attachment in message.attachments:
@@ -106,7 +113,6 @@ class ShopTracker(commands.Cog):
                         name_lower = item["item_name"].lower()
                         cost = item["cost"]
                         
-                        # Truy vấn trực tiếp từ MongoDB thay vì file local
                         item_doc = self.collection.find_one({"_id": name_lower})
                         
                         if item_doc:
