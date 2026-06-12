@@ -21,10 +21,10 @@ class ShopTracker(commands.Cog):
     # ==========================================
     # SLASH COMMAND: /additem
     # ==========================================
-    @app_commands.command(name="additem", description="Đăng ký nhận thông báo khi vật phẩm có giá nhỏ hơn hoặc bằng mức mong muốn")
+    @app_commands.command(name="additem", description="Sign up to receive notifications when the item's price is less than or equal to your desired price.")
     @app_commands.describe(
-        item_name="Nhập chính xác tên vật phẩm cần theo dõi (Ví dụ: Bravery Energy)",
-        max_price="Nhập mức giá tối đa (Hệ thống sẽ tìm các shop có giá NHỎ HƠN HOẶC BẰNG mức này)"
+        item_name="Enter the exact item name you want to track (e.g., Bravery Energy).",
+        max_price="Enter the maximum price range (MyK will find shops with prices LESS THAN OR EQUAL to this range)."
     )
     async def additem(self, interaction: discord.Interaction, item_name: str, max_price: int):
         # Slash Command sử dụng interaction thay vì ctx
@@ -61,13 +61,13 @@ class ShopTracker(commands.Cog):
             self.collection.insert_one(new_doc)
 
         # Phản hồi lại cho người dùng biết
-        await interaction.followup.send(f"✅ Đã ghi nhận vào Database! Bot sẽ ping khi có **{item_name}** với giá <= **{max_price:,}**.")
+        await interaction.followup.send(f"✅ Added **{item_name}**to your wishlist, MyK will ping you with price <= **{max_price:,}**.")
 
     # ==========================================
     # SLASH COMMAND: /removeitem
     # ==========================================
-    @app_commands.command(name="removeitem", description="Hủy theo dõi một vật phẩm cụ thể")
-    @app_commands.describe(item_name="Nhập tên vật phẩm muốn hủy canh giá")
+    @app_commands.command(name="removeitem", description="Cancel track item")
+    @app_commands.describe(item_name="write the name you want to cancel tracker")
     async def removeitem(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)
         
@@ -87,9 +87,9 @@ class ShopTracker(commands.Cog):
                     {"_id": item_key}, 
                     {"$set": {"subscribers": new_subscribers}}
                 )
-            await interaction.followup.send(f"❌ Đã hủy theo dõi vật phẩm: **{item_name}**.")
+            await interaction.followup.send(f"❌ Removed item from track list: **{item_name}**.")
         else:
-            await interaction.followup.send("Bạn chưa đăng ký theo dõi vật phẩm này.")
+            await interaction.followup.send("You didnt regist to track this item.")
 
     # ==========================================
     # LISTENER: LẮNG NGHE WEBHOOK (Giữ nguyên)
@@ -111,26 +111,56 @@ class ShopTracker(commands.Cog):
                     shop_name = shop_data.get("shop_name", "Không rõ")
                     owner = shop_data.get("owner", "Không rõ")
                     map_name = shop_data.get("map", "Không rõ")
+                    
+                    # Khởi tạo list chứa các thông báo Embed
                     alerts = []
                     
                     for item in shop_data.get("items", []):
                         name_lower = item["item_name"].lower()
                         cost = item["cost"]
+                        # Lấy thêm số lượng từ JSON, nếu không có thì mặc định là "Không rõ"
+                        quantity = item.get("quantity", "Không rõ") 
                         
-                        item_doc = self.collection.find_one({"_id": name_lower})
+                        subscribers = self.subs_cache.get(name_lower)
                         
-                        if item_doc:
-                            for sub in item_doc.get("subscribers", []):
+                        if subscribers:
+                            for sub in subscribers:
                                 if cost <= sub["max_price"]:
-                                    alerts.append(
-                                        f"🔔 <@{sub['user_id']}>! Phát hiện **{item['item_name']}** giá tốt: **{cost:,}** ea!\n"
-                                        f"📍 Shop: *{shop_name}* (Chủ: {owner}) - Vị trí: **{map_name}**"
+                                    # 🎨 TẠO GIAO DIỆN EMBED ĐẸP MẮT
+                                    embed = discord.Embed(
+                                        title="🎉 MyK tracker",
+                                        description="MyK found cheap item for you.",
+                                        color=discord.Color.green() # Viền màu xanh lá
                                     )
+                                    
+                                    # Hàng 1: Thông tin Item (Chia 3 cột)
+                                    embed.add_field(name="📦 Item", value=f"**{item['item_name']}**", inline=True)
+                                    embed.add_field(name="💰 Price (ea)", value=f"**{cost:,}**", inline=True)
+                                    
+                                    # Format số lượng có dấu phẩy nếu là số, giữ nguyên nếu là chữ
+                                    qty_str = f"**{quantity:,}**" if isinstance(quantity, int) else f"**{quantity}**"
+                                    embed.add_field(name="⚖️ Số lượng", value=qty_str, inline=True)
+                                    
+                                    # Hàng 2: Thông tin Shop (Chia 3 cột)
+                                    embed.add_field(name="🏪 Shop", value=f"`{shop_name}`", inline=True)
+                                    embed.add_field(name="👤 Owner", value=f"`{owner}`", inline=True)
+                                    embed.add_field(name="📍 Map", value=f"**{map_name}**", inline=True)
+                                    
+                                    # Thêm footer cho chuyên nghiệp
+                                    embed.set_footer(text="MyK-Market Tracker • Auto update")
+                                    
+                                    # Lưu lại nội dung ping (để Discord hiện thông báo đỏ cho user) và Embed
+                                    alerts.append({
+                                        "ping": f"🔔 <@{sub['user_id']}>",
+                                        "embed": embed
+                                    })
                     
+                    # Gửi từng cảnh báo ra kênh public
                     if alerts:
                         alert_channel = self.bot.get_channel(PUBLIC_ALERT_CHANNEL_ID)
                         if alert_channel:
-                            await alert_channel.send("\n\n".join(alerts))
+                            for alert in alerts:
+                                await alert_channel.send(content=alert["ping"], embed=alert["embed"])
 
 async def setup(bot):
     await bot.add_cog(ShopTracker(bot))
