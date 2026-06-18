@@ -148,11 +148,12 @@ class PatchNotesCog(commands.Cog):
     async def call_openrouter_with_retry(self, content: str, retries=2, delay=3) -> dict:
         """Gọi OpenRouter API với cơ chế tự động chuyển đổi model vàLOG DEBUG siêu chi tiết"""
         free_models = [
-            "meta-llama/llama-3.3-70b-instruct:free",   # Ưu tiên 1: Thông minh nhất (Giữ lại chờ hết nghẽn)
-            "qwen/qwen-2.5-72b-instruct:free",          # Dự phòng 1: Model cực đỉnh của Qwen, siêu ổn định và ít nghẽn
-            "meta-llama/llama-3.1-8b-instruct:free",    # Dự phòng 2: Bản 3.1 mới được miễn phí thay thế bản 3.0 cũ
-            "microsoft/phi-3-medium-128k-instruct:free" # Dự phòng 3: Của Microsoft, xử lý JSON cực kỳ chuẩn
-        ]
+            "google/gemini-2.0-flash-lite-preview-02-05:free", # Model mới nhất của Google, siêu nhanh & free
+            "google/gemini-flash-1.5-8b",                      # Bản 1.5 8B của Google (thường được hỗ trợ free)
+            "qwen/qwen-2.5-7b-instruct",                       # Qwen 2.5 bản 7B
+            "meta-llama/llama-3.2-3b-instruct"                 # Llama 3.2 3B bản gọn nhẹ
+         ] # Dự phòng 3: Của Microsoft, xử lý JSON cực kỳ chuẩn
+        
         
         logger.info(f"[DEBUG] Khởi chạy dịch thuật. Tổng độ dài ký tự Patch Note gốc: {len(content)}")
 
