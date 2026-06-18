@@ -145,8 +145,17 @@ class PatchNotesCog(commands.Cog):
             except Exception as e:
                 logger.error(f"Error in background buffer monitor loop: {e}")
 
-    async def call_openrouter_with_retry(self, content: str, retries=3, delay=5) -> dict:
-        """Gọi OpenRouter API để dịch và tóm tắt với cơ chế xử lý JSON cứng"""
+    async def call_openrouter_with_retry(self, content: str, retries=2, delay=3) -> dict:
+        """Gọi OpenRouter API với cơ chế tự động chuyển đổi model vàLOG DEBUG siêu chi tiết"""
+        free_models = [
+            "meta-llama/llama-3.3-70b-instruct:free",  # Ưu tiên 1
+            "google/gemma-2-9b-it:free",               # Dự phòng 1
+            "meta-llama/llama-3-8b-instruct:free",     # Dự phòng 2
+            "mistralai/mistral-7b-instruct:free"       # Dự phòng 3
+        ]
+        
+        logger.info(f"[DEBUG] Khởi chạy dịch thuật. Tổng độ dài ký tự Patch Note gốc: {len(content)}")
+        
         prompt = f"""
         You are an expert game analyzer. Analyze the game patch note provided below.
         1. Extract and summarize all key changes neatly in structured markdown (e.g., dungeons, stats, rewards, bug fixes).
@@ -164,61 +173,101 @@ class PatchNotesCog(commands.Cog):
         Patch content to parse:
         {content}
         """
-        for attempt in range(1, retries + 1):
-            try:
-                # Sử dụng Llama 3.3 70B Bản Miễn Phí của OpenRouter
-                response = await openrouter_client.chat.completions.create(
-                    model="meta-llama/llama-3.3-70b-instruct:free", 
-                    messages=[
-                        {"role": "system", "content": "You are a professional game patch notes translator. You must output strictly valid JSON."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"}, # Khóa định dạng đầu ra luôn là JSON
-                    temperature=0.2
-                )
-                text = response.choices[0].message.content.strip()
-                
-                # Khử markdown block bọc ngoài chuỗi JSON nếu có
-                if text.startswith("```"):
-                    if text.startswith("```json"):
-                        text = text[7:]
-                    else:
-                        text = text[3:]
-                    if text.endswith("```"):
-                        text = text[:-3]
+
+        for idx, model_name in enumerate(free_models, 1):
+            logger.info(f"[DEBUG] [Model {idx}/{len(free_models)}] Đang chọn cấu hình: {model_name}")
+            for attempt in range(1, retries + 1):
+                try:
+                    logger.info(f"[DEBUG] Đang gửi request đến OpenRouter | Model: {model_name} | Lần thử: {attempt}/{retries}")
+                    
+                    response = await openrouter_client.chat.completions.create(
+                        model=model_name, 
+                        messages=[
+                            {"role": "system", "content": "You are a professional game patch notes translator. You must output strictly valid JSON."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        response_format={"type": "json_object"}, 
+                        temperature=0.2
+                    )
+                    
+                    logger.info(f"[DEBUG] Đã nhận phản hồi từ OpenRouter thành công cho model: {model_name}")
+                    
+                    if not response.choices:
+                        logger.warning("[DEBUG] Cảnh báo: Thuộc tính choices trả về bị trống!")
+                        raise ValueError("OpenRouter choices list is empty.")
                         
-                data = json.loads(text.strip())
-                if all(k in data for k in ["en", "vi", "de", "ms", "id"]):
-                    return data
-                raise ValueError("Missing language keys in OpenRouter response.")
-            except Exception as e:
-                logger.warning(f"[Attempt {attempt}/{retries}] OpenRouter API Error: {e}")
-                if attempt < retries:
-                    await asyncio.sleep(delay)
-                else:
-                    raise e
+                    text = response.choices[0].message.content
+                    if not text:
+                        logger.warning("[DEBUG] Cảnh báo: Thuộc tính content bên trong tin nhắn bị trống!")
+                        raise ValueError("OpenRouter returned message content is None.")
+                        
+                    text = text.strip()
+                    # In ra 250 ký tự đầu tiên của AI trả về để check xem có phải JSON không
+                    logger.info(f"[DEBUG] Đoạn văn bản thô (Raw Text) AI phản hồi (250 ký tự đầu): {text[:250]}...")
+                    
+                    # Khử cấu trúc markdown block ```json ... ``` nếu AI lỡ tay bọc ngoài JSON
+                    if text.startswith("```"):
+                        logger.info("[DEBUG] Phát hiện văn bản bị bọc bởi markdown code block (```). Đang tiến hành bóc tách...")
+                        if text.startswith("```json"):
+                            text = text[7:]
+                        else:
+                            text = text[3:]
+                        if text.endswith("```"):
+                            text = text[:-3]
+                        text = text.strip()
+                        logger.info(f"[DEBUG] Văn bản sau khi bóc tách code block: {text[:250]}...")
+                        
+                    logger.info("[DEBUG] Tiến hành ép chuỗi ký tự sang định dạng JSON dict (json.loads)...")
+                    data = json.loads(text)
+                    
+                    # Kiểm tra tính toàn vẹn của các key ngôn ngữ
+                    required_keys = ["en", "vi", "de", "ms", "id"]
+                    missing_keys = [k for k in required_keys if k not in data]
+                    
+                    if not missing_keys:
+                        logger.info(f"✅ [DEBUG] Thành công tuyệt đối! Model {model_name} đã trả về cấu trúc JSON hợp lệ.")
+                        return data
+                    else:
+                        logger.error(f"[DEBUG] Chuỗi JSON bị thiếu các trường ngôn ngữ bắt buộc: {missing_keys}")
+                        raise ValueError(f"Missing keys: {missing_keys}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ [DEBUG] Lỗi xảy ra tại Model {model_name} (Lần thử {attempt}/{retries}): {repr(e)}")
+                    if attempt < retries:
+                        logger.info(f"[DEBUG] Chờ {delay} giây trước khi thử lại lượt tiếp theo...")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"❌ [DEBUG] Model {model_name} đã hết số lần thử. Tự động nhảy sang model dự phòng tiếp theo...")
+                        break 
+                        
+        raise RuntimeError("🚨 Cực kỳ nghiêm trọng: Toàn bộ các model miễn phí của OpenRouter đều đang bị sập hoặc quá tải cùng lúc.")
 
     async def process_patch_batch(self, working_batch):
+        logger.info(f"[DEBUG] Bắt đầu gom xử lý batch gồm {len(working_batch)} tin nhắn.")
         combined_content = "\n\n".join([m.content for m in working_batch if m.content])
         if not combined_content.strip():
+            logger.warning("[DEBUG] Nội dung batch trống rỗng. Huỷ bỏ tiến trình xử lý.")
             return
 
         image_url = None
         for m in working_batch:
             if m.attachments:
                 image_url = m.attachments[0].url
+                logger.info(f"[DEBUG] Tìm thấy ảnh đính kèm trong tin nhắn: {image_url}")
                 break
 
         source_id = str(working_batch[0].id)
+        logger.info(f"[DEBUG] ID gốc của tin nhắn đầu tiên làm mốc khóa: {source_id}")
 
         try:
             exists = await self.db.patch_history.find_one({"_id": source_id})
             if exists:
-                logger.info(f"Patch ID {source_id} already processed. Skipping.")
+                logger.info(f"[DEBUG] Bản vá ID {source_id} này đã được xử lý từ trước trong DB. Bỏ qua.")
                 return
 
-            # Đổi hàm gọi sang OpenRouter API mới
+            logger.info("[DEBUG] Kích hoạt hàm dịch thuật call_openrouter_with_retry...")
             translations = await self.call_openrouter_with_retry(combined_content)
+            logger.info("[DEBUG] Nhận kết quả dịch hoàn tất thành công. Đang lưu vào MongoDB...")
 
             patch_data = {
                 "_id": source_id,
@@ -229,15 +278,17 @@ class PatchNotesCog(commands.Cog):
             await self.db.patch_history.insert_one(patch_data)
             logger.info(f"Successfully processed and saved patch batch {source_id}.")
 
+            logger.info("[DEBUG] Tiến hành phát sóng (Broadcast) dữ liệu đến các channel đăng ký...")
             await self.execute_broadcast(source_id, translations, image_url)
         except Exception as e:
-            logger.error(f"Critical failed to process batch {source_id}: {e}")
+            logger.error(f"Critical failed to process batch {source_id}: {e}", exc_info=True)
 
     async def execute_broadcast(self, source_id: str, translations: dict, image_url: str):
         embeds = create_embed_chunks(translations["vi"], "vi", source_id, image_url)
         
         cursor = self.db.patch_channels_active.find({})
         channels_to_notify = await cursor.to_list(length=1000)
+        logger.info(f"[DEBUG] Tìm thấy tổng cộng {len(channels_to_notify)} kênh trong hệ thống cần gửi thông báo.")
         
         for doc in channels_to_notify:
             channel_id_str = doc.get("channel_id")
@@ -249,9 +300,11 @@ class PatchNotesCog(commands.Cog):
                 channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
                 if channel:
                     await channel.send(embeds=embeds, view=PatchView())
+                    logger.info(f"[DEBUG] Đã gửi thông báo thành công đến kênh: {channel_id}")
                 else:
                     raise discord.errors.NotFound()
             except (discord.errors.Forbidden, discord.errors.NotFound):
+                logger.warning(f"[DEBUG] Không có quyền hoặc không tìm thấy kênh {channel_id}. Đang tự động xóa kênh này khỏi danh sách DB.")
                 await self.db.patch_channels_active.delete_one({"channel_id": channel_id_str})
             except Exception as e:
                 logger.error(f"Broadcast failure on channel {channel_id}: {e}")
@@ -267,7 +320,7 @@ class PatchNotesCog(commands.Cog):
 
         self.msg_buffer.append(message)
         self.last_arrival_time = asyncio.get_event_loop().time()
-        logger.info(f"Message {message.id} buffered. Current buffer size: {len(self.msg_buffer)}")
+        logger.info(f"[DEBUG] Nhận tin nhắn mới ID: {message.id}. Đã đưa vào bộ đệm (Buffer Size: {len(self.msg_buffer)})")
 
     @commands.hybrid_command(name="register_patch", description="Đăng ký nhận thông báo Patch Notes tự động từ DMW.")
     @commands.has_permissions(manage_channels=True)
