@@ -130,6 +130,7 @@ class PatchNotesCog(commands.Cog):
 
     async def buffer_monitor_loop(self):
         """Vòng lặp chạy ngầm kiểm tra bộ đệm mỗi giây (Trailing Debounce cực kỳ ổn định)"""
+        print("[DEBUG] Vòng lặp monitor chạy ngầm đã kích hoạt thành công!", flush=True)
         while True:
             try:
                 await asyncio.sleep(1)
@@ -140,12 +141,12 @@ class PatchNotesCog(commands.Cog):
                     working_batch = self.msg_buffer.copy()
                     self.msg_buffer.clear()
                     
-                    logger.info(f"Debounce finished. Processing a combined batch of {len(working_batch)} messages.")
+                    print(f"[DEBUG] Hết 10 giây chờ (Debounce). Bắt đầu xử lý gom cụm {len(working_batch)} tin nhắn...", flush=True)
                     await self.process_patch_batch(working_batch)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in background buffer monitor loop: {e}")
+                print(f"[ERROR] Lỗi trong vòng lặp chạy ngầm: {e}", flush=True)
 
     async def call_gemini_with_retry(self, content: str, retries=3, delay=5) -> dict:
         prompt = f"""
@@ -197,6 +198,7 @@ class PatchNotesCog(commands.Cog):
         """Gom nội dung toàn bộ tin nhắn trong hàng đợi và đẩy lên xử lý"""
         combined_content = "\n\n".join([m.content for m in working_batch if m.content])
         if not combined_content.strip():
+            print("[DEBUG] Cụm tin nhắn trống rỗng. Hủy xử lý.", flush=True)
             return
 
         image_url = None
@@ -208,13 +210,14 @@ class PatchNotesCog(commands.Cog):
         source_id = str(working_batch[0].id)
 
         try:
-            # Chống trùng lặp tuyệt đối trước khi gọi API
             exists = await self.db.patch_history.find_one({"_id": source_id})
             if exists:
-                logger.info(f"Patch ID {source_id} already processed. Skipping.")
+                print(f"[DEBUG] Patch ID {source_id} đã từng được xử lý trước đó. Bỏ qua.", flush=True)
                 return
 
+            print("[DEBUG] Đang tiến hành gửi dữ liệu sang API Gemini để tóm tắt và dịch thuật...", flush=True)
             translations = await self.call_gemini_with_retry(combined_content)
+            print("[DEBUG] Đã nhận phản hồi dịch thuật từ Gemini thành công!", flush=True)
 
             patch_data = {
                 "_id": source_id,
@@ -223,18 +226,21 @@ class PatchNotesCog(commands.Cog):
                 "translations": translations
             }
             await self.db.patch_history.insert_one(patch_data)
-            logger.info(f"Successfully processed and saved patch batch {source_id}.")
+            print(f"[DEBUG] Đã lưu dữ liệu bản vá {source_id} vào bảng patch_history.", flush=True)
 
             # Broadcast diện rộng đến các server khách
             await self.execute_broadcast(source_id, translations, image_url)
         except Exception as e:
-            logger.error(f"Critical failed to process batch {source_id}: {e}")
+            print(f"[CRITICAL ERROR] Lỗi nghiêm trọng tại process_patch_batch: {e}", flush=True)
 
     async def execute_broadcast(self, source_id: str, translations: dict, image_url: str):
+        print("[DEBUG] Bắt đầu tìm kiếm các kênh đăng ký nhận thông báo trong MongoDB...", flush=True)
         embeds = create_embed_chunks(translations["vi"], "vi", source_id, image_url)
         
         cursor = self.db.patch_channels_active.find({})
         channels_to_notify = await cursor.to_list(length=1000)
+        
+        print(f"[DEBUG] Tìm thấy tất cả {len(channels_to_notify)} kênh đang hoạt động trong DB.", flush=True)
         
         for doc in channels_to_notify:
             channel_id_str = doc.get("channel_id")
@@ -246,27 +252,34 @@ class PatchNotesCog(commands.Cog):
                 channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
                 if channel:
                     await channel.send(embeds=embeds, view=PatchView())
+                    print(f"[DEBUG] -> Đã gửi thành công tới kênh nhận: {channel_id}", flush=True)
                 else:
                     raise discord.errors.NotFound()
             except (discord.errors.Forbidden, discord.errors.NotFound):
+                print(f"[DEBUG] -> Kênh {channel_id} không còn tồn tại hoặc Bot bị mất quyền xem kênh. Đang xóa khỏi DB.", flush=True)
                 await self.db.patch_channels_active.delete_one({"channel_id": channel_id_str})
             except Exception as e:
-                logger.error(f"Broadcast failure on channel {channel_id}: {e}")
+                print(f"[ERROR] Lỗi khi gửi broadcast tới kênh {channel_id}: {e}", flush=True)
             
             await asyncio.sleep(0.2)
 
     @commands.Cog.listener()
+    @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Lắng nghe toàn bộ tin nhắn tại kênh nguồn để đưa vào bộ đệm gom bài"""
+        # IN LOG CHẮC CHẮN LÊN RENDER ĐỂ KIỂM TRA BOT CÓ NGHE THẤY KÊNH KHÔNG
+        print(f"[DEBUG] Nhận tin nhắn tại kênh ID: {message.channel.id} | Kênh nguồn cần tìm: {SOURCE_CHANNEL_ID}", flush=True)
+        
         if message.channel.id != SOURCE_CHANNEL_ID:
             return
         if message.author.bot:
+            print(f"[DEBUG] Tin nhắn bị bỏ qua vì tác giả là BOT hoặc WEBHOOK (ID: {message.author.id})", flush=True)
             return
 
         # Thêm tin nhắn vào hàng đợi và cập nhật thời gian tin nhắn cuối cùng xuất hiện
         self.msg_buffer.append(message)
         self.last_arrival_time = asyncio.get_event_loop().time()
-        logger.info(f"Message {message.id} buffered. Current buffer size: {len(self.msg_buffer)}")
+        print(f"[DEBUG] Đã thêm tin nhắn {message.id} vào bộ đệm. Kích thước hiện tại: {len(self.msg_buffer)}", flush=True)
 
     # --- HỆ THỐNG SLASH COMMANDS ĐƯỢC GIỮ NGUYÊN HOÀN TOÀN ---
 
