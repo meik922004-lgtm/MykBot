@@ -14,7 +14,7 @@ logger.setLevel(logging.INFO)
 # Biến môi trường
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "123456789012345678")) # ID channel #patch-notes nguồn
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "1517166085940445284")) # ID channel #patch-notes nguồn
 
 # Cấu hình Gemini
 genai.configure(api_key=GEMINI_API_KEY)
