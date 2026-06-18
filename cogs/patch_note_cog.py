@@ -134,7 +134,7 @@ class PatchNotesCog(commands.Cog):
                 await asyncio.sleep(1)
                 current_time = asyncio.get_event_loop().time()
                 
-                if self.msg_buffer and (current_time - self.last_arrival_time >= 10.0):
+                if self.msg_buffer and (current_time - self.last_arrival_time >= 5.0):
                     working_batch = self.msg_buffer.copy()
                     self.msg_buffer.clear()
                     
@@ -148,17 +148,18 @@ class PatchNotesCog(commands.Cog):
     async def call_openrouter_with_retry(self, content: str, retries=2, delay=3) -> dict:
         """Gọi OpenRouter API với cơ chế tự động chuyển đổi model vàLOG DEBUG siêu chi tiết"""
         free_models = [
-            "meta-llama/llama-3.3-70b-instruct:free",  # Ưu tiên 1
-            "google/gemma-2-9b-it:free",               # Dự phòng 1
-            "meta-llama/llama-3-8b-instruct:free",     # Dự phòng 2
-            "mistralai/mistral-7b-instruct:free"       # Dự phòng 3
+            "meta-llama/llama-3.3-70b-instruct:free",   # Ưu tiên 1: Thông minh nhất (Giữ lại chờ hết nghẽn)
+            "qwen/qwen-2.5-72b-instruct:free",          # Dự phòng 1: Model cực đỉnh của Qwen, siêu ổn định và ít nghẽn
+            "meta-llama/llama-3.1-8b-instruct:free",    # Dự phòng 2: Bản 3.1 mới được miễn phí thay thế bản 3.0 cũ
+            "microsoft/phi-3-medium-128k-instruct:free" # Dự phòng 3: Của Microsoft, xử lý JSON cực kỳ chuẩn
         ]
         
         logger.info(f"[DEBUG] Khởi chạy dịch thuật. Tổng độ dài ký tự Patch Note gốc: {len(content)}")
+
         
         prompt = f"""
-        You are an expert game analyzer. Analyze the game patch note provided below.
-        1. Extract and summarize all key changes neatly in structured markdown (e.g., dungeons, stats, rewards, bug fixes).
+        You are an expert digmon master online game analyzer. Analyze the game patch note provided below.
+        1. Extract and summarize all key changes neatly in structured markdown (e.g., dungeons, stats, rewards, bug fixes, new events).
         2. Translate this exact summary content into 5 target languages: English, Vietnamese, German, Malay, and Indonesian.
         
         Strictly return the response ONLY as a valid JSON object matching this structural format:
