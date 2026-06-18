@@ -18,7 +18,7 @@ SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "1517166085940445284")) #
 
 # Cấu hình Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
 LANG_MAP = {
     "en": "English 🇬🇧",
