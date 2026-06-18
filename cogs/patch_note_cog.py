@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from motor.motor_asyncio import AsyncIOMotorClient
 import google.generativeai as genai
-
+from groq import Groq
 # Cấu hình logging
 logger = logging.getLogger("DMW_PatchBot")
 logger.setLevel(logging.INFO)
