@@ -246,31 +246,49 @@ class PatchNotesCog(commands.Cog):
 
     async def process_patch_batch(self, working_batch):
         logger.info(f"[DEBUG] Bắt đầu gom xử lý batch gồm {len(working_batch)} tin nhắn.")
-        combined_content = "\n\n".join([m.content for m in working_batch if m.content])
+        
+        # Cải tiến: Thu thập nội dung từ cả .content và .embeds
+        content_parts = []
+        for m in working_batch:
+            # 1. Lấy nội dung văn bản thuần
+            if m.content:
+                content_parts.append(m.content)
+            
+            # 2. Lấy nội dung từ Embeds (rất quan trọng nếu GM dùng Webhook hoặc Embed)
+            for embed in m.embeds:
+                if embed.description:
+                    content_parts.append(embed.description)
+                if embed.title:
+                    content_parts.append(f"**{embed.title}**")
+        
+        combined_content = "\n\n".join(content_parts)
+        
         if not combined_content.strip():
-            logger.warning("[DEBUG] Nội dung batch trống rỗng. Huỷ bỏ tiến trình xử lý.")
+            logger.warning("[DEBUG] Nội dung batch trống rỗng (kể cả sau khi quét Embed). Huỷ bỏ xử lý.")
             return
 
         image_url = None
         for m in working_batch:
+            # Ưu tiên lấy ảnh đính kèm, nếu không có thì lấy ảnh trong Embed
             if m.attachments:
                 image_url = m.attachments[0].url
-                logger.info(f"[DEBUG] Tìm thấy ảnh đính kèm trong tin nhắn: {image_url}")
+                break
+            elif m.embeds and m.embeds[0].image:
+                image_url = m.embeds[0].image.url
                 break
 
         source_id = str(working_batch[0].id)
-        logger.info(f"[DEBUG] ID gốc của tin nhắn đầu tiên làm mốc khóa: {source_id}")
+        logger.info(f"[DEBUG] ID gốc: {source_id} | Độ dài nội dung: {len(combined_content)}")
 
         try:
             exists = await self.db.patch_history.find_one({"_id": source_id})
             if exists:
-                logger.info(f"[DEBUG] Bản vá ID {source_id} này đã được xử lý từ trước trong DB. Bỏ qua.")
+                logger.info(f"[DEBUG] ID {source_id} đã có trong DB. Bỏ qua.")
                 return
 
-            logger.info("[DEBUG] Kích hoạt hàm dịch thuật call_openrouter_with_retry...")
+            logger.info("[DEBUG] Kích hoạt dịch thuật...")
             translations = await self.call_openrouter_with_retry(combined_content)
-            logger.info("[DEBUG] Nhận kết quả dịch hoàn tất thành công. Đang lưu vào MongoDB...")
-
+            
             patch_data = {
                 "_id": source_id,
                 "created_at": working_batch[0].created_at.isoformat(),
@@ -278,9 +296,8 @@ class PatchNotesCog(commands.Cog):
                 "translations": translations
             }
             await self.db.patch_history.insert_one(patch_data)
-            logger.info(f"Successfully processed and saved patch batch {source_id}.")
+            logger.info(f"Successfully processed {source_id}.")
 
-            logger.info("[DEBUG] Tiến hành phát sóng (Broadcast) dữ liệu đến các channel đăng ký...")
             await self.execute_broadcast(source_id, translations, image_url)
         except Exception as e:
             logger.error(f"Critical failed to process batch {source_id}: {e}", exc_info=True)
