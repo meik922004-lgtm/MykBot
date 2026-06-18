@@ -49,38 +49,49 @@ class PatchSummary(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author == self.bot.user or not message.guild or message.content.startswith('!'):
+        # 1. Bỏ qua nếu là chính nó
+        if message.author == self.bot.user:
+            return
+        
+        # 2. Bỏ qua nếu không phải server hoặc là lệnh bot
+        if not message.guild or message.content.startswith('!'):
             return
 
-        # LOGIC QUAN TRỌNG: Chỉ truy vấn trong collection "patch_channels_active"
+        # 3. LẤY CONFIG
         config = await self.collection.find_one({"_id": str(message.guild.id)})
-        
-        # Nếu server chưa từng setup (không có trong collection này), bot bỏ qua ngay lập tức
         if not config:
             return
 
         announce_id = config.get("announce_channel")
         summary_id = config.get("summary_channel")
 
-        # Kiểm tra đúng kênh announce đã set
+        # 4. CHỈ SO SÁNH ID KÊNH
         if message.channel.id == announce_id and summary_id:
+            # Nếu message này là của bot khác, Webhook... vẫn cho chạy tiếp!
+            
             summary_channel = self.bot.get_channel(summary_id)
-            if not summary_channel: return
+            if not summary_channel: 
+                return
 
             # Thu thập nội dung (Text + Embeds)
             patch_text = message.content or ""
+            
+            # Đảm bảo đọc được nội dung từ Embeds
             if message.embeds:
                 for embed in message.embeds:
-                    if embed.title: patch_text += f"\n{embed.title}"
+                    if embed.title: patch_text += f"\nTitle: {embed.title}"
                     if embed.description: patch_text += f"\n{embed.description}"
                     for field in embed.fields: patch_text += f"\n{field.name}: {field.value}"
 
-            if not patch_text.strip() and not message.attachments: return
+            # Nếu tin nhắn rỗng hoàn toàn và không có ảnh -> bỏ qua
+            if not patch_text.strip() and not message.attachments: 
+                return
 
-            processing_msg = await summary_channel.send("🔄 Đang xử lý Patch Note...")
+            # Gửi tin nhắn trạng thái
+            processing_msg = await summary_channel.send("🔄 Đang phân tích Patch Note...")
 
             try:
-                # Xử lý ảnh như cũ...
+                # Xử lý ảnh
                 image_parts = []
                 if message.attachments:
                     async with aiohttp.ClientSession() as session:
@@ -95,15 +106,19 @@ class PatchSummary(commands.Cog):
                 ai_payload = [prompt, f"Patch Note Content:\n{patch_text}"]
                 if image_parts: ai_payload.extend(image_parts)
 
+                # Gọi AI
                 response = ai_model.generate_content(ai_payload)
                 
-                # Gửi kết quả (không cần view nếu bồ chưa dùng dịch thuật)
-                await summary_channel.send(embed=discord.Embed(title="📢 PATCH SUMMARY", description=response.text[:4000], color=discord.Color.gold()))
+                await summary_channel.send(embed=discord.Embed(
+                    title="📢 PATCH SUMMARY", 
+                    description=response.text[:4000], 
+                    color=discord.Color.gold()
+                ))
                 await processing_msg.delete()
 
             except Exception as e:
-                print(f"Error: {e}")
-                await processing_msg.edit(content="❌ Lỗi khi phân tích.")
+                print(f"Error AI: {e}")
+                await processing_msg.edit(content="❌ Lỗi khi gọi AI. Kiểm tra API Key nhé!")
 
 async def setup(bot):
     await bot.add_cog(PatchSummary(bot))
