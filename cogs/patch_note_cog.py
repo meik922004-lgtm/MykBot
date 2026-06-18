@@ -5,20 +5,22 @@ import asyncio
 import discord
 from discord.ext import commands
 from motor.motor_asyncio import AsyncIOMotorClient
-import google.generativeai as genai
-from groq import Groq
+from openai import AsyncOpenAI  # Sử dụng thư viện AsyncOpenAI chuẩn để kết nối OpenRouter
+
 # Cấu hình logging
 logger = logging.getLogger("DMW_PatchBot")
 logger.setLevel(logging.INFO)
 
 # Biến môi trường
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "1517166085940445284")) # ID channel #patch-notes nguồn
 
-# Cấu hình Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.0-flash-lite")
+# Khởi tạo OpenRouter Client (Bất đồng bộ)
+openrouter_client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY
+)
 
 LANG_MAP = {
     "en": "English 🇬🇧",
@@ -111,16 +113,14 @@ class PatchNotesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.mongo_client = AsyncIOMotorClient(MONGO_URI)
-        self.db = self.mongo_client["database0"] # Khớp chính xác database0
+        self.db = self.mongo_client["database0"]
         
-        # Hệ thống hàng đợi gom patch an toàn (Tránh task.cancel)
         self.msg_buffer = []
         self.last_arrival_time = 0
         self.bg_loop_task = None
 
     async def cog_load(self):
         self.bot.add_view(PatchView())
-        # Khởi chạy vòng lặp giám sát bộ đệm chạy ngầm độc lập
         self.bg_loop_task = asyncio.create_task(self.buffer_monitor_loop())
         logger.info("PatchNotesCog loaded and background loop monitor started.")
 
@@ -129,26 +129,24 @@ class PatchNotesCog(commands.Cog):
             self.bg_loop_task.cancel()
 
     async def buffer_monitor_loop(self):
-        """Vòng lặp chạy ngầm kiểm tra bộ đệm mỗi giây (Trailing Debounce cực kỳ ổn định)"""
-        print("[DEBUG] Vòng lặp monitor chạy ngầm đã kích hoạt thành công!", flush=True)
         while True:
             try:
                 await asyncio.sleep(1)
                 current_time = asyncio.get_event_loop().time()
                 
-                # Nếu có tin nhắn trong bộ đệm VÀ đã qua 10 giây kể từ tin nhắn cuối cùng được gửi
                 if self.msg_buffer and (current_time - self.last_arrival_time >= 10.0):
                     working_batch = self.msg_buffer.copy()
                     self.msg_buffer.clear()
                     
-                    print(f"[DEBUG] Hết 10 giây chờ (Debounce). Bắt đầu xử lý gom cụm {len(working_batch)} tin nhắn...", flush=True)
+                    logger.info(f"Debounce finished. Processing a combined batch of {len(working_batch)} messages.")
                     await self.process_patch_batch(working_batch)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[ERROR] Lỗi trong vòng lặp chạy ngầm: {e}", flush=True)
+                logger.error(f"Error in background buffer monitor loop: {e}")
 
-    async def call_gemini_with_retry(self, content: str, retries=3, delay=5) -> dict:
+    async def call_openrouter_with_retry(self, content: str, retries=3, delay=5) -> dict:
+        """Gọi OpenRouter API để dịch và tóm tắt với cơ chế xử lý JSON cứng"""
         prompt = f"""
         You are an expert game analyzer. Analyze the game patch note provided below.
         1. Extract and summarize all key changes neatly in structured markdown (e.g., dungeons, stats, rewards, bug fixes).
@@ -168,13 +166,19 @@ class PatchNotesCog(commands.Cog):
         """
         for attempt in range(1, retries + 1):
             try:
-                response = await gemini_model.generate_content_async(
-                    prompt,
-                    generation_config={"response_mime_type": "application/json"}
+                # Sử dụng Llama 3.3 70B Bản Miễn Phí của OpenRouter
+                response = await openrouter_client.chat.completions.create(
+                    model="meta-llama/llama-3.3-70b-instruct:free", 
+                    messages=[
+                        {"role": "system", "content": "You are a professional game patch notes translator. You must output strictly valid JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"}, # Khóa định dạng đầu ra luôn là JSON
+                    temperature=0.2
                 )
-                text = response.text.strip()
+                text = response.choices[0].message.content.strip()
                 
-                # Giải cứu dữ liệu nếu Gemini tự ý bọc block ```json
+                # Khử markdown block bọc ngoài chuỗi JSON nếu có
                 if text.startswith("```"):
                     if text.startswith("```json"):
                         text = text[7:]
@@ -186,19 +190,17 @@ class PatchNotesCog(commands.Cog):
                 data = json.loads(text.strip())
                 if all(k in data for k in ["en", "vi", "de", "ms", "id"]):
                     return data
-                raise ValueError("Missing language keys in Gemini response.")
+                raise ValueError("Missing language keys in OpenRouter response.")
             except Exception as e:
-                logger.warning(f"[Attempt {attempt}/{retries}] Gemini API Error: {e}")
+                logger.warning(f"[Attempt {attempt}/{retries}] OpenRouter API Error: {e}")
                 if attempt < retries:
                     await asyncio.sleep(delay)
                 else:
                     raise e
 
     async def process_patch_batch(self, working_batch):
-        """Gom nội dung toàn bộ tin nhắn trong hàng đợi và đẩy lên xử lý"""
         combined_content = "\n\n".join([m.content for m in working_batch if m.content])
         if not combined_content.strip():
-            print("[DEBUG] Cụm tin nhắn trống rỗng. Hủy xử lý.", flush=True)
             return
 
         image_url = None
@@ -212,12 +214,11 @@ class PatchNotesCog(commands.Cog):
         try:
             exists = await self.db.patch_history.find_one({"_id": source_id})
             if exists:
-                print(f"[DEBUG] Patch ID {source_id} đã từng được xử lý trước đó. Bỏ qua.", flush=True)
+                logger.info(f"Patch ID {source_id} already processed. Skipping.")
                 return
 
-            print("[DEBUG] Đang tiến hành gửi dữ liệu sang API Gemini để tóm tắt và dịch thuật...", flush=True)
-            translations = await self.call_gemini_with_retry(combined_content)
-            print("[DEBUG] Đã nhận phản hồi dịch thuật từ Gemini thành công!", flush=True)
+            # Đổi hàm gọi sang OpenRouter API mới
+            translations = await self.call_openrouter_with_retry(combined_content)
 
             patch_data = {
                 "_id": source_id,
@@ -226,21 +227,17 @@ class PatchNotesCog(commands.Cog):
                 "translations": translations
             }
             await self.db.patch_history.insert_one(patch_data)
-            print(f"[DEBUG] Đã lưu dữ liệu bản vá {source_id} vào bảng patch_history.", flush=True)
+            logger.info(f"Successfully processed and saved patch batch {source_id}.")
 
-            # Broadcast diện rộng đến các server khách
             await self.execute_broadcast(source_id, translations, image_url)
         except Exception as e:
-            print(f"[CRITICAL ERROR] Lỗi nghiêm trọng tại process_patch_batch: {e}", flush=True)
+            logger.error(f"Critical failed to process batch {source_id}: {e}")
 
     async def execute_broadcast(self, source_id: str, translations: dict, image_url: str):
-        print("[DEBUG] Bắt đầu tìm kiếm các kênh đăng ký nhận thông báo trong MongoDB...", flush=True)
         embeds = create_embed_chunks(translations["vi"], "vi", source_id, image_url)
         
         cursor = self.db.patch_channels_active.find({})
         channels_to_notify = await cursor.to_list(length=1000)
-        
-        print(f"[DEBUG] Tìm thấy tất cả {len(channels_to_notify)} kênh đang hoạt động trong DB.", flush=True)
         
         for doc in channels_to_notify:
             channel_id_str = doc.get("channel_id")
@@ -252,36 +249,25 @@ class PatchNotesCog(commands.Cog):
                 channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
                 if channel:
                     await channel.send(embeds=embeds, view=PatchView())
-                    print(f"[DEBUG] -> Đã gửi thành công tới kênh nhận: {channel_id}", flush=True)
                 else:
                     raise discord.errors.NotFound()
             except (discord.errors.Forbidden, discord.errors.NotFound):
-                print(f"[DEBUG] -> Kênh {channel_id} không còn tồn tại hoặc Bot bị mất quyền xem kênh. Đang xóa khỏi DB.", flush=True)
                 await self.db.patch_channels_active.delete_one({"channel_id": channel_id_str})
             except Exception as e:
-                print(f"[ERROR] Lỗi khi gửi broadcast tới kênh {channel_id}: {e}", flush=True)
+                logger.error(f"Broadcast failure on channel {channel_id}: {e}")
             
             await asyncio.sleep(0.2)
 
     @commands.Cog.listener()
-    @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Lắng nghe toàn bộ tin nhắn tại kênh nguồn để đưa vào bộ đệm gom bài"""
-        # IN LOG CHẮC CHẮN LÊN RENDER ĐỂ KIỂM TRA BOT CÓ NGHE THẤY KÊNH KHÔNG
-        print(f"[DEBUG] Nhận tin nhắn tại kênh ID: {message.channel.id} | Kênh nguồn cần tìm: {SOURCE_CHANNEL_ID}", flush=True)
-        
         if message.channel.id != SOURCE_CHANNEL_ID:
             return
         if message.author.bot:
-            print(f"[DEBUG] Tin nhắn bị bỏ qua vì tác giả là BOT hoặc WEBHOOK (ID: {message.author.id})", flush=True)
             return
 
-        # Thêm tin nhắn vào hàng đợi và cập nhật thời gian tin nhắn cuối cùng xuất hiện
         self.msg_buffer.append(message)
         self.last_arrival_time = asyncio.get_event_loop().time()
-        print(f"[DEBUG] Đã thêm tin nhắn {message.id} vào bộ đệm. Kích thước hiện tại: {len(self.msg_buffer)}", flush=True)
-
-    # --- HỆ THỐNG SLASH COMMANDS ĐƯỢC GIỮ NGUYÊN HOÀN TOÀN ---
+        logger.info(f"Message {message.id} buffered. Current buffer size: {len(self.msg_buffer)}")
 
     @commands.hybrid_command(name="register_patch", description="Đăng ký nhận thông báo Patch Notes tự động từ DMW.")
     @commands.has_permissions(manage_channels=True)
