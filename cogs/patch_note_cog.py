@@ -247,35 +247,58 @@ class PatchNotesCog(commands.Cog):
     async def process_patch_batch(self, working_batch):
         logger.info(f"[DEBUG] Bắt đầu gom xử lý batch gồm {len(working_batch)} tin nhắn.")
         
-        # Cải tiến: Thu thập nội dung từ cả .content và .embeds
         content_parts = []
         for m in working_batch:
             # 1. Lấy nội dung văn bản thuần
             if m.content:
                 content_parts.append(m.content)
             
-            # 2. Lấy nội dung từ Embeds (rất quan trọng nếu GM dùng Webhook hoặc Embed)
+            # 2. Lấy nội dung từ Embeds (Quan trọng cho Kênh Follow / Webhook)
             for embed in m.embeds:
+                if embed.title:
+                    content_parts.append(f"### {embed.title}")
                 if embed.description:
                     content_parts.append(embed.description)
-                if embed.title:
-                    content_parts.append(f"**{embed.title}**")
-        
+                # Lấy các thông số game (DPS, Tank, HP...) nằm trong fields
+                for field in embed.fields:
+                    content_parts.append(f"**{field.name}**: {field.value}")
+
+            # 3. Lấy nội dung từ tin nhắn chuyển tiếp (Forwarded / Replied)
+            if m.reference and hasattr(m.reference, 'resolved') and isinstance(m.reference.resolved, discord.Message):
+                ref_msg = m.reference.resolved
+                if ref_msg.content:
+                    content_parts.append(ref_msg.content)
+                for ref_embed in ref_msg.embeds:
+                    if ref_embed.title:
+                        content_parts.append(f"### {ref_embed.title}")
+                    if ref_embed.description:
+                        content_parts.append(ref_embed.description)
+                    for field in ref_embed.fields:
+                        content_parts.append(f"**{field.name}**: {field.value}")
+
         combined_content = "\n\n".join(content_parts)
         
         if not combined_content.strip():
-            logger.warning("[DEBUG] Nội dung batch trống rỗng (kể cả sau khi quét Embed). Huỷ bỏ xử lý.")
+            logger.warning("[DEBUG] Nội dung batch trống rỗng (kể cả sau khi quét Embed và Reference). Huỷ bỏ xử lý.")
             return
 
         image_url = None
         for m in working_batch:
-            # Ưu tiên lấy ảnh đính kèm, nếu không có thì lấy ảnh trong Embed
+            # Ưu tiên ảnh đính kèm, sau đó đến ảnh trong Embed của tin nhắn gốc, cuối cùng là ảnh trong tin chuyển tiếp
             if m.attachments:
                 image_url = m.attachments[0].url
                 break
             elif m.embeds and m.embeds[0].image:
                 image_url = m.embeds[0].image.url
                 break
+            elif m.reference and hasattr(m.reference, 'resolved') and isinstance(m.reference.resolved, discord.Message):
+                ref_msg = m.reference.resolved
+                if ref_msg.attachments:
+                    image_url = ref_msg.attachments[0].url
+                    break
+                elif ref_msg.embeds and ref_msg.embeds[0].image:
+                    image_url = ref_msg.embeds[0].image.url
+                    break
 
         source_id = str(working_batch[0].id)
         logger.info(f"[DEBUG] ID gốc: {source_id} | Độ dài nội dung: {len(combined_content)}")
@@ -334,7 +357,7 @@ class PatchNotesCog(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.channel.id != SOURCE_CHANNEL_ID:
             return
-        if message.author.bot:
+        if message.author.bot and not message.webhook_id:
             return
 
         self.msg_buffer.append(message)
