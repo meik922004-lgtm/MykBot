@@ -6,7 +6,7 @@ import logging
 import motor.motor_asyncio
 import os
 import textwrap
-
+import asyncio
 # Thiết lập Logger cho Debugging (Yêu cầu 5)
 logger = logging.getLogger('DMW_Broadcaster')
 logger.setLevel(logging.DEBUG)
@@ -20,8 +20,9 @@ if not logger.handlers:
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 DATA_CENTER_CHANNEL_ID = 1517166085940445284  # THAY BẰNG ID KÊNH MYK DATA CENTER CỦA BẠN
-# Sử dụng model free phổ biến và mạnh mẽ trên OpenRouter năm 2026
-AI_MODEL = "meta-llama/llama-3.3-70b-instruct:free" 
+
+# Sử dụng model free phổ biến và mạnh mẽ trên OpenRouter
+AI_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free"
 # ---------------------
 
 class PaginationAndTranslationView(discord.ui.View):
