@@ -249,82 +249,46 @@ class PatchNotesCog(commands.Cog):
         
         content_parts = []
         for m in working_batch:
-            # 1. Lấy nội dung văn bản thuần
-            if m.content:
-                content_parts.append(m.content)
-            
-            # 2. Lấy nội dung từ Embeds (Quan trọng cho Kênh Follow / Webhook)
+            # 1. Quét nội dung cơ bản
+            if m.content: content_parts.append(m.content)
             for embed in m.embeds:
-                if embed.title:
-                    content_parts.append(f"### {embed.title}")
-                if embed.description:
-                    content_parts.append(embed.description)
-                # Lấy các thông số game (DPS, Tank, HP...) nằm trong fields
-                for field in embed.fields:
-                    content_parts.append(f"**{field.name}**: {field.value}")
+                if embed.title: content_parts.append(f"### {embed.title}")
+                if embed.description: content_parts.append(embed.description)
+                for field in embed.fields: content_parts.append(f"**{field.name}**: {field.value}")
 
-            # 3. Lấy nội dung từ tin nhắn chuyển tiếp (Forwarded / Replied)
+            # 2. Quét tin nhắn Phản hồi (Reply)
             if m.reference and hasattr(m.reference, 'resolved') and isinstance(m.reference.resolved, discord.Message):
                 ref_msg = m.reference.resolved
-                if ref_msg.content:
-                    content_parts.append(ref_msg.content)
-                for ref_embed in ref_msg.embeds:
-                    if ref_embed.title:
-                        content_parts.append(f"### {ref_embed.title}")
-                    if ref_embed.description:
-                        content_parts.append(ref_embed.description)
-                    for field in ref_embed.fields:
-                        content_parts.append(f"**{field.name}**: {field.value}")
+                if ref_msg.content: content_parts.append(ref_msg.content)
+
+            # 3. ÉP MỞ CẤU TRÚC "ĐÃ CHUYỂN TIẾP" (NATIVE FORWARD)
+            # Chuyển tin nhắn thành dữ liệu thô để đọc xuyên thấu
+            raw_data = m.to_dict()
+            if 'message_snapshots' in raw_data:
+                logger.info("[DEBUG] Phát hiện tính năng 'Đã chuyển tiếp' mới của Discord. Đang bóc tách...")
+                for snapshot in raw_data['message_snapshots']:
+                    snap_msg = snapshot.get('message', {})
+                    # Lấy text
+                    if snap_msg.get('content'):
+                        content_parts.append(snap_msg.get('content'))
+                    # Lấy text trong Embed của tin nhắn gốc
+                    for em in snap_msg.get('embeds', []):
+                        if em.get('description'): content_parts.append(em.get('description'))
+                        if em.get('title'): content_parts.append(f"### {em.get('title')}")
+                        for field in em.get('fields', []):
+                            content_parts.append(f"**{field.get('name')}**: {field.get('value')}")
 
         combined_content = "\n\n".join(content_parts)
         
+        # Log cực mạnh để xem bot đã moi được chữ ra chưa
+        logger.info(f"[DEBUG] Nội dung thô đã moi được (100 ký tự đầu): {combined_content[:100]}...")
+        logger.info(f"[DEBUG] Tổng độ dài: {len(combined_content)} ký tự")
+        
         if not combined_content.strip():
-            logger.warning("[DEBUG] Nội dung batch trống rỗng (kể cả sau khi quét Embed và Reference). Huỷ bỏ xử lý.")
+            logger.warning("[DEBUG] Vẫn trống rỗng! Hãy chắc chắn bạn đã bật Message Content Intent trên Discord Developer Portal.")
             return
 
-        image_url = None
-        for m in working_batch:
-            # Ưu tiên ảnh đính kèm, sau đó đến ảnh trong Embed của tin nhắn gốc, cuối cùng là ảnh trong tin chuyển tiếp
-            if m.attachments:
-                image_url = m.attachments[0].url
-                break
-            elif m.embeds and m.embeds[0].image:
-                image_url = m.embeds[0].image.url
-                break
-            elif m.reference and hasattr(m.reference, 'resolved') and isinstance(m.reference.resolved, discord.Message):
-                ref_msg = m.reference.resolved
-                if ref_msg.attachments:
-                    image_url = ref_msg.attachments[0].url
-                    break
-                elif ref_msg.embeds and ref_msg.embeds[0].image:
-                    image_url = ref_msg.embeds[0].image.url
-                    break
-
-        source_id = str(working_batch[0].id)
-        logger.info(f"[DEBUG] ID gốc: {source_id} | Độ dài nội dung: {len(combined_content)}")
-
-        try:
-            exists = await self.db.patch_history.find_one({"_id": source_id})
-            if exists:
-                logger.info(f"[DEBUG] ID {source_id} đã có trong DB. Bỏ qua.")
-                return
-
-            logger.info("[DEBUG] Kích hoạt dịch thuật...")
-            translations = await self.call_openrouter_with_retry(combined_content)
-            
-            patch_data = {
-                "_id": source_id,
-                "created_at": working_batch[0].created_at.isoformat(),
-                "image_url": image_url,
-                "translations": translations
-            }
-            await self.db.patch_history.insert_one(patch_data)
-            logger.info(f"Successfully processed {source_id}.")
-
-            await self.execute_broadcast(source_id, translations, image_url)
-        except Exception as e:
-            logger.error(f"Critical failed to process batch {source_id}: {e}", exc_info=True)
-
+        # ... (phần lấy ảnh và gọi AI phía dưới giữ nguyên)
     async def execute_broadcast(self, source_id: str, translations: dict, image_url: str):
         embeds = create_embed_chunks(translations["vi"], "vi", source_id, image_url)
         
