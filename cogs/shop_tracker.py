@@ -4,7 +4,7 @@ from discord import app_commands
 import json
 from pymongo import MongoClient 
 import os
-
+from datetime import datetime
 # ==========================================
 # UI CLASSES (MODAL & VIEW) FOR /MYLIST
 # ==========================================
@@ -118,7 +118,7 @@ class ShopTracker(commands.Cog):
         self.db = self.cluster["database0"]
         self.collection = self.db["shop_subscriptions"]
         self.users_coll = self.db["user_slots"] # Collection for user limits
-        
+        self.logs_coll = self.db["bot_logs"] # Collection for tracking logs
         self.subs_cache = {}
         
         try:
@@ -127,6 +127,17 @@ class ShopTracker(commands.Cog):
             print(f"💾 [Cache] Successfully loaded {len(self.subs_cache)} items into RAM!")
         except Exception as e:
             print(f"❌ [Cache] Error loading data: {e}")
+
+   
+    def log_action(self, user_id: int, action: str, details: str):
+        """Save user actions to MongoDB for the web dashboard."""
+        log_entry = {
+            "user_id": str(user_id),
+            "action": action,
+            "details": details,
+            "timestamp": datetime.utcnow()
+        }
+        self.logs_coll.insert_one(log_entry)
 
     # ===== HELPER METHODS FOR DATA FETCHING =====
     def get_user_items(self, user_id):
@@ -140,8 +151,8 @@ class ShopTracker(commands.Cog):
     def get_max_slots(self, user_id):
         user_doc = self.users_coll.find_one({"_id": user_id})
         if user_doc:
-            return user_doc.get("max_slots", 2)
-        return 2 # Default is 2 slots
+            return user_doc.get("max_slots", 0)
+        return 0 # Default is 2 slots
 
     # ===== CORE LOGIC (Shared for Commands & UI) =====
     async def process_add_or_edit(self, user_id, item_name, max_price, is_edit=False):
@@ -153,10 +164,18 @@ class ShopTracker(commands.Cog):
             if any(i["name"] == item_key for i in user_items):
                 return False, "You are already tracking this item! Use the 'Edit Price' option if you want to change it."
             
-            # 2. Slot limit check
+            # 2. Slot limit check (CẬP NHẬT Ở ĐÂY)
             max_slots = self.get_max_slots(user_id)
+            
+            # Nếu max_slots = 0 (Chưa được Owner cấp phép)
+            if max_slots == 0:
+                return False, "🚫 Access Denied! You don't have any slots. Please contact the Bot Owner to get access."
+                
+            # Nếu đã dùng hết slot được cấp
             if len(user_items) >= max_slots:
-                return False, f"You have reached your slot limit ({len(user_items)}/{max_slots}). Please ask the Bot Owner for an expansion!"
+                return False, f"⚠️ You have reached your slot limit ({len(user_items)}/{max_slots}). Please ask the Bot Owner for an expansion!"
+
+        item_doc = self.collection.find_one({"_id": item_key})
 
         item_doc = self.collection.find_one({"_id": item_key})
         subscribers = []
@@ -182,6 +201,7 @@ class ShopTracker(commands.Cog):
             subscribers = [{"user_id": user_id, "max_price": max_price}]
             new_doc = {"_id": item_key, "subscribers": subscribers}
             self.collection.insert_one(new_doc)
+        
 
         self.subs_cache[item_key] = subscribers
         action_text = "Updated new price for" if is_edit else "Added"
