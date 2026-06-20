@@ -5,13 +5,14 @@ import json
 from pymongo import MongoClient 
 import os
 from datetime import datetime
+
 # ==========================================
 # UI CLASSES (MODAL & VIEW) FOR /MYLIST
 # ==========================================
 class ItemModal(discord.ui.Modal):
     def __init__(self, cog, action: str, item_name: str = None):
         title = "Add New Item" if action == "add" else f"Edit Price: {item_name}"
-        super().__init__(title=title[:45])  # Discord modal title limit is 45 chars
+        super().__init__(title=title[:45])  
         self.cog = cog
         self.action = action
         self.target_item = item_name
@@ -43,7 +44,6 @@ class ItemModal(discord.ui.Modal):
 
         item_name = self.target_item if self.action == "edit" else self.item_name_input.value
         
-        # Reuse add/edit logic from the cog
         success, message = await self.cog.process_add_or_edit(
             interaction.user.id, 
             item_name, 
@@ -80,16 +80,14 @@ class ActionSelect(discord.ui.Select):
 
 class MyListView(discord.ui.View):
     def __init__(self, cog, user_id):
-        super().__init__(timeout=180) # 3 minutes timeout
+        super().__init__(timeout=180) 
         self.cog = cog
         self.user_id = user_id
 
-        # Check current item count
         items = self.cog.get_user_items(user_id)
         current_slots = len(items)
         max_slots = self.cog.get_max_slots(user_id)
 
-        # Add Button: Disabled if slots are full
         add_btn = discord.ui.Button(
             label="➕ Add Item", 
             style=discord.ButtonStyle.success, 
@@ -100,11 +98,9 @@ class MyListView(discord.ui.View):
         add_btn.callback = add_callback
         self.add_item(add_btn)
 
-        # Edit/Delete Dropdowns: Disabled if there are no items
         if items:
             self.add_item(ActionSelect(items, "edit", self.cog))
             self.add_item(ActionSelect(items, "delete", self.cog))
-
 
 # ==========================================
 # MAIN CLASS: SHOP TRACKER COG
@@ -117,8 +113,9 @@ class ShopTracker(commands.Cog):
         self.cluster = MongoClient(mongo_uri)
         self.db = self.cluster["database0"]
         self.collection = self.db["shop_subscriptions"]
-        self.users_coll = self.db["user_slots"] # Collection for user limits
-        self.logs_coll = self.db["bot_logs"] # Collection for tracking logs
+        self.users_coll = self.db["user_slots"] 
+        self.logs_coll = self.db["bot_logs"] 
+        self.players_coll = self.db["players"] # Khai báo DB lấy profile
         self.subs_cache = {}
         
         try:
@@ -128,9 +125,7 @@ class ShopTracker(commands.Cog):
         except Exception as e:
             print(f"❌ [Cache] Error loading data: {e}")
 
-   
     def log_action(self, user_id: int, action: str, details: str):
-        """Save user actions to MongoDB for the web dashboard."""
         log_entry = {
             "user_id": str(user_id),
             "action": action,
@@ -139,7 +134,6 @@ class ShopTracker(commands.Cog):
         }
         self.logs_coll.insert_one(log_entry)
 
-    # ===== HELPER METHODS FOR DATA FETCHING =====
     def get_user_items(self, user_id):
         items = []
         for item_key, subscribers in self.subs_cache.items():
@@ -152,26 +146,20 @@ class ShopTracker(commands.Cog):
         user_doc = self.users_coll.find_one({"_id": user_id})
         if user_doc:
             return user_doc.get("max_slots", 0)
-        return 0 # Default is 2 slots
+        return 0 
 
-    # ===== CORE LOGIC (Shared for Commands & UI) =====
     async def process_add_or_edit(self, user_id, item_name, max_price, is_edit=False):
         item_key = item_name.lower().strip()
         user_items = self.get_user_items(user_id)
         
-        # 1. Anti-duplicate mechanism (when adding)
         if not is_edit:
             if any(i["name"] == item_key for i in user_items):
                 return False, "You are already tracking this item! Use the 'Edit Price' option if you want to change it."
             
-            # 2. Slot limit check
             max_slots = self.get_max_slots(user_id)
-            
-            # Nếu max_slots = 0 (Chưa được Owner cấp phép)
             if max_slots == 0:
                 return False, "🚫 Access Denied! You don't have any slots. Please contact the Bot Owner to get access."
                 
-            # Nếu đã dùng hết slot được cấp
             if len(user_items) >= max_slots:
                 return False, f"⚠️ You have reached your slot limit ({len(user_items)}/{max_slots}). Please ask the Bot Owner for an expansion!"
 
@@ -181,26 +169,19 @@ class ShopTracker(commands.Cog):
         if item_doc:
             subscribers = item_doc.get("subscribers", [])
             user_exists = False
-            
             for sub in subscribers:
                 if sub["user_id"] == user_id:
                     sub["max_price"] = max_price
                     user_exists = True
                     break
-            
             if not user_exists:
                 subscribers.append({"user_id": user_id, "max_price": max_price})
-                
-            self.collection.update_one(
-                {"_id": item_key}, 
-                {"$set": {"subscribers": subscribers}}
-            )
+            self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": subscribers}})
         else:
             subscribers = [{"user_id": user_id, "max_price": max_price}]
             new_doc = {"_id": item_key, "subscribers": subscribers}
             self.collection.insert_one(new_doc)
         
-        # ĐẶT LOG TẠI ĐÂY: Chạy sau khi cả IF và ELSE đều đã xử lý xong DB thành công
         log_msg = f"Registered/Changed item '{item_key}' price to ≤ {max_price:,}"
         self.log_action(user_id, "ADD/EDIT ITEM", log_msg)
 
@@ -226,34 +207,35 @@ class ShopTracker(commands.Cog):
                 self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": new_subscribers}})
                 self.subs_cache[item_key] = new_subscribers
             
-            # Vị trí đặt log ở đây của bạn đã HOÀN HẢO!
             self.log_action(user_id, "REMOVE ITEM", f"Deleted '{item_key}' from the tracking list")
             return True, f"Unsubscribed from: **{item_name}**."
         return False, "This item is not registered in the system."
 
-    # ==========================================
-    # SLASH COMMAND: /additem (Manual version)
-    # ==========================================
+    # HÀM KIỂM TRA PROFILE CHUNG
+    async def has_profile(self, interaction: discord.Interaction) -> bool:
+        profile = self.players_coll.find_one({"user_id": interaction.user.id})
+        if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
+            await interaction.response.send_message("❌ **Access Denied!** You must set up your profile via `/mygear` first.", ephemeral=True)
+            return False
+        return True
+
     @app_commands.command(name="additem", description="Sign up to receive notifications when an item's price is good.")
     async def additem(self, interaction: discord.Interaction, item_name: str, max_price: int):
+        if not await self.has_profile(interaction): return # Chặn nếu chưa có Profile
         await interaction.response.defer(ephemeral=True) 
         success, msg = await self.process_add_or_edit(interaction.user.id, item_name, max_price, is_edit=False)
         await interaction.followup.send(msg)
 
-    # ==========================================
-    # SLASH COMMAND: /removeitem (Manual version)
-    # ==========================================
     @app_commands.command(name="removeitem", description="Cancel item tracking.")
     async def removeitem(self, interaction: discord.Interaction, item_name: str):
+        if not await self.has_profile(interaction): return # Chặn nếu chưa có Profile
         await interaction.response.defer(ephemeral=True)
         success, msg = self.process_remove(interaction.user.id, item_name)
         await interaction.followup.send(msg)
 
-    # ==========================================
-    # SLASH COMMAND: /mylist (MAIN UI COMMAND)
-    # ==========================================
     @app_commands.command(name="mylist", description="View and manage your tracked items list.")
     async def mylist(self, interaction: discord.Interaction):
+        if not await self.has_profile(interaction): return # Chặn nếu chưa có Profile
         user_id = interaction.user.id
         items = self.get_user_items(user_id)
         max_slots = self.get_max_slots(user_id)
@@ -278,29 +260,17 @@ class ShopTracker(commands.Cog):
         view = MyListView(self, user_id)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    # ==========================================
-    # SLASH COMMAND: /addslot (BOT OWNER ONLY)
-    # ==========================================
     @app_commands.command(name="addslot", description="[Owner] Change the slot limit for a user.")
     async def addslot(self, interaction: discord.Interaction, user: discord.Member, slots: int):
-        # ⚠️ Check if the user executing the command is the Bot Owner
         is_owner = await self.bot.is_owner(interaction.user)
         if not is_owner:
             await interaction.response.send_message("❌ Only the Bot Owner can use this command.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
-        
-        self.users_coll.update_one(
-            {"_id": user.id},
-            {"$set": {"max_slots": slots}},
-            upsert=True
-        )
+        self.users_coll.update_one({"_id": user.id}, {"$set": {"max_slots": slots}}, upsert=True)
         await interaction.followup.send(f"✅ Granted **{slots} max slots** to **{user.display_name}**.")
 
-    # ==========================================
-    # WEBHOOK LISTENER & DM ALERTS
-    # ==========================================
     @commands.Cog.listener()
     async def on_message(self, message):
         BRIDGE_CHANNEL_ID = 1515038293643759728  
@@ -319,14 +289,12 @@ class ShopTracker(commands.Cog):
                     map_name = shop_data.get("map", "Unknown")
                     
                     alerts = []
-                    
                     for item in shop_data.get("items", []):
                         name_lower = item["item_name"].lower()
                         cost = item["cost"]
                         quantity = item.get("quantity", "Unknown") 
                         
                         subscribers = self.subs_cache.get(name_lower)
-                        
                         if subscribers:
                             for sub in subscribers:
                                 if cost <= sub["max_price"]:
@@ -337,7 +305,6 @@ class ShopTracker(commands.Cog):
                                     )
                                     embed.add_field(name="📦 Item", value=f"**{item['item_name']}**", inline=True)
                                     embed.add_field(name="💰 Price (ea)", value=f"**{cost:,}**", inline=True)
-                                    
                                     qty_str = f"**{quantity:,}**" if isinstance(quantity, int) else f"**{quantity}**"
                                     embed.add_field(name="⚖️ Quantity", value=qty_str, inline=True)
                                     embed.add_field(name="🏪 Shop", value=f"`{shop_name}`", inline=True)
@@ -345,22 +312,16 @@ class ShopTracker(commands.Cog):
                                     embed.add_field(name="📍 Map", value=f"**{map_name}**", inline=True)
                                     embed.set_footer(text="MyK-Market Tracker • Auto update")
                                     
-                                    alerts.append({
-                                        "user_id": sub['user_id'],
-                                        "embed": embed
-                                    })
+                                    alerts.append({"user_id": sub['user_id'], "embed": embed})
                     
-                    # Send DM to each user
                     for alert in alerts:
                         try:
                             user = await self.bot.fetch_user(alert["user_id"])
-                            # Send directly to user's Direct Messages
                             await user.send(embed=alert["embed"])
                         except discord.Forbidden:
-                            # Skip if the user has their DMs closed
-                            print(f"⚠️ Cannot send DM to user {alert['user_id']} (DMs closed).")
-                        except Exception as e:
-                            print(f"❌ Error sending DM: {e}")
+                            pass
+                        except Exception:
+                            pass
 
 async def setup(bot):
     await bot.add_cog(ShopTracker(bot))
