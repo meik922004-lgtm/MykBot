@@ -1,24 +1,10 @@
 import discord
 from discord.ext import commands
 import os
-import threading
 from dotenv import load_dotenv
-from flask import Flask
 from Database import db
-# 1. Web server cho Render
-app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot MyKBot is online 24/7!"
-
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port, use_reloader=False)
-
-threading.Thread(target=run_health_check_server, daemon=True).start()
-
-# 2. Cấu hình Bot
+# 1. Cấu hình Bot
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -40,11 +26,6 @@ class MyKBot(commands.Bot):
     async def setup_hook(self):
         # Gọi hàm load cog ở đây
         await self.load_all_extensions()
-        
-        # Sync lệnh cho guild test để hiện ngay. Xóa dòng này sau khi test xong
-        #GUILD_ID = 1266433856328831008  # Thay ID server của bạn vào
-        #guild = discord.Object(id=GUILD_ID)
-        #await self.tree.sync(guild=guild)
         print("✅ Synced commands to test guild")
 
     async def load_all_extensions(self):
@@ -62,6 +43,7 @@ class MyKBot(commands.Bot):
 
 bot = MyKBot()
 bot.db = db  # Gán biến db vào thuộc tính của bot để dùng trong các Cog
+
 @bot.command()
 async def sync(ctx):
     if ctx.author.id == 1283689737567211581:
