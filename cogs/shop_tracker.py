@@ -164,7 +164,7 @@ class ShopTracker(commands.Cog):
             if any(i["name"] == item_key for i in user_items):
                 return False, "You are already tracking this item! Use the 'Edit Price' option if you want to change it."
             
-            # 2. Slot limit check (CẬP NHẬT Ở ĐÂY)
+            # 2. Slot limit check
             max_slots = self.get_max_slots(user_id)
             
             # Nếu max_slots = 0 (Chưa được Owner cấp phép)
@@ -184,7 +184,7 @@ class ShopTracker(commands.Cog):
             
             for sub in subscribers:
                 if sub["user_id"] == user_id:
-                    sub["max_price"] = max_price 
+                    sub["max_price"] = max_price
                     user_exists = True
                     break
             
@@ -200,6 +200,9 @@ class ShopTracker(commands.Cog):
             new_doc = {"_id": item_key, "subscribers": subscribers}
             self.collection.insert_one(new_doc)
         
+        # ĐẶT LOG TẠI ĐÂY: Chạy sau khi cả IF và ELSE đều đã xử lý xong DB thành công
+        log_msg = f"Registered/Changed item '{item_key}' price to ≤ {max_price:,}"
+        self.log_action(user_id, "ADD/EDIT ITEM", log_msg)
 
         self.subs_cache[item_key] = subscribers
         action_text = "Updated new price for" if is_edit else "Added"
@@ -222,6 +225,9 @@ class ShopTracker(commands.Cog):
             else:
                 self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": new_subscribers}})
                 self.subs_cache[item_key] = new_subscribers
+            
+            # Vị trí đặt log ở đây của bạn đã HOÀN HẢO!
+            self.log_action(user_id, "REMOVE ITEM", f"Deleted '{item_key}' from the tracking list")
             return True, f"Unsubscribed from: **{item_name}**."
         return False, "This item is not registered in the system."
 
