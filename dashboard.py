@@ -174,21 +174,83 @@ def index():
     template = get_cached_template('index', content)
     return template.render(active_page='home', stats=stats, recent_logs=recent_logs)
 
-@app.route('/slots')
+# 1. TRANG CẤP QUYỀN & SLOTS (NỔI BẬT HƠN)
+@app.route('/slots', methods=['GET', 'POST'])
 @login_required
 def manage_slots():
-    return "Tính năng hiển thị slots tạm ẩn để test tải CPU/RAM, vui lòng bấm về trang 'Tổng Quan'."
+    if request.method == 'POST':
+        user_id = int(request.form.get("user_id").strip())
+        max_slots = int(request.form.get("max_slots", 0))
+        slots_col.update_one({"_id": user_id}, {"$set": {"max_slots": max_slots}}, upsert=True)
+        flash(f"Đã cấp {max_slots} slots cho {user_id}", "success")
+        return redirect(url_for('manage_slots'))
+        
+    all_slots = list(slots_col.find())
+    content = """
+    <h2 class="text-white mb-4"><i class="fa-solid fa-user-shield text-warning me-2"></i>Quản Lý Quyền Truy Cập</h2>
+    <div class="card p-4 border-warning">
+        <table class="table table-dark table-hover">
+            <thead>
+                <tr class="text-warning"><th>Discord ID</th><th>Hạn Mức Slots</th><th>Hành Động</th></tr>
+            </thead>
+            <tbody>
+                {% for item in all_slots %}
+                <tr>
+                    <td class="text-info fw-bold">{{ item._id }}</td>
+                    <td><span class="badge bg-warning text-dark fs-6">{{ item.max_slots }} Slots</span></td>
+                    <td><button class="btn btn-sm btn-outline-danger">Xóa</button></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    """
+    return get_cached_template('slots', content).render(active_page='slots', all_slots=all_slots)
 
+# 2. TRANG HỒ SƠ NGƯỜI CHƠI (IGN)
 @app.route('/players')
 @login_required
 def view_players():
-    return "Tính năng tạm ẩn để test tải CPU/RAM, vui lòng bấm về trang 'Tổng Quan'."
+    players = list(players_col.find())
+    content = """
+    <h2 class="text-white mb-4"><i class="fa-solid fa-gamepad text-primary me-2"></i>Danh Sách Người Chơi</h2>
+    <div class="row">
+        {% for p in players %}
+        <div class="col-md-4">
+            <div class="card mb-3 border-primary shadow-sm">
+                <div class="card-body">
+                    <h5 class="text-primary">{{ p.ign }}</h5>
+                    <p class="text-secondary small">ID: {{ p.user_id }}</p>
+                    <span class="badge bg-primary">UTC {{ p.tz_offset }}</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    """
+    return get_cached_template('players', content).render(active_page='players', players=players)
 
+# 3. TRANG SHOP THEO DÕI GIÁ
 @app.route('/shops')
 @login_required
 def view_shops():
-    return "Tính năng tạm ẩn để test tải CPU/RAM, vui lòng bấm về trang 'Tổng Quan'."
-
+    shops = list(shop_col.find())
+    content = """
+    <h2 class="text-white mb-4"><i class="fa-solid fa-store text-success me-2"></i>Mặt Hàng Giám Sát</h2>
+    <div class="row">
+        {% for s in shops %}
+        <div class="col-md-4">
+            <div class="card border-success mb-3">
+                <div class="card-header bg-success text-white fw-bold">{{ s._id }}</div>
+                <div class="card-body">
+                    <p class="text-light">Số người theo dõi: <b>{{ s.subscribers|length }}</b></p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    """
+    return get_cached_template('shops', content).render(active_page='shops', shops=shops)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
