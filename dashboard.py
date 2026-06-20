@@ -86,8 +86,7 @@ BASE_LAYOUT = """
                     {% endif %}
                 {% endwith %}
                 
-                {% block content %}{% endblock %}
-            </div>
+                </div>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -131,7 +130,7 @@ def login():
     </head>
     <body>
         <div class="login-card shadow-lg text-center">
-            <h3 class="text-primary mb-4"><i class="all fa-solid fa-unlock-keyhole me-2"></i>MyKBot Admin</h3>
+            <h3 class="text-primary mb-4"><i class="fa-solid fa-unlock-keyhole me-2"></i>MyKBot Admin</h3>
             {% with messages = get_flashed_messages() %}
               {% if messages %}
                 {% for message in messages %}<div class="alert alert-danger py-2">{{ message }}</div>{% endfor %}
@@ -165,12 +164,9 @@ def index():
         "parties": parties_col.count_documents({})
     }
     
-    # Lấy 10 lịch sử thao tác mới nhất từ bộ lọc log hành động
     recent_logs = list(logs_col.find().sort("timestamp", -1).limit(10))
     
     content = """
-    {% extends "base" %}
-    {% block content %}
     <h2 class="mb-4 text-white"><i class="fa-solid fa-gauge-high text-info me-2"></i>Báo Cáo Tổng Quan</h2>
     
     <div class="row mb-4">
@@ -229,9 +225,9 @@ def index():
             </div>
         </div>
     </div>
-    {% endblock %}
     """
-    return render_template_string(content, base=BASE_LAYOUT, active_page='home', stats=stats, recent_logs=recent_logs)
+    final_html = BASE_LAYOUT.replace("", content)
+    return render_template_string(final_html, active_page='home', stats=stats, recent_logs=recent_logs)
 
 # 2. Trang quản lý quyền và phân phối Slots
 @app.route('/slots', methods=['GET', 'POST'])
@@ -253,8 +249,6 @@ def manage_slots():
         
     all_slots = list(slots_col.find())
     content = """
-    {% extends "base" %}
-    {% block content %}
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="text-white"><i class="fa-solid fa-user-lock text-warning me-2"></i>Phân Quyền & Hạn Mức Tính Năng Private Shop</h2>
         <button class="btn btn-success fw-bold btn-sm" data-bs-toggle="modal" data-bs-target="#addSlotModal"><i class="fa-solid fa-user-plus me-1"></i> Cấp Quyền Cho Thành Viên Mới</button>
@@ -328,9 +322,9 @@ def manage_slots():
         </div>
       </div>
     </div>
-    {% endblock %}
     """
-    return render_template_string(content, base=BASE_LAYOUT, active_page='slots', all_slots=all_slots)
+    final_html = BASE_LAYOUT.replace("", content)
+    return render_template_string(final_html, active_page='slots', all_slots=all_slots)
 
 # 3. Xem danh sách Profile Người chơi (IGN & Dungeon Gears)
 @app.route('/players')
@@ -338,8 +332,6 @@ def manage_slots():
 def view_players():
     players = list(players_col.find())
     content = """
-    {% extends "base" %}
-    {% block content %}
     <h2 class="mb-4 text-white"><i class="fa-solid fa-gamepad text-primary me-2"></i>Hồ Sơ Người Chơi Hệ Thống (IGN & Gear Stats)</h2>
     <div class="card">
         <div class="card-body p-0">
@@ -365,9 +357,9 @@ def view_players():
             </table>
         </div>
     </div>
-    {% endblock %}
     """
-    return render_template_string(content, base=BASE_LAYOUT, active_page='players', players=players)
+    final_html = BASE_LAYOUT.replace("", content)
+    return render_template_string(final_html, active_page='players', players=players)
 
 # 4. Xem các mặt hàng thị trường đang được theo dõi
 @app.route('/shops')
@@ -375,8 +367,6 @@ def view_players():
 def view_shops():
     shops = list(shop_col.find())
     content = """
-    {% extends "base" %}
-    {% block content %}
     <h2 class="mb-4 text-white"><i class="fa-solid fa-store text-success me-2"></i>Danh Sách Vật Phẩm Đang Đăng Ký Theo Dõi Giá</h2>
     <div class="row">
         {% for s in shops %}
@@ -400,9 +390,9 @@ def view_shops():
         <div class="col-12"><div class="alert alert-secondary text-center">Chưa có mặt hàng nào được đưa vào danh sách săn giá tự động.</div></div>
         {% endfor %}
     </div>
-    {% endblock %}
     """
-    return render_template_string(content, base=BASE_LAYOUT, active_page='shops', shops=shops)
+    final_html = BASE_LAYOUT.replace("", content)
+    return render_template_string(final_html, active_page='shops', shops=shops)
 
 @app.template_filter('comma_filter')
 def comma_filter(value):
