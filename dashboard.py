@@ -102,11 +102,14 @@ def login_required(f):
     wrapper.__name__ = f.__name__
     return wrapper
 
+# HÀM TÌM IGN ĐÃ ĐƯỢC GIA CỐ CHỐNG LỖI 100%
 def get_ign(user_id):
+    if not user_id:
+        return "Unknown"
     try:
         p = players_col.find_one({"user_id": int(user_id)})
         return p.get("ign") if p and p.get("ign") and p.get("ign") != "Not Set" else "Unknown (No Profile)"
-    except ValueError:
+    except Exception: # Bắt mọi lỗi từ DB rác
         return "Unknown"
 
 # ========================================================================
@@ -155,7 +158,8 @@ def index():
     
     recent_logs = list(logs_col.find().sort([("_id", -1)]).limit(10))
     for log in recent_logs:
-        log["ign"] = get_ign(log["user_id"])
+        # Dùng .get() để tránh sập nếu log cũ không có trường user_id
+        log["ign"] = get_ign(log.get("user_id"))
     
     content = """
     <h2 class="mb-4 text-white fw-bold">Báo Cáo Tổng Quan</h2>
@@ -198,7 +202,7 @@ def manage_slots():
         
     all_slots = list(slots_col.find())
     for item in all_slots:
-        item["ign"] = get_ign(item["_id"])
+        item["ign"] = get_ign(item.get("_id"))
 
     content = """
     <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-user-shield text-warning me-2"></i>Quản Lý Quyền Truy Cập</h2>
@@ -249,7 +253,7 @@ def view_shops():
     shops = list(shop_col.find())
     for s in shops:
         for sub in s.get("subscribers", []):
-            sub["ign"] = get_ign(sub["user_id"])
+            sub["ign"] = get_ign(sub.get("user_id"))
 
     content = """
     <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-store text-success me-2"></i>Mặt Hàng Giám Sát</h2>
