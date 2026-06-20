@@ -176,8 +176,6 @@ class ShopTracker(commands.Cog):
                 return False, f"⚠️ You have reached your slot limit ({len(user_items)}/{max_slots}). Please ask the Bot Owner for an expansion!"
 
         item_doc = self.collection.find_one({"_id": item_key})
-
-        item_doc = self.collection.find_one({"_id": item_key})
         subscribers = []
 
         if item_doc:
