@@ -1,7 +1,6 @@
 import os
-from flask import Flask, request, redirect, url_for, session, flash
+from flask import Flask, request, redirect, url_for, session, flash, render_template_string
 from pymongo import MongoClient
-from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,19 +12,18 @@ MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     MONGO_URI = "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0"
 
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+# Giới hạn maxPoolSize để tiết kiệm RAM kết nối với MongoDB
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, maxPoolSize=10)
 db = client["database0"]
 
 players_col = db["players"]
 slots_col = db["user_slots"]
 shop_col = db["shop_subscriptions"]
-parties_col = db["parties"]
-logs_col = db["bot_logs"]
 
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin123")
 
 # ========================================================================
-# LAYOUT & TEMPLATE CACHE SYSTEM
+# LAYOUT SYSTEM (Đã gỡ bỏ các trang con)
 # ========================================================================
 BASE_LAYOUT = """
 <!DOCTYPE html>
@@ -63,9 +61,7 @@ BASE_LAYOUT = """
     <div class="container-fluid">
         <div class="row">
             <div class="col-md-2 d-none d-md-block sidebar px-0">
-                <a href="{{ url_for('index') }}" class="{% if active_page == 'home' %}active{% endif %}">Tổng Quan</a>
-                <a href="{{ url_for('manage_slots') }}" class="{% if active_page == 'slots' %}active{% endif %}">Cấp Quyền & Slots</a>
-                <a href="{{ url_for('view_players') }}" class="{% if active_page == 'players' %}active{% endif %}">Người Chơi (IGN)</a>
+                <a href="{{ url_for('index') }}" class="{% if active_page == 'slots' %}active{% endif %}">Cấp Quyền & Slots</a>
                 <a href="{{ url_for('view_shops') }}" class="{% if active_page == 'shops' %}active{% endif %}">Mặt Hàng Theo Dõi</a>
             </div>
             <div class="col-md-10 ms-sm-auto px-4 py-4">
@@ -76,20 +72,13 @@ BASE_LAYOUT = """
                         {% endfor %}
                     {% endif %}
                 {% endwith %}
-                </div>
+                {{ content|safe }}
+            </div>
         </div>
     </div>
 </body>
 </html>
 """
-
-TEMPLATE_CACHE = {}
-
-def get_cached_template(name, content_html):
-    if name not in TEMPLATE_CACHE:
-        final_html = BASE_LAYOUT.replace("", content_html)
-        TEMPLATE_CACHE[name] = app.jinja_env.from_string(final_html)
-    return TEMPLATE_CACHE[name]
 
 @app.template_filter('comma_filter')
 def comma_filter(value):
@@ -102,14 +91,14 @@ def login_required(f):
     wrapper.__name__ = f.__name__
     return wrapper
 
-# HÀM TÌM IGN ĐÃ ĐƯỢC GIA CỐ CHỐNG LỖI 100%
+# Tối ưu RAM: Chỉ kéo field 'ign' thay vì toàn bộ profile người chơi
 def get_ign(user_id):
     if not user_id:
         return "Unknown"
     try:
-        p = players_col.find_one({"user_id": int(user_id)})
+        p = players_col.find_one({"user_id": int(user_id)}, {"ign": 1, "_id": 0})
         return p.get("ign") if p and p.get("ign") and p.get("ign") != "Not Set" else "Unknown (No Profile)"
-    except Exception: # Bắt mọi lỗi từ DB rác
+    except Exception:
         return "Unknown"
 
 # ========================================================================
@@ -137,76 +126,51 @@ def login():
         </form>
     </div></body></html>
     """
-    if 'login' not in TEMPLATE_CACHE:
-        TEMPLATE_CACHE['login'] = app.jinja_env.from_string(login_html)
-    return TEMPLATE_CACHE['login'].render()
+    return render_template_string(login_html)
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
 
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
-    stats = {
-        "players": players_col.count_documents({}),
-        "slots": slots_col.count_documents({}),
-        "shops": shop_col.count_documents({}),
-        "parties": parties_col.count_documents({})
-    }
-    
-    recent_logs = list(logs_col.find().sort([("_id", -1)]).limit(10))
-    for log in recent_logs:
-        # Dùng .get() để tránh sập nếu log cũ không có trường user_id
-        log["ign"] = get_ign(log.get("user_id"))
-    
-    content = """
-    <h2 class="mb-4 text-white fw-bold">Báo Cáo Tổng Quan</h2>
-    <div class="row mb-4">
-        <div class="col-md-3"><div class="card p-3 border-start border-4 border-primary"><h5>Users</h5><h2 class="fw-bold">{{ stats.players }}</h2></div></div>
-        <div class="col-md-3"><div class="card p-3 border-start border-4 border-warning"><h5>VIP Slots</h5><h2 class="fw-bold">{{ stats.slots }}</h2></div></div>
-        <div class="col-md-3"><div class="card p-3 border-start border-4 border-success"><h5>Shops</h5><h2 class="fw-bold">{{ stats.shops }}</h2></div></div>
-        <div class="col-md-3"><div class="card p-3 border-start border-4 border-danger"><h5>Parties</h5><h2 class="fw-bold">{{ stats.parties }}</h2></div></div>
-    </div>
-    <div class="card shadow">
-        <div class="card-header text-info fs-5">Nhật Ký Hệ Thống</div>
-        <div class="card-body p-0">
-            <table class="table table-dark table-striped table-hover mb-0">
-                <thead><tr><th>Hành Động</th><th>Người Chơi (IGN)</th><th>Chi Tiết Bản Ghi</th></tr></thead>
-                <tbody>
-                    {% for log in recent_logs %}
-                    <tr>
-                        <td><span class="badge bg-primary px-3 py-2 fs-6">{{ log.action }}</span></td>
-                        <td class="text-warning fw-bold">{{ log.ign }}</td>
-                        <td class="text-light-custom fs-6">{{ log.details }}</td>
-                    </tr>
-                    {% else %}<tr><td colspan="3" class="text-center py-4 fs-5 text-light-custom">Chưa có dữ liệu.</td></tr>{% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    """
-    template = get_cached_template('index', content)
-    return template.render(active_page='home', stats=stats, recent_logs=recent_logs)
-
-@app.route('/slots', methods=['GET', 'POST'])
-@login_required
-def manage_slots():
+    # Gộp route /slots làm trang chủ để giảm thiểu lượng code và routing
     if request.method == 'POST':
-        user_id = int(request.form.get("user_id").strip())
-        max_slots = int(request.form.get("max_slots", 0))
-        slots_col.update_one({"_id": user_id}, {"$set": {"max_slots": max_slots}}, upsert=True)
-        flash(f"Đã cấp {max_slots} slots thành công!", "success")
-        return redirect(url_for('manage_slots'))
+        user_id_raw = request.form.get("user_id", "").strip()
+        if user_id_raw.isdigit():
+            user_id = int(user_id_raw)
+            max_slots = int(request.form.get("max_slots", 0))
+            slots_col.update_one({"_id": user_id}, {"$set": {"max_slots": max_slots}}, upsert=True)
+            flash(f"Đã cập nhật {max_slots} slots thành công!", "success")
+        else:
+            flash("ID Discord không hợp lệ!", "error")
+        return redirect(url_for('index'))
         
     all_slots = list(slots_col.find())
     for item in all_slots:
         item["ign"] = get_ign(item.get("_id"))
 
     content = """
-    <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-user-shield text-warning me-2"></i>Quản Lý Quyền Truy Cập</h2>
-    <div class="card p-4 border-warning shadow">
+    <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-user-shield text-warning me-2"></i>Quản Lý Quyền Truy Cập & Slots</h2>
+    
+    <div class="card p-4 border-warning shadow mb-4">
+        <h5 class="text-warning mb-3">Thêm / Chỉnh sửa Slot</h5>
+        <form method="POST" class="row g-3 align-items-center">
+            <div class="col-auto">
+                <input type="text" name="user_id" class="form-control bg-dark text-white border-secondary" placeholder="Nhập Discord ID" required>
+            </div>
+            <div class="col-auto">
+                <input type="number" name="max_slots" class="form-control bg-dark text-white border-secondary" placeholder="Số lượng Slots" required>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-warning fw-bold text-dark">Cập Nhật</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card p-4 border-secondary shadow">
         <table class="table table-dark table-hover mb-0">
             <thead>
                 <tr class="text-warning fs-5"><th>Người Chơi (IGN)</th><th>Discord ID</th><th>Hạn Mức Slots</th></tr>
@@ -223,29 +187,10 @@ def manage_slots():
         </table>
     </div>
     """
-    return get_cached_template('slots', content).render(active_page='slots', all_slots=all_slots)
-
-@app.route('/players')
-@login_required
-def view_players():
-    players = list(players_col.find())
-    content = """
-    <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-gamepad text-primary me-2"></i>Danh Sách Người Chơi</h2>
-    <div class="row">
-        {% for p in players %}
-        <div class="col-md-3">
-            <div class="card mb-4 border-primary shadow text-center">
-                <div class="card-body">
-                    <h4 class="text-primary fw-bold mb-2">{{ p.ign }}</h4>
-                    <p class="text-light-custom fs-6 mb-3">ID: <code>{{ p.user_id }}</code></p>
-                    <span class="badge bg-primary px-3 py-2 fs-6">UTC {{ p.tz_offset }}</span>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    """
-    return get_cached_template('players', content).render(active_page='players', players=players)
+    
+    # Kết xuất nội dung nhúng thẳng vào layout
+    rendered_content = render_template_string(content, all_slots=all_slots)
+    return render_template_string(BASE_LAYOUT, content=rendered_content, active_page='slots')
 
 @app.route('/shops')
 @login_required
@@ -278,7 +223,8 @@ def view_shops():
         {% endfor %}
     </div>
     """
-    return get_cached_template('shops', content).render(active_page='shops', shops=shops)
+    rendered_content = render_template_string(content, shops=shops)
+    return render_template_string(BASE_LAYOUT, content=rendered_content, active_page='shops')
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
