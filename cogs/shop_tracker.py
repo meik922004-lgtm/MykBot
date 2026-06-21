@@ -110,14 +110,12 @@ class ShopTracker(commands.Cog):
         self.bot = bot
         
         mongo_uri = os.getenv("MONGO_URI")
-        self.cluster = MongoClient(mongo_uri, maxPoolSize=10) # Thêm giới hạn PoolSize để tiết kiệm RAM
+        self.cluster = MongoClient(mongo_uri, maxPoolSize=10)
         self.db = self.cluster["database0"]
         self.collection = self.db["shop_subscriptions"]
         self.users_coll = self.db["user_slots"] 
         self.logs_coll = self.db["bot_logs"] 
         self.players_coll = self.db["players"]
-
-        # ĐÃ XÓA self.subs_cache VÀ VÒNG LẶP FOR LOAD DỮ LIỆU ĐỂ GIẢI PHÓNG RAM
 
     def log_action(self, user_id: int, action: str, details: str):
         log_entry = {
@@ -129,7 +127,6 @@ class ShopTracker(commands.Cog):
         self.logs_coll.insert_one(log_entry)
 
     def get_user_items(self, user_id):
-        # Tối ưu: Dùng tính năng tìm kiếm mảng con của MongoDB thay vì lặp qua toàn bộ Dictionary
         cursor = self.collection.find({"subscribers.user_id": user_id})
         items = []
         for doc in cursor:
@@ -204,7 +201,6 @@ class ShopTracker(commands.Cog):
         return False, "This item is not registered in the system."
 
     async def has_profile(self, interaction: discord.Interaction) -> bool:
-        # Tối ưu RAM: Chỉ load trường ign
         profile = self.players_coll.find_one({"user_id": interaction.user.id}, {"ign": 1})
         if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
             await interaction.response.send_message("❌ **Access Denied!** You must set up your profile via `/mygear` first.", ephemeral=True)
@@ -276,17 +272,12 @@ class ShopTracker(commands.Cog):
                     except Exception:
                         continue
                     
-                    # Tối ưu hóa: Lấy danh sách tên item trong file JSON
                     items_in_shop = shop_data.get("items", [])
                     if not items_in_shop:
                         continue
                         
                     item_names = [item["item_name"].lower() for item in items_in_shop]
-                    
-                    # GỘP TRUY VẤN: Chỉ lôi từ DB lên những item thực sự có mặt trong cái shop này
                     relevant_docs = list(self.collection.find({"_id": {"$in": item_names}}))
-                    
-                    # Tạo thành một dictionary tạm thời trên RAM chỉ cho shop hiện tại
                     active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
                     
                     shop_name = shop_data.get("shop_name", "Unknown")
@@ -315,8 +306,15 @@ class ShopTracker(commands.Cog):
                                     embed.add_field(name="🏪 Shop", value=f"`{shop_name}`", inline=True)
                                     embed.add_field(name="👤 Owner", value=f"`{owner}`", inline=True)
                                     embed.add_field(name="📍 Map", value=f"**{map_name}**", inline=True)
-                                    embed.set_footer(text="MyK-Market Tracker • Auto update")
                                     
+                                    # --- ĐOẠN THÊM VÀO: LỆNH COPY NHANH CHO USER ---
+                                    embed.add_field(
+                                        name="⌨️ Quick Copy Command", 
+                                        value=f"```/shop {shop_name}```", 
+                                        inline=False
+                                    )
+                                    
+                                    embed.set_footer(text="MyK-Market Tracker • Auto update")
                                     alerts.append({"user_id": sub['user_id'], "embed": embed})
                     
                     for alert in alerts:
