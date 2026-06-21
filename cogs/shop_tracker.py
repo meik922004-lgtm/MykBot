@@ -110,20 +110,14 @@ class ShopTracker(commands.Cog):
         self.bot = bot
         
         mongo_uri = os.getenv("MONGO_URI")
-        self.cluster = MongoClient(mongo_uri)
+        self.cluster = MongoClient(mongo_uri, maxPoolSize=10) # Thêm giới hạn PoolSize để tiết kiệm RAM
         self.db = self.cluster["database0"]
         self.collection = self.db["shop_subscriptions"]
         self.users_coll = self.db["user_slots"] 
         self.logs_coll = self.db["bot_logs"] 
-        self.players_coll = self.db["players"] # Khai báo DB lấy profile
-        self.subs_cache = {}
-        
-        try:
-            for doc in self.collection.find():
-                self.subs_cache[doc["_id"]] = doc.get("subscribers", [])
-            print(f"💾 [Cache] Successfully loaded {len(self.subs_cache)} items into RAM!")
-        except Exception as e:
-            print(f"❌ [Cache] Error loading data: {e}")
+        self.players_coll = self.db["players"]
+
+        # ĐÃ XÓA self.subs_cache VÀ VÒNG LẶP FOR LOAD DỮ LIỆU ĐỂ GIẢI PHÓNG RAM
 
     def log_action(self, user_id: int, action: str, details: str):
         log_entry = {
@@ -135,18 +129,19 @@ class ShopTracker(commands.Cog):
         self.logs_coll.insert_one(log_entry)
 
     def get_user_items(self, user_id):
+        # Tối ưu: Dùng tính năng tìm kiếm mảng con của MongoDB thay vì lặp qua toàn bộ Dictionary
+        cursor = self.collection.find({"subscribers.user_id": user_id})
         items = []
-        for item_key, subscribers in self.subs_cache.items():
-            for sub in subscribers:
+        for doc in cursor:
+            for sub in doc.get("subscribers", []):
                 if sub["user_id"] == user_id:
-                    items.append({"name": item_key, "max_price": sub["max_price"]})
+                    items.append({"name": doc["_id"], "max_price": sub["max_price"]})
+                    break
         return items
 
     def get_max_slots(self, user_id):
         user_doc = self.users_coll.find_one({"_id": user_id})
-        if user_doc:
-            return user_doc.get("max_slots", 0)
-        return 0 
+        return user_doc.get("max_slots", 0) if user_doc else 0 
 
     async def process_add_or_edit(self, user_id, item_name, max_price, is_edit=False):
         item_key = item_name.lower().strip()
@@ -164,8 +159,7 @@ class ShopTracker(commands.Cog):
                 return False, f"⚠️ You have reached your slot limit ({len(user_items)}/{max_slots}). Please ask the Bot Owner for an expansion!"
 
         item_doc = self.collection.find_one({"_id": item_key})
-        subscribers = []
-
+        
         if item_doc:
             subscribers = item_doc.get("subscribers", [])
             user_exists = False
@@ -178,14 +172,14 @@ class ShopTracker(commands.Cog):
                 subscribers.append({"user_id": user_id, "max_price": max_price})
             self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": subscribers}})
         else:
-            subscribers = [{"user_id": user_id, "max_price": max_price}]
-            new_doc = {"_id": item_key, "subscribers": subscribers}
-            self.collection.insert_one(new_doc)
+            self.collection.insert_one({
+                "_id": item_key, 
+                "subscribers": [{"user_id": user_id, "max_price": max_price}]
+            })
         
         log_msg = f"Registered/Changed item '{item_key}' price to ≤ {max_price:,}"
         self.log_action(user_id, "ADD/EDIT ITEM", log_msg)
 
-        self.subs_cache[item_key] = subscribers
         action_text = "Updated new price for" if is_edit else "Added"
         return True, f"{action_text} **{item_name}** with max price <= **{max_price:,}**."
 
@@ -202,18 +196,16 @@ class ShopTracker(commands.Cog):
 
             if not new_subscribers:
                 self.collection.delete_one({"_id": item_key})
-                self.subs_cache.pop(item_key, None)
             else:
                 self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": new_subscribers}})
-                self.subs_cache[item_key] = new_subscribers
             
             self.log_action(user_id, "REMOVE ITEM", f"Deleted '{item_key}' from the tracking list")
             return True, f"Unsubscribed from: **{item_name}**."
         return False, "This item is not registered in the system."
 
-    # HÀM KIỂM TRA PROFILE CHUNG
     async def has_profile(self, interaction: discord.Interaction) -> bool:
-        profile = self.players_coll.find_one({"user_id": interaction.user.id})
+        # Tối ưu RAM: Chỉ load trường ign
+        profile = self.players_coll.find_one({"user_id": interaction.user.id}, {"ign": 1})
         if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
             await interaction.response.send_message("❌ **Access Denied!** You must set up your profile via `/mygear` first.", ephemeral=True)
             return False
@@ -221,21 +213,21 @@ class ShopTracker(commands.Cog):
 
     @app_commands.command(name="additem", description="Sign up to receive notifications when an item's price is good.")
     async def additem(self, interaction: discord.Interaction, item_name: str, max_price: int):
-        if not await self.has_profile(interaction): return # Chặn nếu chưa có Profile
+        if not await self.has_profile(interaction): return
         await interaction.response.defer(ephemeral=True) 
         success, msg = await self.process_add_or_edit(interaction.user.id, item_name, max_price, is_edit=False)
         await interaction.followup.send(msg)
 
     @app_commands.command(name="removeitem", description="Cancel item tracking.")
     async def removeitem(self, interaction: discord.Interaction, item_name: str):
-        if not await self.has_profile(interaction): return # Chặn nếu chưa có Profile
+        if not await self.has_profile(interaction): return
         await interaction.response.defer(ephemeral=True)
         success, msg = self.process_remove(interaction.user.id, item_name)
         await interaction.followup.send(msg)
 
     @app_commands.command(name="mylist", description="View and manage your tracked items list.")
     async def mylist(self, interaction: discord.Interaction):
-        if not await self.has_profile(interaction): return # Chặn nếu chưa có Profile
+        if not await self.has_profile(interaction): return
         user_id = interaction.user.id
         items = self.get_user_items(user_id)
         max_slots = self.get_max_slots(user_id)
@@ -284,17 +276,30 @@ class ShopTracker(commands.Cog):
                     except Exception:
                         continue
                     
+                    # Tối ưu hóa: Lấy danh sách tên item trong file JSON
+                    items_in_shop = shop_data.get("items", [])
+                    if not items_in_shop:
+                        continue
+                        
+                    item_names = [item["item_name"].lower() for item in items_in_shop]
+                    
+                    # GỘP TRUY VẤN: Chỉ lôi từ DB lên những item thực sự có mặt trong cái shop này
+                    relevant_docs = list(self.collection.find({"_id": {"$in": item_names}}))
+                    
+                    # Tạo thành một dictionary tạm thời trên RAM chỉ cho shop hiện tại
+                    active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
+                    
                     shop_name = shop_data.get("shop_name", "Unknown")
                     owner = shop_data.get("owner", "Unknown")
                     map_name = shop_data.get("map", "Unknown")
                     
                     alerts = []
-                    for item in shop_data.get("items", []):
+                    for item in items_in_shop:
                         name_lower = item["item_name"].lower()
                         cost = item["cost"]
                         quantity = item.get("quantity", "Unknown") 
                         
-                        subscribers = self.subs_cache.get(name_lower)
+                        subscribers = active_subs.get(name_lower)
                         if subscribers:
                             for sub in subscribers:
                                 if cost <= sub["max_price"]:
@@ -316,10 +321,8 @@ class ShopTracker(commands.Cog):
                     
                     for alert in alerts:
                         try:
-                            user = await self.bot.fetch_user(alert["user_id"])
+                            user = self.bot.get_user(alert["user_id"]) or await self.bot.fetch_user(alert["user_id"])
                             await user.send(embed=alert["embed"])
-                        except discord.Forbidden:
-                            pass
                         except Exception:
                             pass
 
