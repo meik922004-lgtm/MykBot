@@ -57,40 +57,60 @@ class ItemSelect(discord.ui.Select):
             await interaction.response.send_message(f"✅ {message}", ephemeral=True)
 
 
-class DurationSelect(discord.ui.Select):
-    def __init__(self, cog, purpose: str):
+class HubDurationSelect(discord.ui.Select):
+    """Dropdown phân tích thị trường được nhúng trực tiếp vào Menu chính"""
+    def __init__(self, cog, row: int):
         self.cog = cog
-        self.purpose = purpose # "analysis" hoặc "chart"
         options = [
-            discord.SelectOption(label="Last 24 Hours", value="1"),
-            discord.SelectOption(label="Last 7 Days", value="7"),
-            discord.SelectOption(label="Last 14 Days", value="14"),
-            discord.SelectOption(label="Last 30 Days", value="30"),
+            discord.SelectOption(label="Analyze: Last 24 Hours", value="1"),
+            discord.SelectOption(label="Analyze: Last 7 Days", value="7"),
+            discord.SelectOption(label="Analyze: Last 14 Days", value="14"),
+            discord.SelectOption(label="Analyze: Last 30 Days", value="30"),
         ]
-        super().__init__(placeholder="Choose Timeframe Window...", options=options)
+        super().__init__(placeholder="📊 Select Timeframe Window to Analyze Market...", options=options, row=row)
 
     async def callback(self, interaction: discord.Interaction):
         days = int(self.values[0])
         await interaction.response.defer(ephemeral=True)
+        embed = await self.cog.generate_market_analysis_embed(days)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class ChartModal(discord.ui.Modal):
+    """Modal yêu cầu nhập thông tin vẽ chart khi nhấn nút"""
+    def __init__(self, cog):
+        super().__init__(title="Render Price Chart")
+        self.cog = cog
+        self.item_name_input = discord.ui.TextInput(label="Item Name", placeholder="Enter exact item name...", required=True)
+        self.days_input = discord.ui.TextInput(label="Days to Look Back", placeholder="e.g. 7", default="7", required=False)
+        self.add_item(self.item_name_input)
+        self.add_item(self.days_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        item_name = self.item_name_input.value.strip()
+        try:
+            days = int(self.days_input.value.strip()) if self.days_input.value.strip() else 7
+        except ValueError:
+            return await interaction.followup.send("❌ Days must be a valid number!", ephemeral=True)
         
-        if self.purpose == "analysis":
-            embed = await self.cog.generate_market_analysis_embed(days)
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        elif self.purpose == "chart":
-            # Gửi Modal yêu cầu nhập tên Item cần vẽ chart sau khi chọn mốc ngày
-            await interaction.followup.send("Please use slash command `/chart` for advanced autocomplete plotting rendering.", ephemeral=True)
+        # Gọi luồng xử lý vẽ đồ thị từ Cog Engine
+        await self.cog.process_chart_render(interaction, item_name, days)
 
 # ==========================================
-# VIEWS FOR INTERACTIVE MENUS
+# CENTRALIZED VIEW HUB
 # ==========================================
 
-class MainMenuView(discord.ui.View):
+class CentralHubView(discord.ui.View):
     def __init__(self, cog, user_id):
         super().__init__(timeout=300)
         self.cog = cog
         self.user_id = user_id
+        
+        # Nhúng trực tiếp Dropdown Phân tích vào dòng 0
+        self.add_item(HubDurationSelect(self.cog, row=0))
 
-    @discord.ui.button(label="📋 My Watchlist", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="📋 My Watchlist", style=discord.ButtonStyle.primary, row=1)
     async def my_list(self, interaction: discord.Interaction, button: discord.ui.Button):
         items = await self.cog.get_user_items(self.user_id)
         max_slots = await self.cog.get_max_slots(self.user_id)
@@ -108,17 +128,16 @@ class MainMenuView(discord.ui.View):
             
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="📊 Analyze Market", style=discord.ButtonStyle.secondary, row=0)
-    async def analyze_market(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = discord.ui.View()
-        view.add_item(DurationSelect(self.cog, "analysis"))
-        await interaction.response.send_message("⏱️ Select timeframe window to calculate market data:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="💰 Profitable Flips", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="💰 Profitable Flips", style=discord.ButtonStyle.success, row=1)
     async def profitable_flips(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         embed = await self.cog.calculate_flip_opportunities()
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="📈 Price Chart", style=discord.ButtonStyle.secondary, row=1)
+    async def price_chart(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Mở Modal nhập tên item cần vẽ đồ thị
+        await interaction.response.send_modal(ChartModal(self.cog))
 
 # ==========================================
 # MAIN COG ENGINE
@@ -127,16 +146,11 @@ class MainMenuView(discord.ui.View):
 class ShopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
     async def cog_load(self):
-        """Hàm này tự động chạy ngay khi Bot load và kích hoạt Cog này"""
         print("⏳ [Cơ sở dữ liệu]: Đang thiết lập cấu hình tự động dọn dẹp dữ liệu...")
         try:
-            # 30 ngày = 30 * 24 * 60 * 60 = 2,592,000 giây
-            # Nếu bản ghi nào có trường 'timestamp' cũ hơn thời gian này, MongoDB sẽ tự xóa ngầm.
-            await market_history_col.create_index(
-                "timestamp", 
-                expireAfterSeconds=2592000
-            )
+            await market_history_col.create_index("timestamp", expireAfterSeconds=2592000)
             print("✅ [Cơ sở dữ liệu]: Đã bật TTL Index! Dữ liệu cũ quá 30 ngày sẽ tự động bị tiêu hủy.")
         except Exception as e:
             print(f"❌ [Cơ sở dữ liệu]: Không thể thiết lập TTL Index: {e}")
@@ -201,23 +215,6 @@ class ShopTracker(commands.Cog):
             return True, f"Removed **{item_name}**."
         return False, "Item not found."
 
-    # --- AUTOCOMPLETE CORE SYSTEM ---
-    async def item_autocomplete(self, interaction: discord.Interaction, current: str):
-        if len(current) < 4:
-            return []
-        # Lấy danh sách tên item duy nhất xuất hiện từ lịch sử thị trường khớp Regex
-        pipeline = [
-            {"$match": {"items.item_name": {"$regex": current, "$options": "i"}}},
-            {"$unwind": "$items"},
-            {"$match": {"items.item_name": {"$regex": current, "$options": "i"}}},
-            {"$group": {"_id": "$items.item_name"}},
-            {"$limit": 10}
-        ]
-        choices = []
-        async for doc in market_history_col.aggregate(pipeline):
-            choices.append(app_commands.Choice(name=doc["_id"], value=doc["_id"]))
-        return choices
-
     # --- MARKET INTELLIGENCE ENGINE (AGGREGATION) ---
     async def generate_market_analysis_embed(self, days: int):
         time_boundary = datetime.utcnow() - timedelta(days=days)
@@ -246,10 +243,7 @@ class ShopTracker(commands.Cog):
         return embed
 
     async def calculate_flip_opportunities(self):
-        # Thuật toán Resell: Tìm các item đang treo bán lẻ (open) thấp hơn hẳn giá trị giao dịch trung bình lịch sử (sold)
         time_boundary = datetime.utcnow() - timedelta(days=7)
-        
-        # 1. Tính giá trị bán trung bình thực tế (Benchmark)
         sold_stats = {}
         pipeline_sold = [
             {"$match": {"timestamp": {"$gte": time_boundary}, "type": "sold"}},
@@ -257,14 +251,13 @@ class ShopTracker(commands.Cog):
             {"$group": {"_id": "$items.item_name", "avg_sold": {"$avg": "$items.cost"}, "vol": {"$sum": "$items.quantity"}}}
         ]
         async for doc in market_history_col.aggregate(pipeline_sold):
-            if doc["vol"] > 5: # Đảm bảo item có thanh khoản thực tế
+            if doc["vol"] > 5:
                 sold_stats[doc["_id"]] = doc["avg_sold"]
 
-        # 2. Quét các shop đang mở bán xem có kèo hớ không
         pipeline_open = [
             {"$match": {"timestamp": {"$gte": datetime.utcnow() - timedelta(hours=12)}, "type": "open"}},
             {"$unwind": "$items"},
-            {"$sort": {"items.cost": 1}} # Ưu tiên giá rẻ nhất
+            {"$sort": {"items.cost": 1}}
         ]
         
         embed = discord.Embed(title="💰 Algorithmic Resell Signals (Flipping)", description="Suggested purchase targets with high margin yield", color=discord.Color.green())
@@ -276,7 +269,6 @@ class ShopTracker(commands.Cog):
             
             if item_name in sold_stats:
                 avg_market_value = sold_stats[item_name]
-                # Nếu giá treo bán rẻ hơn 25% so với giá trị trung bình lịch sử
                 if current_cost < (avg_market_value * 0.75):
                     profit_per_item = int(avg_market_value - current_cost)
                     details = (
@@ -288,42 +280,15 @@ class ShopTracker(commands.Cog):
                     )
                     embed.add_field(name=f"💎 Deal Target: {item_name.title()}", value=details, inline=False)
                     count += 1
-                    if count >= 5: break # Chỉ lấy top 5 kèo hời nhất để tránh loãng UI
+                    if count >= 5: break
                     
         if count == 0:
             embed.description = "No anomalies detected. Market prices are currently balanced stabily."
         return embed
 
-    # --- INTERACTIVE DASHBOARD SYSTEM HUB ---
-    @app_commands.command(name="market_hub", description="Open the central executive Market Analysis Dashboard.")
-    async def market_hub(self, interaction: discord.Interaction):
-        # Kiểm tra Profile người dùng
-        profile = await players_col.find_one({"user_id": interaction.user.id}, {"ign": 1})
-        if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
-            return await interaction.response.send_message("❌ Profile unlinked. Set via `/mygear` first.", ephemeral=True)
-
-        await interaction.response.defer(ephemeral=False)
-        
-        # Tạo trang bìa Dashboard (Tổng hợp nhanh xu hướng 24h qua)
-        embed = discord.Embed(
-            title="📊 MyK Advanced Market Intelligence Hub",
-            description="Welcome to the center trading control panel. Access deep market data analytics via buttons below.",
-            color=discord.Color.dark_theme()
-        )
-        embed.set_thumbnail(url=self.bot.user.avatar.url if self.bot.user.avatar else None)
-        embed.add_field(name="🛰️ Radar Diagnostics", value="• Pipeline: `Active` \n• Engine: `Motor Async Driver` \n• Feeder: `MyK-automatic`", inline=True)
-        embed.set_footer(text="Trading Data Engine • Systems Operating Nominal")
-        
-        view = MainMenuView(self, interaction.user.id)
-        await interaction.followup.send(embed=embed, view=view)
-
-    # --- ADVANCED PLOTTING COMMAND ---
-    @app_commands.command(name="chart", description="Render time-series price fluctuation charts for an item.")
-    @app_commands.autocomplete(item_name=item_autocomplete)
-    async def chart(self, interaction: discord.Interaction, item_name: str, days: int = 7):
-        await interaction.response.defer()
+    async def process_chart_render(self, interaction: discord.Interaction, item_name: str, days: int):
+        """Hàm xử lý logic vẽ đồ thị Matplotlib"""
         time_boundary = datetime.utcnow() - timedelta(days=days)
-        
         cursor = market_history_col.find({
             "timestamp": {"$gte": time_boundary},
             "items.item_name": item_name.lower().strip()
@@ -341,14 +306,11 @@ class ShopTracker(commands.Cog):
         if not prices:
             return await interaction.followup.send(f"❌ No trend history recorded for **{item_name}** in the requested window.", ephemeral=True)
 
-        # Xử lý dữ liệu đồ họa bằng Matplotlib & NumPy
         plt.figure(figsize=(10, 5))
         plt.style.use('dark_background')
         
-        # Vẽ biến động giá thực tế
         plt.plot(timestamps, prices, label='Spot Price Exchange', color='#1f77b4', marker='o', markersize=4, linewidth=1.5)
         
-        # Sử dụng NumPy để tính toán đường trung bình động (Moving Average Trendline)
         if len(prices) > 3:
             rolling_avg = np.convolve(prices, np.ones(3)/3, mode='valid')
             plt.plot(timestamps[2:], rolling_avg, label='Smooth Trend (MA-3)', color='#ff7f0e', linestyle='--')
@@ -360,14 +322,35 @@ class ShopTracker(commands.Cog):
         plt.legend(loc='upper left')
         plt.gcf().autofmt_xdate()
 
-        # Lưu luồng nhị phân gửi trực tiếp cho Discord API
         buf = io.BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
         buf.seek(0)
         plt.close()
 
         file = discord.File(buf, filename="market_trend.png")
-        await interaction.followup.send(file=file)
+        await interaction.followup.send(file=file, ephemeral=True)
+
+    # --- SINGLE CENTRAL HUB SLASH COMMAND ---
+    @app_commands.command(name="market_hub", description="Open the central executive Market Analysis Dashboard.")
+    async def market_hub(self, interaction: discord.Interaction):
+        profile = await players_col.find_one({"user_id": interaction.user.id}, {"ign": 1})
+        if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
+            return await interaction.response.send_message("❌ Profile unlinked. Set via `/mygear` first.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=False)
+        
+        embed = discord.Embed(
+            title="📊 MyK Advanced Market Intelligence Hub",
+            description="Welcome to the center trading control panel. Access deep market data analytics via buttons/dropdown below.",
+            color=discord.Color.dark_theme()
+        )
+        embed.set_thumbnail(url=self.bot.user.avatar.url if self.bot.user.avatar else None)
+        embed.add_field(name="🛰️ Radar Diagnostics", value="• Pipeline: `Active` \n• Engine: `Motor Async Driver` \n• Feeder: `MyK-automatic`", inline=True)
+        embed.set_footer(text="Trading Data Engine • Systems Operating Nominal")
+        
+        # Gọi giao diện Hub tổng hợp mới
+        view = CentralHubView(self, interaction.user.id)
+        await interaction.followup.send(embed=embed, view=view)
 
     # --- STREAM FEED LISTENER ---
     @commands.Cog.listener()
@@ -386,14 +369,11 @@ class ShopTracker(commands.Cog):
                     items_in_shop = shop_data.get("items", [])
                     if not items_in_shop: continue
                     
-                    # 1. Đưa bản ghi vào nhật ký lịch sử hệ thống (Cơ sở phân tích)
                     shop_data["timestamp"] = datetime.utcnow()
-                    # Đồng bộ định dạng tên viết thường để thống nhất truy vấn
                     for itm in shop_data["items"]:
                         itm["item_name"] = itm["item_name"].lower().strip()
                     await market_history_col.insert_one(shop_data)
 
-                    # 2. Xử lý logic Checklist báo giá (Chỉ thực hiện cho shop mới mở 'open')
                     if shop_data.get("type") != "open":
                         continue
 
