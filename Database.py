@@ -31,3 +31,9 @@ patch_subscribers_col = db["patch_subscribers"]
 patch_history_col = db["patch_history"]
 patch_queue_col = db["patch_queue"]
 patch_messages_col = db["patch_messages"]
+
+# --- COLLECTION PHỤC VỤ CHỨC NĂNG MARKET TRACKER ---
+shop_subscriptions_col = db["shop_subscriptions"]
+user_slots_col = db["user_slots"]
+bot_logs_col = db["bot_logs"]
+market_history_col = db["market_history"] # Lưu vết real-time phục vụ vẽ biểu đồ và phân tích

@@ -2,263 +2,374 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import json
-from pymongo import MongoClient 
+import io
 import os
-from datetime import datetime
+import matplotlib.pyplot as plt
+import numpy as np
+from datetime import datetime, timedelta
+from Database import shop_subscriptions_col, user_slots_col, bot_logs_col, players_col, market_history_col
 
 # ==========================================
-# UI CLASSES (MODAL & VIEW) FOR /MYLIST
+# UI COMPONENTS (AUTOCOMPLETE & MODALS)
 # ==========================================
+
 class ItemModal(discord.ui.Modal):
     def __init__(self, cog, action: str, item_name: str = None):
-        title = "Add New Item" if action == "add" else f"Edit Price: {item_name}"
-        super().__init__(title=title[:45])  
+        super().__init__(title="Track New Item" if action == "add" else f"Edit: {item_name}")
         self.cog = cog
         self.action = action
         self.target_item = item_name
 
         if self.action == "add":
-            self.item_name_input = discord.ui.TextInput(
-                label="Exact Item Name",
-                placeholder="e.g., Bravery Energy",
-                required=True,
-                max_length=100
-            )
+            self.item_name_input = discord.ui.TextInput(label="Item Name", placeholder="Enter exact name...", required=True)
             self.add_item(self.item_name_input)
 
-        self.price_input = discord.ui.TextInput(
-            label="Max Price (Numbers only)",
-            placeholder="e.g., 1000000",
-            required=True,
-            min_length=1,
-            max_length=15
-        )
+        self.price_input = discord.ui.TextInput(label="Max Alert Price", placeholder="e.g. 5000000", required=True)
         self.add_item(self.price_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            max_price = int(self.price_input.value.strip())
+            max_price = int(self.price_input.value.strip().replace(',', ''))
         except ValueError:
-            await interaction.response.send_message("❌ Price must be a valid number!", ephemeral=True)
-            return
+            return await interaction.response.send_message("❌ Price must be a valid number!", ephemeral=True)
 
-        item_name = self.target_item if self.action == "edit" else self.item_name_input.value
-        
-        success, message = await self.cog.process_add_or_edit(
-            interaction.user.id, 
-            item_name, 
-            max_price, 
-            is_edit=(self.action=="edit")
-        )
-        
-        if success:
-            await interaction.response.send_message(f"✅ {message}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"⚠️ {message}", ephemeral=True)
+        item_name = self.target_item if self.action == "edit" else self.item_name_input.value.strip()
+        success, message = await self.cog.process_add_or_edit(interaction.user.id, item_name, max_price, is_edit=(self.action=="edit"))
+        await interaction.response.send_message(f"{'✅' if success else '⚠️'} {message}", ephemeral=True)
 
-class ActionSelect(discord.ui.Select):
+
+class ItemSelect(discord.ui.Select):
     def __init__(self, items, action: str, cog):
         self.action = action
         self.cog = cog
         options = [
-            discord.SelectOption(
-                label=i["name"].title(), 
-                description=f"Tracked price: {i['max_price']:,} ea", 
-                value=i["name"]
-            ) for i in items
+            discord.SelectOption(label=i["name"].title(), description=f"Alert: {i['max_price']:,} ea", value=i["name"])
+            for i in items[:25]
         ]
-        placeholder = "Which item to edit?" if action == "edit" else "Which item to remove?"
-        super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options)
+        super().__init__(placeholder=f"Select item to {action}...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        selected_item = self.values[0]
+        selected = self.values[0]
         if self.action == "edit":
-            await interaction.response.send_modal(ItemModal(self.cog, "edit", selected_item))
+            await interaction.response.send_modal(ItemModal(self.cog, "edit", selected))
         elif self.action == "delete":
-            success, message = self.cog.process_remove(interaction.user.id, selected_item)
+            success, message = await self.cog.process_remove(interaction.user.id, selected)
             await interaction.response.send_message(f"✅ {message}", ephemeral=True)
 
-class MyListView(discord.ui.View):
+
+class DurationSelect(discord.ui.Select):
+    def __init__(self, cog, purpose: str):
+        self.cog = cog
+        self.purpose = purpose # "analysis" hoặc "chart"
+        options = [
+            discord.SelectOption(label="Last 24 Hours", value="1"),
+            discord.SelectOption(label="Last 7 Days", value="7"),
+            discord.SelectOption(label="Last 14 Days", value="14"),
+            discord.SelectOption(label="Last 30 Days", value="30"),
+        ]
+        super().__init__(placeholder="Choose Timeframe Window...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        days = int(self.values[0])
+        await interaction.response.defer(ephemeral=True)
+        
+        if self.purpose == "analysis":
+            embed = await self.cog.generate_market_analysis_embed(days)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        elif self.purpose == "chart":
+            # Gửi Modal yêu cầu nhập tên Item cần vẽ chart sau khi chọn mốc ngày
+            await interaction.followup.send("Please use slash command `/chart` for advanced autocomplete plotting rendering.", ephemeral=True)
+
+# ==========================================
+# VIEWS FOR INTERACTIVE MENUS
+# ==========================================
+
+class MainMenuView(discord.ui.View):
     def __init__(self, cog, user_id):
-        super().__init__(timeout=180) 
+        super().__init__(timeout=300)
         self.cog = cog
         self.user_id = user_id
 
-        items = self.cog.get_user_items(user_id)
-        current_slots = len(items)
-        max_slots = self.cog.get_max_slots(user_id)
-
-        add_btn = discord.ui.Button(
-            label="➕ Add Item", 
-            style=discord.ButtonStyle.success, 
-            disabled=(current_slots >= max_slots)
-        )
-        async def add_callback(interaction):
-            await interaction.response.send_modal(ItemModal(self.cog, "add"))
-        add_btn.callback = add_callback
-        self.add_item(add_btn)
-
+    @discord.ui.button(label="📋 My Watchlist", style=discord.ButtonStyle.primary, row=0)
+    async def my_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        items = await self.cog.get_user_items(self.user_id)
+        max_slots = await self.cog.get_max_slots(self.user_id)
+        
+        embed = discord.Embed(title="📋 Watchlist Management", description=f"Capacity: `{len(items)}/{max_slots}` slots", color=discord.Color.blue())
+        view = discord.ui.View()
+        
+        add_btn = discord.ui.Button(label="➕ Add Item", style=discord.ButtonStyle.success, disabled=(len(items) >= max_slots))
+        add_btn.callback = lambda i: i.response.send_modal(ItemModal(self.cog, "add"))
+        view.add_item(add_btn)
+        
         if items:
-            self.add_item(ActionSelect(items, "edit", self.cog))
-            self.add_item(ActionSelect(items, "delete", self.cog))
+            view.add_item(ItemSelect(items, "edit", self.cog))
+            view.add_item(ItemSelect(items, "delete", self.cog))
+            
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="📊 Analyze Market", style=discord.ButtonStyle.secondary, row=0)
+    async def analyze_market(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = discord.ui.View()
+        view.add_item(DurationSelect(self.cog, "analysis"))
+        await interaction.response.send_message("⏱️ Select timeframe window to calculate market data:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="💰 Profitable Flips", style=discord.ButtonStyle.success, row=0)
+    async def profitable_flips(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        embed = await self.cog.calculate_flip_opportunities()
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 # ==========================================
-# MAIN CLASS: SHOP TRACKER COG
+# MAIN COG ENGINE
 # ==========================================
+
 class ShopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        
-        mongo_uri = os.getenv("MONGO_URI")
-        self.cluster = MongoClient(mongo_uri, maxPoolSize=10)
-        self.db = self.cluster["database0"]
-        self.collection = self.db["shop_subscriptions"]
-        self.users_coll = self.db["user_slots"] 
-        self.logs_coll = self.db["bot_logs"] 
-        self.players_coll = self.db["players"]
+    async def cog_load(self):
+        """Hàm này tự động chạy ngay khi Bot load và kích hoạt Cog này"""
+        print("⏳ [Cơ sở dữ liệu]: Đang thiết lập cấu hình tự động dọn dẹp dữ liệu...")
+        try:
+            # 30 ngày = 30 * 24 * 60 * 60 = 2,592,000 giây
+            # Nếu bản ghi nào có trường 'timestamp' cũ hơn thời gian này, MongoDB sẽ tự xóa ngầm.
+            await market_history_col.create_index(
+                "timestamp", 
+                expireAfterSeconds=2592000
+            )
+            print("✅ [Cơ sở dữ liệu]: Đã bật TTL Index! Dữ liệu cũ quá 30 ngày sẽ tự động bị tiêu hủy.")
+        except Exception as e:
+            print(f"❌ [Cơ sở dữ liệu]: Không thể thiết lập TTL Index: {e}")
+            
+    async def log_action(self, user_id: int, action: str, details: str):
+        await bot_logs_col.insert_one({
+            "user_id": str(user_id), "action": action, "details": details, "timestamp": datetime.utcnow()
+        })
 
-    def log_action(self, user_id: int, action: str, details: str):
-        log_entry = {
-            "user_id": str(user_id),
-            "action": action,
-            "details": details,
-            "timestamp": datetime.utcnow()
-        }
-        self.logs_coll.insert_one(log_entry)
-
-    def get_user_items(self, user_id):
-        cursor = self.collection.find({"subscribers.user_id": user_id})
+    async def get_user_items(self, user_id):
+        cursor = shop_subscriptions_col.find({"subscribers.user_id": user_id})
         items = []
-        for doc in cursor:
+        async for doc in cursor:
             for sub in doc.get("subscribers", []):
                 if sub["user_id"] == user_id:
                     items.append({"name": doc["_id"], "max_price": sub["max_price"]})
                     break
         return items
 
-    def get_max_slots(self, user_id):
-        user_doc = self.users_coll.find_one({"_id": user_id})
-        return user_doc.get("max_slots", 0) if user_doc else 0 
+    async def get_max_slots(self, user_id):
+        user_doc = await user_slots_col.find_one({"_id": user_id})
+        return user_doc.get("max_slots", 0) if user_doc else 0
 
     async def process_add_or_edit(self, user_id, item_name, max_price, is_edit=False):
         item_key = item_name.lower().strip()
-        user_items = self.get_user_items(user_id)
+        user_items = await self.get_user_items(user_id)
         
         if not is_edit:
             if any(i["name"] == item_key for i in user_items):
-                return False, "You are already tracking this item! Use the 'Edit Price' option if you want to change it."
-            
-            max_slots = self.get_max_slots(user_id)
-            if max_slots == 0:
-                return False, "🚫 Access Denied! You don't have any slots. Please contact the Bot Owner to get access."
-                
+                return False, "You are already tracking this item!"
+            max_slots = await self.get_max_slots(user_id)
             if len(user_items) >= max_slots:
-                return False, f"⚠️ You have reached your slot limit ({len(user_items)}/{max_slots}). Please ask the Bot Owner for an expansion!"
+                return False, f"Reached slot limit ({len(user_items)}/{max_slots})."
 
-        item_doc = self.collection.find_one({"_id": item_key})
-        
+        item_doc = await shop_subscriptions_col.find_one({"_id": item_key})
         if item_doc:
             subscribers = item_doc.get("subscribers", [])
-            user_exists = False
+            exists = False
             for sub in subscribers:
                 if sub["user_id"] == user_id:
                     sub["max_price"] = max_price
-                    user_exists = True
+                    exists = True
                     break
-            if not user_exists:
+            if not exists:
                 subscribers.append({"user_id": user_id, "max_price": max_price})
-            self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": subscribers}})
+            await shop_subscriptions_col.update_one({"_id": item_key}, {"$set": {"subscribers": subscribers}})
         else:
-            self.collection.insert_one({
-                "_id": item_key, 
-                "subscribers": [{"user_id": user_id, "max_price": max_price}]
-            })
-        
-        log_msg = f"Registered/Changed item '{item_key}' price to ≤ {max_price:,}"
-        self.log_action(user_id, "ADD/EDIT ITEM", log_msg)
+            await shop_subscriptions_col.insert_one({"_id": item_key, "subscribers": [{"user_id": user_id, "max_price": max_price}]})
+            
+        await self.log_action(user_id, "ADD/EDIT", f"{item_key} -> {max_price}")
+        return True, f"Tracking **{item_name}** at price ≤ **{max_price:,}**"
 
-        action_text = "Updated new price for" if is_edit else "Added"
-        return True, f"{action_text} **{item_name}** with max price <= **{max_price:,}**."
-
-    def process_remove(self, user_id, item_name):
+    async def process_remove(self, user_id, item_name):
         item_key = item_name.lower().strip()
-        item_doc = self.collection.find_one({"_id": item_key})
-        
+        item_doc = await shop_subscriptions_col.find_one({"_id": item_key})
         if item_doc:
-            subscribers = item_doc.get("subscribers", [])
-            new_subscribers = [sub for sub in subscribers if sub["user_id"] != user_id]
-            
-            if len(new_subscribers) == len(subscribers):
-                return False, "You are not tracking this item."
-
-            if not new_subscribers:
-                self.collection.delete_one({"_id": item_key})
+            subs = [s for s in item_doc["subscribers"] if s["user_id"] != user_id]
+            if not subs:
+                await shop_subscriptions_col.delete_one({"_id": item_key})
             else:
-                self.collection.update_one({"_id": item_key}, {"$set": {"subscribers": new_subscribers}})
+                await shop_subscriptions_col.update_one({"_id": item_key}, {"$set": {"subscribers": subs}})
+            return True, f"Removed **{item_name}**."
+        return False, "Item not found."
+
+    # --- AUTOCOMPLETE CORE SYSTEM ---
+    async def item_autocomplete(self, interaction: discord.Interaction, current: str):
+        if len(current) < 4:
+            return []
+        # Lấy danh sách tên item duy nhất xuất hiện từ lịch sử thị trường khớp Regex
+        pipeline = [
+            {"$match": {"items.item_name": {"$regex": current, "$options": "i"}}},
+            {"$unwind": "$items"},
+            {"$match": {"items.item_name": {"$regex": current, "$options": "i"}}},
+            {"$group": {"_id": "$items.item_name"}},
+            {"$limit": 10}
+        ]
+        choices = []
+        async for doc in market_history_col.aggregate(pipeline):
+            choices.append(app_commands.Choice(name=doc["_id"], value=doc["_id"]))
+        return choices
+
+    # --- MARKET INTELLIGENCE ENGINE (AGGREGATION) ---
+    async def generate_market_analysis_embed(self, days: int):
+        time_boundary = datetime.utcnow() - timedelta(days=days)
+        pipeline = [
+            {"$match": {"timestamp": {"$gte": time_boundary}, "type": "sold"}},
+            {"$unwind": "$items"},
+            {"$group": {
+                "_id": "$items.item_name",
+                "total_sold": {"$sum": "$items.quantity"},
+                "min_price": {"$min": "$items.cost"},
+                "max_price": {"$max": "$items.cost"},
+                "avg_price": {"$avg": "$items.cost"}
+            }},
+            {"$sort": {"total_sold": -1}},
+            {"$limit": 10}
+        ]
+        
+        embed = discord.Embed(title=f"🔥 Top 10 Best Sellers ({days} Days Window)", color=discord.Color.gold())
+        async for doc in market_history_col.aggregate(pipeline):
+            metrics = (
+                f"• Vol Sold: `{doc['total_sold']:,}` units\n"
+                f"• Min-Max: `{doc['min_price']:,}` - `{doc['max_price']:,}`\n"
+                f"• Avg Price: **{int(doc['avg_price']):,}** ea"
+            )
+            embed.add_field(name=f"📦 {doc['_id'].title()}", value=metrics, inline=False)
+        return embed
+
+    async def calculate_flip_opportunities(self):
+        # Thuật toán Resell: Tìm các item đang treo bán lẻ (open) thấp hơn hẳn giá trị giao dịch trung bình lịch sử (sold)
+        time_boundary = datetime.utcnow() - timedelta(days=7)
+        
+        # 1. Tính giá trị bán trung bình thực tế (Benchmark)
+        sold_stats = {}
+        pipeline_sold = [
+            {"$match": {"timestamp": {"$gte": time_boundary}, "type": "sold"}},
+            {"$unwind": "$items"},
+            {"$group": {"_id": "$items.item_name", "avg_sold": {"$avg": "$items.cost"}, "vol": {"$sum": "$items.quantity"}}}
+        ]
+        async for doc in market_history_col.aggregate(pipeline_sold):
+            if doc["vol"] > 5: # Đảm bảo item có thanh khoản thực tế
+                sold_stats[doc["_id"]] = doc["avg_sold"]
+
+        # 2. Quét các shop đang mở bán xem có kèo hớ không
+        pipeline_open = [
+            {"$match": {"timestamp": {"$gte": datetime.utcnow() - timedelta(hours=12)}, "type": "open"}},
+            {"$unwind": "$items"},
+            {"$sort": {"items.cost": 1}} # Ưu tiên giá rẻ nhất
+        ]
+        
+        embed = discord.Embed(title="💰 Algorithmic Resell Signals (Flipping)", description="Suggested purchase targets with high margin yield", color=discord.Color.green())
+        count = 0
+        
+        async for doc in market_history_col.aggregate(pipeline_open):
+            item_name = doc["items"]["item_name"]
+            current_cost = doc["items"]["cost"]
             
-            self.log_action(user_id, "REMOVE ITEM", f"Deleted '{item_key}' from the tracking list")
-            return True, f"Unsubscribed from: **{item_name}**."
-        return False, "This item is not registered in the system."
+            if item_name in sold_stats:
+                avg_market_value = sold_stats[item_name]
+                # Nếu giá treo bán rẻ hơn 25% so với giá trị trung bình lịch sử
+                if current_cost < (avg_market_value * 0.75):
+                    profit_per_item = int(avg_market_value - current_cost)
+                    details = (
+                        f"🏪 Shop: `{doc['shop_name']}` | Owner: `{doc['owner']}`\n"
+                        f"📍 Map: **{doc['map']}**\n"
+                        f"📉 Current Listing: **{current_cost:,}** ea\n"
+                        f"📈 Historical Avg Value: `{int(avg_market_value):,}` ea\n"
+                        f"🔥 **Estimated Margin Profit: +{profit_per_item:,}** per unit"
+                    )
+                    embed.add_field(name=f"💎 Deal Target: {item_name.title()}", value=details, inline=False)
+                    count += 1
+                    if count >= 5: break # Chỉ lấy top 5 kèo hời nhất để tránh loãng UI
+                    
+        if count == 0:
+            embed.description = "No anomalies detected. Market prices are currently balanced stabily."
+        return embed
 
-    async def has_profile(self, interaction: discord.Interaction) -> bool:
-        profile = self.players_coll.find_one({"user_id": interaction.user.id}, {"ign": 1})
+    # --- INTERACTIVE DASHBOARD SYSTEM HUB ---
+    @app_commands.command(name="market_hub", description="Open the central executive Market Analysis Dashboard.")
+    async def market_hub(self, interaction: discord.Interaction):
+        # Kiểm tra Profile người dùng
+        profile = await players_col.find_one({"user_id": interaction.user.id}, {"ign": 1})
         if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
-            await interaction.response.send_message("❌ **Access Denied!** You must set up your profile via `/mygear` first.", ephemeral=True)
-            return False
-        return True
+            return await interaction.response.send_message("❌ Profile unlinked. Set via `/mygear` first.", ephemeral=True)
 
-    @app_commands.command(name="additem", description="Sign up to receive notifications when an item's price is good.")
-    async def additem(self, interaction: discord.Interaction, item_name: str, max_price: int):
-        if not await self.has_profile(interaction): return
-        await interaction.response.defer(ephemeral=True) 
-        success, msg = await self.process_add_or_edit(interaction.user.id, item_name, max_price, is_edit=False)
-        await interaction.followup.send(msg)
-
-    @app_commands.command(name="removeitem", description="Cancel item tracking.")
-    async def removeitem(self, interaction: discord.Interaction, item_name: str):
-        if not await self.has_profile(interaction): return
-        await interaction.response.defer(ephemeral=True)
-        success, msg = self.process_remove(interaction.user.id, item_name)
-        await interaction.followup.send(msg)
-
-    @app_commands.command(name="mylist", description="View and manage your tracked items list.")
-    async def mylist(self, interaction: discord.Interaction):
-        if not await self.has_profile(interaction): return
-        user_id = interaction.user.id
-        items = self.get_user_items(user_id)
-        max_slots = self.get_max_slots(user_id)
-        current_slots = len(items)
-
+        await interaction.response.defer(ephemeral=False)
+        
+        # Tạo trang bìa Dashboard (Tổng hợp nhanh xu hướng 24h qua)
         embed = discord.Embed(
-            title="📋 Your Tracked List", 
-            description=f"**Capacity:** `{current_slots}/{max_slots} slots`",
-            color=discord.Color.blue()
+            title="📊 MyK Advanced Market Intelligence Hub",
+            description="Welcome to the center trading control panel. Access deep market data analytics via buttons below.",
+            color=discord.Color.dark_theme()
         )
+        embed.set_thumbnail(url=self.bot.user.avatar.url if self.bot.user.avatar else None)
+        embed.add_field(name="🛰️ Radar Diagnostics", value="• Pipeline: `Active` \n• Engine: `Motor Async Driver` \n• Feeder: `MyK-automatic`", inline=True)
+        embed.set_footer(text="Trading Data Engine • Systems Operating Nominal")
+        
+        view = MainMenuView(self, interaction.user.id)
+        await interaction.followup.send(embed=embed, view=view)
 
-        if items:
-            for item in items:
-                embed.add_field(
-                    name=f"📦 {item['name'].title()}", 
-                    value=f"Alert when price ≤ **{item['max_price']:,}**", 
-                    inline=False
-                )
-        else:
-            embed.add_field(name="Empty", value="You are not tracking any items.", inline=False)
+    # --- ADVANCED PLOTTING COMMAND ---
+    @app_commands.command(name="chart", description="Render time-series price fluctuation charts for an item.")
+    @app_commands.autocomplete(item_name=item_autocomplete)
+    async def chart(self, interaction: discord.Interaction, item_name: str, days: int = 7):
+        await interaction.response.defer()
+        time_boundary = datetime.utcnow() - timedelta(days=days)
+        
+        cursor = market_history_col.find({
+            "timestamp": {"$gte": time_boundary},
+            "items.item_name": item_name.lower().strip()
+        }).sort("timestamp", 1)
+        
+        timestamps = []
+        prices = []
+        
+        async for doc in cursor:
+            for item in doc["items"]:
+                if item["item_name"].lower().strip() == item_name.lower().strip():
+                    timestamps.append(doc["timestamp"])
+                    prices.append(item["cost"])
+                    
+        if not prices:
+            return await interaction.followup.send(f"❌ No trend history recorded for **{item_name}** in the requested window.", ephemeral=True)
 
-        view = MyListView(self, user_id)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        # Xử lý dữ liệu đồ họa bằng Matplotlib & NumPy
+        plt.figure(figsize=(10, 5))
+        plt.style.use('dark_background')
+        
+        # Vẽ biến động giá thực tế
+        plt.plot(timestamps, prices, label='Spot Price Exchange', color='#1f77b4', marker='o', markersize=4, linewidth=1.5)
+        
+        # Sử dụng NumPy để tính toán đường trung bình động (Moving Average Trendline)
+        if len(prices) > 3:
+            rolling_avg = np.convolve(prices, np.ones(3)/3, mode='valid')
+            plt.plot(timestamps[2:], rolling_avg, label='Smooth Trend (MA-3)', color='#ff7f0e', linestyle='--')
 
-    @app_commands.command(name="addslot", description="[Owner] Change the slot limit for a user.")
-    async def addslot(self, interaction: discord.Interaction, user: discord.Member, slots: int):
-        is_owner = await self.bot.is_owner(interaction.user)
-        if not is_owner:
-            await interaction.response.send_message("❌ Only the Bot Owner can use this command.", ephemeral=True)
-            return
+        plt.title(f"Fluctuation Price Analytics: {item_name.title()}", fontsize=14, color='white', pad=15)
+        plt.xlabel("Timeline UTC", color='gray')
+        plt.ylabel("Price (Tera/M)", color='gray')
+        plt.grid(True, linestyle=':', alpha=0.6)
+        plt.legend(loc='upper left')
+        plt.gcf().autofmt_xdate()
 
-        await interaction.response.defer(ephemeral=True)
-        self.users_coll.update_one({"_id": user.id}, {"$set": {"max_slots": slots}}, upsert=True)
-        await interaction.followup.send(f"✅ Granted **{slots} max slots** to **{user.display_name}**.")
+        # Lưu luồng nhị phân gửi trực tiếp cho Discord API
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+        buf.seek(0)
+        plt.close()
 
+        file = discord.File(buf, filename="market_trend.png")
+        await interaction.followup.send(file=file)
+
+    # --- STREAM FEED LISTENER ---
     @commands.Cog.listener()
     async def on_message(self, message):
         BRIDGE_CHANNEL_ID = 1515038293643759728  
@@ -273,56 +384,48 @@ class ShopTracker(commands.Cog):
                         continue
                     
                     items_in_shop = shop_data.get("items", [])
-                    if not items_in_shop:
+                    if not items_in_shop: continue
+                    
+                    # 1. Đưa bản ghi vào nhật ký lịch sử hệ thống (Cơ sở phân tích)
+                    shop_data["timestamp"] = datetime.utcnow()
+                    # Đồng bộ định dạng tên viết thường để thống nhất truy vấn
+                    for itm in shop_data["items"]:
+                        itm["item_name"] = itm["item_name"].lower().strip()
+                    await market_history_col.insert_one(shop_data)
+
+                    # 2. Xử lý logic Checklist báo giá (Chỉ thực hiện cho shop mới mở 'open')
+                    if shop_data.get("type") != "open":
                         continue
-                        
-                    item_names = [item["item_name"].lower() for item in items_in_shop]
-                    relevant_docs = list(self.collection.find({"_id": {"$in": item_names}}))
+
+                    item_names = [item["item_name"] for item in items_in_shop]
+                    relevant_docs = await shop_subscriptions_col.find({"_id": {"$in": item_names}}).to_list(length=None)
                     active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
                     
                     shop_name = shop_data.get("shop_name", "Unknown")
                     owner = shop_data.get("owner", "Unknown")
                     map_name = shop_data.get("map", "Unknown")
                     
-                    alerts = []
                     for item in items_in_shop:
-                        name_lower = item["item_name"].lower()
+                        name_lower = item["item_name"]
                         cost = item["cost"]
-                        quantity = item.get("quantity", "Unknown") 
+                        quantity = item.get("quantity", "Unknown")
                         
                         subscribers = active_subs.get(name_lower)
                         if subscribers:
                             for sub in subscribers:
                                 if cost <= sub["max_price"]:
-                                    embed = discord.Embed(
-                                        title="🎉 MyK Tracker",
-                                        description="MyK found a cheap item for you!",
-                                        color=discord.Color.green() 
-                                    )
-                                    embed.add_field(name="📦 Item", value=f"**{item['item_name']}**", inline=True)
-                                    embed.add_field(name="💰 Price (ea)", value=f"**{cost:,}**", inline=True)
-                                    qty_str = f"**{quantity:,}**" if isinstance(quantity, int) else f"**{quantity}**"
-                                    embed.add_field(name="⚖️ Quantity", value=qty_str, inline=True)
-                                    embed.add_field(name="🏪 Shop", value=f"`{shop_name}`", inline=True)
-                                    embed.add_field(name="👤 Owner", value=f"`{owner}`", inline=True)
-                                    embed.add_field(name="📍 Map", value=f"**{map_name}**", inline=True)
+                                    embed = discord.Embed(title="🎉 MyK Hunter Alert", description="MyK found a cheap item for you!", color=discord.Color.green())
+                                    embed.add_field(name="📦 Item ", value=f"**{item['item_name'].title()}**", inline=True)
+                                    embed.add_field(name="💰 Price", value=f"**{cost:,}** ea", inline=True)
+                                    embed.add_field(name="⚖️ Stock", value=f"`{quantity:,}`" if isinstance(quantity, int) else f"`{quantity}`", inline=True)
+                                    embed.add_field(name="🏪 Location", value=f"Map: `{map_name}`\nShop: `{shop_name}`\nOwner: `{owner}`", inline=False)
+                                    embed.add_field(name="⌨️ Quick Copy Link", value=f"```/shop {shop_name}```", inline=False)
                                     
-                                    # --- ĐOẠN THÊM VÀO: LỆNH COPY NHANH CHO USER ---
-                                    embed.add_field(
-                                        name="⌨️ Quick Copy Command", 
-                                        value=f"```/shop {shop_name}```", 
-                                        inline=False
-                                    )
-                                    
-                                    embed.set_footer(text="MyK-Market Tracker • Auto update")
-                                    alerts.append({"user_id": sub['user_id'], "embed": embed})
-                    
-                    for alert in alerts:
-                        try:
-                            user = self.bot.get_user(alert["user_id"]) or await self.bot.fetch_user(alert["user_id"])
-                            await user.send(embed=alert["embed"])
-                        except Exception:
-                            pass
+                                    try:
+                                        user = self.bot.get_user(sub['user_id']) or await self.bot.fetch_user(sub['user_id'])
+                                        await user.send(embed=embed)
+                                    except Exception:
+                                        pass
 
 async def setup(bot):
     await bot.add_cog(ShopTracker(bot))
