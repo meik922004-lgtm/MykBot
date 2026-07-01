@@ -345,13 +345,57 @@ class ShopTracker(commands.Cog):
             color=discord.Color.dark_theme()
         )
         embed.set_thumbnail(url=self.bot.user.avatar.url if self.bot.user.avatar else None)
-        embed.add_field(name="🛰️ Radar Diagnostics", value="• Pipeline: `Active` \n• Engine: `Motor Async Driver` \n• Feeder: `MyK-automatic`", inline=True)
-        embed.set_footer(text="Trading Data Engine • Systems Operating Nominal")
+        embed.set_footer(text="MyK • automatic supporter")
         
         # Gọi giao diện Hub tổng hợp mới
         view = CentralHubView(self, interaction.user.id)
         await interaction.followup.send(embed=embed, view=view)
 
+    # ==========================================
+    # BOT OWNER ONLY COMMAND
+    # ==========================================
+
+    @app_commands.command(name="addslot", description="[Bot Owner Only] Cấp hoặc điều chỉnh số lượng slot theo dõi tối đa của người dùng.")
+    @app_commands.describe(user="Chọn người dùng cần chỉnh sửa slot", slots="Tổng số lượng slot tối đa muốn cấp (Ví dụ: 10)")
+    async def addslot(self, interaction: discord.Interaction, user: discord.User, slots: int):
+        """Lệnh ẩn chỉ có Bot Owner (Nhà phát triển) mới có quyền thực thi"""
+        # Kiểm tra xem người dùng bấm lệnh có phải là Owner của Bot không
+        is_bot_owner = await self.bot.is_owner(interaction.user)
+        
+        if not is_bot_owner:
+            return await interaction.response.send_message(
+                "❌ Lệnh này được bảo mật nghiêm ngặt và chỉ dành riêng cho **Bot Owner**!", 
+                ephemeral=True
+            )
+
+        # Nếu đúng là Bot Owner, tiến hành xử lý dữ liệu
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Cập nhật số lượng slot vào MongoDB (Sử dụng ID dạng số của user làm mốc định danh gốc)
+            await user_slots_col.update_one(
+                {"_id": user.id},
+                {"$set": {"max_slots": slots}},
+                upsert=True  # Nếu user chưa từng có dữ liệu slot, tự động tạo bản ghi mới
+            )
+            
+            # Ghi log hệ thống để theo dõi
+            await self.log_action(
+                interaction.user.id, 
+                "OWNER_GRANT_SLOT", 
+                f"Set slots for {user.id} ({user.name}) to {slots}"
+            )
+            
+            await interaction.followup.send(
+                f"✅ Thành công! Đã cấu hình lại giới hạn của người dùng {user.mention} thành **{slots}** slots.", 
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Thao tác thất bại. Lỗi cơ sở dữ liệu: {e}", 
+                ephemeral=True
+            )
     # --- STREAM FEED LISTENER ---
     @commands.Cog.listener()
     async def on_message(self, message):
