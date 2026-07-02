@@ -6,7 +6,7 @@ import asyncio
 import re 
 import random
 from datetime import datetime, timedelta, timezone
-
+from discord.ext import commands, tasks
 from Database import players_col, parties_col, dungeon_configs_col, world_boss_col, rpg_profiles_col
 
 server_configs_col = players_col.database["server_configs"]
@@ -229,59 +229,6 @@ class PartyLobbyDMView(discord.ui.View):
             await update_broadcast_messages(self.bot, self.party_id)
 
 
-class PartyBossSpawnConfirmView(discord.ui.View):
-    def __init__(self, bot, party_id, leader_id, dg_name):
-        super().__init__(timeout=60)
-        self.bot = bot
-        self.party_id = party_id
-        self.leader_id = leader_id
-        self.dg_name = dg_name
-
-    @discord.ui.button(label="Yes, summon Party Boss", style=discord.ButtonStyle.success, emoji="👹")
-    async def confirm_spawn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.leader_id:
-            return await interaction.response.send_message("❌ Only leader have permission!", ephemeral=True)
-        await interaction.response.defer()
-        
-        party = await parties_col.find_one({"_id": ObjectId(self.party_id)})
-        if not party:
-            return await interaction.followup.send("❌ Party no longer exists.")
-            
-        member_ids = [m["user_id"] for m in party.get("members", [])]
-        profiles = await rpg_profiles_col.find({"user_id": {"$in": member_ids}}).to_list(None)
-        total_team_atk = 0
-        
-        for p in profiles:
-            active_id = p.get("active_digimon_id")
-            digimon = next((d for d in p.get("digimon_list", []) if d.get("id") == active_id), None)
-            if digimon:
-                total_team_atk += digimon.get("atk", 0) + digimon.get("trained_atk", 0)
-                
-        if total_team_atk == 0:
-            total_team_atk = 5000 
-            
-        random_hp = int(total_team_atk * random.uniform(15.0, 30.0))
-        
-        await world_boss_col.insert_one({
-            "party_id": self.party_id,
-            "name": f"Party Raid Boss ({self.dg_name})",
-            "max_hp": random_hp,
-            "current_hp": random_hp,
-            "atk": int(total_team_atk * 0.8), 
-            "is_active": True,
-            "img": "https://digimon.net/cimages/digimon/merukimon.jpg",
-            "damage_log": {},
-            "active_messages": []
-        })
-        await interaction.followup.send(f"🔥 **Party Boss summoned successfully!** (HP Scale: {random_hp:,}) Use `/combat` to attack!")
-        self.stop()
-
-    @discord.ui.button(label="No, Normal Dungeon Only", style=discord.ButtonStyle.secondary)
-    async def cancel_spawn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.leader_id:
-            return await interaction.response.send_message("❌ Only the Team Leader has this authority!", ephemeral=True)
-        await interaction.response.send_message("✅ Boss summon has been cancelled.")
-        self.stop()
 
 class BroadcastView(discord.ui.View):
     def __init__(self, party_id=None):
@@ -539,7 +486,7 @@ class CreatePartyModal(discord.ui.Modal, title='Create New Party'):
         if broadcast_records: 
             await parties_col.update_one({"_id": result.inserted_id}, {"$set": {"broadcasts": broadcast_records}})
             
-        await interaction.followup.send("✅ Party created successfully! Please check your DMs.", view=PartyBossSpawnConfirmView(self.bot, party_id_str, interaction.user.id, self.dg_name.value), ephemeral=True)
+        await interaction.followup.send("✅ Party created successfully! Please check your DMs.", ephemeral=True)
         await self.lobby_view.update_lobby(self.parent_interaction, self.lobby_view.page)
 
 class EditPartyInfoModal(discord.ui.Modal, title='Edit Party Information'):
@@ -611,7 +558,45 @@ async def handle_cross_server_chat(bot, party, user_id=None, action="create", gu
 class PartyFinderCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.auto_cleanup_parties.start()
 
+    def cog_unload(self):
+        # Hủy vòng lặp nếu Cog bị reload/unload để tránh chạy trùng
+        self.auto_cleanup_parties.cancel()
+
+    @tasks.loop(hours=1.0)
+    async def auto_cleanup_parties(self):
+        """Vòng lặp chạy ngầm mỗi 1 giờ để quét và xóa các party quá 24h"""
+        # Mốc thời gian 24 giờ trước (UTC)
+        threshold_time = datetime.now(timezone.utc) - timedelta(days=1)
+        # Tạo một ObjectId giả dựa trên mốc thời gian này để query DB
+        threshold_id = ObjectId.from_datetime(threshold_time)
+        # Tìm tất cả các party được tạo trước mốc thời gian đó
+        expired_parties = await parties_col.find({"_id": {"$lt": threshold_id}}).to_list(length=None)
+        
+        if not expired_parties:
+            return
+
+        for party in expired_parties:
+            try:
+                # Gửi tin nhắn thông báo giải tán đến các thành viên trong Party thông qua DM
+                await handle_cross_server_chat(
+                    self.bot, 
+                    party, 
+                    action="delete", 
+                    msg_override=f"⏳ Party **{party.get('dg_name')}** was automatically disbanded because it exceeded the 24-hour time limit.."
+                )
+            except Exception as e:
+                print(f"Error notifying expired party {party.get('_id')}: {e}")
+  
+        # Xóa hàng loạt các party quá hạn khỏi Database
+        deleted = await parties_col.delete_many({"_id": {"$lt": threshold_id}})
+        print(f"[Party Finder] Đã tự động dọn dẹp {deleted.deleted_count} parties quá 1 ngày.")
+
+    @auto_cleanup_parties.before_loop
+    async def before_cleanup(self):
+        """Đợi bot ready hoàn toàn trước khi bắt đầu tính giờ loop"""
+        await self.bot.wait_until_ready()
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.guild is not None: 
