@@ -149,7 +149,7 @@ class General(commands.Cog, name="Basic command"):
                             inline=False
                         )
                         
-                        await channel.send("@here", embed=embed)
+                        await channel.send("@Raid", embed=embed)
                         
                         # 2. Embed thông báo Boss tiếp theo (Tự động đổi theo múi giờ người xem)
                         next_next_spawn = next_spawn + timedelta(minutes=interval)
