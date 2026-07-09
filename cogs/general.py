@@ -117,11 +117,11 @@ class General(commands.Cog, name="Basic command"):
         if bless_data:
             bless_minute = bless_data.get("minute", 0)
             target_bless = utc_now.replace(minute=bless_minute, second=0, microsecond=0)
-            if target_bless <= utc_now: target_bless += timedelta(hours=1)
+            if target_bless <= utc_now: target_bless += timedelta(hours=2)
             unix_bless = int(target_bless.timestamp())
-            embed.add_field(name="📌 Bless Raid timer", value=f"Next <t:{unix_bless}:R> (<t:{unix_bless}:t>)", inline=False)
+            embed.add_field(name="📌 OMM RAID TIMER", value=f"Next <t:{unix_bless}:R> (<t:{unix_bless}:t>)", inline=False)
         else:
-            embed.add_field(name="📌 Bless Raid timer", value="*Not set up. Use `/setbless`*", inline=False)
+            embed.add_field(name="📌 OMM RAID TIMER", value="*Not set up. Use `/setbless`*", inline=False)
 
         if boss_data and "bosses" in boss_data:
             boss_lines = []
@@ -131,9 +131,9 @@ class General(commands.Cog, name="Basic command"):
                 while target_boss <= utc_now: target_boss += timedelta(minutes=90)
                 unix_boss = int(target_boss.timestamp())
                 boss_lines.append(f"**{b['name']}** ({b['map']}): Next <t:{unix_boss}:R>")
-            embed.add_field(name="🚨 Digital Raid timer", value="\n".join(boss_lines), inline=False)
+            embed.add_field(name="🚨 Raid timer", value="\n".join(boss_lines), inline=False)
         else:
-            embed.add_field(name="🚨 Digital Raid timer", value="*Not set up. Use `/setboss`*", inline=False)
+            embed.add_field(name="🚨 Raid timer", value="*Not set up. Use `/setboss`*", inline=False)
 
         await interaction.followup.send(embed=embed)
 
