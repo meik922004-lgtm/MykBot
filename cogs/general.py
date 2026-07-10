@@ -128,38 +128,35 @@ class General(commands.Cog, name="Basic command"):
                     
                     channel = self.bot.get_channel(channel_id)
                     if channel:
-                        time_left = next_spawn - now
-                        total_seconds = int(time_left.total_seconds())
-                        hours = total_seconds // 3600
-                        minutes = (total_seconds % 3600) // 60
-                        seconds = total_seconds % 60
-                        
-                        time_str = f"{minutes:02d}:{seconds:02d} minutes/seconds left ({hours:02d} hours left)"
-                        
-                        # 1. Embed thông báo Boss hiện tại
+                        # 1 & 2. Giao diện gọn gàng hơn, hiển thị đếm ngược bằng Timestamp Discord
                         embed = discord.Embed(title="🚨 Raid incoming!", color=discord.Color.red())
                         embed.add_field(name="Name", value=f"**{name}**", inline=True)
                         embed.add_field(name="Map", value=f"**{map_name}**", inline=True)
-                        embed.add_field(name="TIme left", value=time_str, inline=False)
                         
-                        # Sử dụng Discord Timestamp biệt lập: Tự động đổi theo múi giờ thiết bị của từng người xem độc lập
+                        # Sử dụng <t:timestamp:R> để Discord tự động hiển thị đếm ngược (VD: in 4 minutes / trong 4 phút nữa) theo máy người dùng
                         embed.add_field(
-                            name="Time displayed according to your region", 
-                            value=f"⏰ <t:{spawn_timestamp}:T> (<t:{spawn_timestamp}:F>)", 
+                            name="Spawn time (your region)", 
+                            value=f"⏰ <t:{spawn_timestamp}:t> (còn <t:{spawn_timestamp}:R>)", 
                             inline=False
                         )
                         
-                        await channel.send("@Raid", embed=embed)
+                        # 3. Khắc phục lỗi không Ping được Role
+                        # Lấy object role có tên chính xác là "Raid" trong server
+                        raid_role = discord.utils.get(channel.guild.roles, name="Raid")
                         
-                        # 2. Embed thông báo Boss tiếp theo (Tự động đổi theo múi giờ người xem)
+                        # Nếu tìm thấy role thì mention (<@&RoleID>), nếu không thì gửi text nhắc nhở
+                        mention_text = raid_role.mention if raid_role else "⚠️ (Vui lòng tạo role có tên chính xác là `Raid` để bot có thể ping)"
+                        
+                        await channel.send(content=mention_text, embed=embed)
+                        
+                        # Embed thông báo Boss tiếp theo (Tự động đổi theo múi giờ người xem)
                         next_next_spawn = next_spawn + timedelta(minutes=interval)
                         embed2 = discord.Embed(color=discord.Color.blue())
-                        embed2.description = f"⏭️ **Information:** Boss **{name}** Next spawn at: <t:{int(next_next_spawn.timestamp())}:t> (<t:{int(next_next_spawn.timestamp())}:R>)"
+                        embed2.description = f"⏭️ **Information:** Boss **{name}** Next spawn at: <t:{int(next_next_spawn.timestamp())}:t> (còn <t:{int(next_next_spawn.timestamp())}:R>)"
                         await channel.send(embed=embed2)
                         
         except Exception as e:
             print(f"Error: {e}")
-
     @raid_notifier.before_loop
     async def before_raid_notifier(self):
         await self.bot.wait_until_ready()
