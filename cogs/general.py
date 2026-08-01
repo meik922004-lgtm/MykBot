@@ -280,7 +280,7 @@ class General(commands.Cog, name="Basic command"):
             }},
             upsert=True
         )
-        await interaction.response.send_message(f"✅Boss has been set up. **{name}** at **{map_name}**.\n⏳ **Every 2 hours** from the starting point `Base Time: {time_str} UTC+0`.\n📢 Notifications will be pushed at: <#{interaction.channel_id}>")
+        await interaction.response.send_message(f"✅Boss has been set up. **{name}** at **{map_name}**.\n⏳ **Every 1.30 hours** from the starting point `Base Time: {time_str} UTC+0`.\n📢 Notifications will be pushed at: <#{interaction.channel_id}>")
 
 async def setup(bot):
     await bot.add_cog(General(bot))
