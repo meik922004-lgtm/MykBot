@@ -6,8 +6,9 @@ from Database import db
 news_channel_col = db["server_configs"]
 
 
+
 # ==========================================
-# 1. COG ADMIN (QUẢN TRỊ HỆ THỐNG)
+# 3. COG ADMIN (QUẢN TRỊ HỆ THỐNG)
 # ==========================================
 # GIAO DIỆN MODAL NHẬP THÔNG BÁO BẰNG PHÍM ENTER
 # ==========================================
@@ -175,5 +176,4 @@ class Admin(commands.Cog):
 async def setup(bot):
     await bot.add_cog(NewsSystemCog(bot))
     await bot.add_cog(Admin(bot))
-    await bot.add_cog(DigitalTour(bot))
     
