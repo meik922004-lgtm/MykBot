@@ -6,6 +6,10 @@ import datetime
 import re
 import random
 
+# Import collection từ Database.py của bạn
+from Database import giveaways_col
+
+
 # Hàm hỗ trợ parse thời gian từ chuỗi (vd: 10m, 2h, 1d) sang giây
 def parse_duration(duration_str: str) -> int:
     regex = r"^(\d+)([smhd])$"
@@ -27,19 +31,35 @@ def parse_duration(duration_str: str) -> int:
 
 # View chứa nút bấm tham gia/thoát Giveaway
 class GiveawayView(discord.ui.View):
-    def __init__(self, duration_seconds: int):
+    def __init__(self, message_id: int, duration_seconds: int):
         super().__init__(timeout=duration_seconds)
-        self.participants = set() # Lưu trữ ID người tham gia để tránh trùng lặp
+        self.message_id = message_id
 
     @discord.ui.button(label="Tham gia 🎉", style=discord.ButtonStyle.primary, custom_id="join_giveaway")
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
         
-        if user_id in self.participants:
-            self.participants.remove(user_id)
+        # Kiểm tra giveaway trong database
+        giveaway_data = await giveaways_col.find_one({"message_id": self.message_id})
+        
+        if not giveaway_data:
+            return await interaction.response.send_message("❌ Giveaway này không còn tồn tại hoặc đã kết thúc!", ephemeral=True)
+
+        participants = giveaway_data.get("participants", [])
+
+        if user_id in participants:
+            # Rút khỏi giveaway
+            await giveaways_col.update_one(
+                {"message_id": self.message_id},
+                {"$pull": {"participants": user_id}}
+            )
             await interaction.response.send_message("❌ Bạn đã **rút khỏi** Giveaway này!", ephemeral=True)
         else:
-            self.participants.add(user_id)
+            # Tham gia giveaway
+            await giveaways_col.update_one(
+                {"message_id": self.message_id},
+                {"$addToSet": {"participants": user_id}}
+            )
             await interaction.response.send_message("✅ Bạn đã **tham gia** Giveaway thành công!", ephemeral=True)
 
 
@@ -81,39 +101,57 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         if not duration_seconds or duration_seconds <= 0:
             return await interaction.response.send_message("❌ Định dạng thời gian không hợp lệ! Hãy dùng dạng `10s`, `10m`, `2h`, hoặc `1d`.", ephemeral=True)
 
-        # Tính thời điểm kết thúc theo dạng Unix Timestamp để hiển thị giờ địa phương
-        end_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=duration_seconds)
+        # Tính thời điểm kết thúc
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        end_time = now_utc + datetime.timedelta(seconds=duration_seconds)
         end_timestamp = int(end_time.timestamp())
 
         # Tạo Embed thông báo bắt đầu
         embed = discord.Embed(
             title=f"🎉 GIVEAWAY: {self.title_input.value} 🎉",
             color=discord.Color.gold(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
+            timestamp=now_utc
         )
         embed.add_field(name="🎁 Phần thưởng", value=f"**{self.prize_input.value}**", inline=False)
         embed.add_field(name="🏆 Số người thắng", value=f"**{winners_count}**", inline=True)
         embed.add_field(name="👑 Người tạo", value=interaction.user.mention, inline=True)
-        # Sử dụng format <t:timestamp:R> để Discord tự hiển thị thời gian còn lại theo local timezone người xem
         embed.add_field(name="⏰ Kết thúc vào", value=f"<t:{end_timestamp}:F> (<t:{end_timestamp}:R>)", inline=False)
         embed.set_footer(text="Bấm vào nút bên dưới để tham gia/thoát!")
 
-        view = GiveawayView(duration_seconds=duration_seconds)
-        
-        # Gửi thông báo bắt đầu Giveaway
-        await interaction.response.send_message(embed=embed, view=view)
+        # Gửi thông báo bắt đầu
+        await interaction.response.send_message(embed=embed)
         message = await interaction.original_response()
 
-        # Đợi hết thời gian giveaway
+        # Thêm View vào message
+        view = GiveawayView(message_id=message.id, duration_seconds=duration_seconds)
+        await message.edit(view=view)
+
+        # Lưu dữ liệu vào MongoDB
+        # Trường expireAt sẽ làm cơ sở cho TTL Index tự động xóa document
+        giveaway_doc = {
+            "message_id": message.id,
+            "guild_id": interaction.guild_id,
+            "channel_id": interaction.channel_id,
+            "title": self.title_input.value,
+            "prize": self.prize_input.value,
+            "winners_count": winners_count,
+            "created_by": interaction.user.id,
+            "participants": [],
+            "expireAt": end_time
+        }
+        await giveaways_col.insert_one(giveaway_doc)
+
+        # Chờ hết thời gian
         await asyncio.sleep(duration_seconds)
 
-        # Đóng nút bấm sau khi hết giờ
+        # Vô hiệu hóa nút bấm
         for child in view.children:
             child.disabled = True
         
-        # Xử lý kết quả
-        participants = list(view.participants)
-        
+        # Lấy danh sách người tham gia từ Database
+        giveaway_data = await giveaways_col.find_one({"message_id": message.id})
+        participants = giveaway_data.get("participants", []) if giveaway_data else []
+
         if not participants:
             end_embed = discord.Embed(
                 title=f"🎉 GIVEAWAY KẾT THÚC: {self.title_input.value} 🎉",
@@ -142,8 +180,6 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         end_embed.set_footer(text="Chúc mừng người chiến thắng!")
 
         await message.edit(embed=end_embed, view=view)
-        
-        # Thông báo công khai và Ping người thắng
         await message.reply(f"🎊 Chúc mừng {winners_str}! Bạn đã trúng phần thưởng **{self.prize_input.value}** từ giveaway **{self.title_input.value}**!")
 
 
@@ -151,6 +187,11 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
 class GiveawayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def cog_load(self):
+        # Tự động tạo TTL Index khi nạp Cog. 
+        # Cấu hình expireAfterSeconds=0 sẽ xóa document ngay khi thời gian đạt đến 'expireAt'
+        await giveaways_col.create_index("expireAt", expireAfterSeconds=0)
 
     @app_commands.command(name="giveaway", description="Tạo một chương trình giveaway mới")
     @app_commands.checks.has_permissions(manage_messages=True)

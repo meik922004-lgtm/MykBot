@@ -37,3 +37,4 @@ shop_subscriptions_col = db["shop_subscriptions"]
 user_slots_col = db["user_slots"]
 bot_logs_col = db["bot_logs"]
 market_history_col = db["market_history"] # Lưu vết real-time phục vụ vẽ biểu đồ và phân tích
+giveaways_col = db["giveaways"]
