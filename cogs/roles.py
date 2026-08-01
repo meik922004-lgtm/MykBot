@@ -54,62 +54,105 @@ class StageSelect(discord.ui.Select):
         config = load_config()
         stage_roles_names = config.get("stage", [])
         
-        roles_to_remove = [discord.utils.get(guild.roles, name=n) for n in stage_roles_names if n != selected_name and discord.utils.get(guild.roles, name=n) in member.roles]
-        role_to_add = discord.utils.get(guild.roles, name=selected_name)
-        
-        roles_to_remove = [r for r in roles_to_remove if r]
-        if roles_to_remove: await member.remove_roles(*roles_to_remove)
-        if role_to_add and role_to_add not in member.roles: await member.add_roles(role_to_add)
+        target_role = discord.utils.get(guild.roles, name=selected_name)
+        if not target_role:
+            return await interaction.followup.send(f"❌ Role **{selected_name}** không tồn tại trên server!", ephemeral=True)
+
+        # Nếu người dùng đã có role này rồi => Xóa role (Toggle OFF)
+        if target_role in member.roles:
+            await member.remove_roles(target_role)
+            await interaction.followup.send(f"🗑️ Bạn đã gỡ role stage: **{selected_name}**", ephemeral=True)
+        else:
+            # Nếu chọn role mới => Xóa tất cả các role stage cũ khác và thêm role mới
+            roles_to_remove = [discord.utils.get(guild.roles, name=n) for n in stage_roles_names if n != selected_name and discord.utils.get(guild.roles, name=n) in member.roles]
+            roles_to_remove = [r for r in roles_to_remove if r]
             
-        await interaction.followup.send(f"✅ Stage Role has been updated to: **{selected_name}**", ephemeral=True)
+            if roles_to_remove:
+                await member.remove_roles(*roles_to_remove)
+            
+            await member.add_roles(target_role)
+            await interaction.followup.send(f"✅ Stage Role của bạn đã được cập nhật thành: **{selected_name}**", ephemeral=True)
+
 
 class GeneralSelect(discord.ui.Select):
     def __init__(self, options_list):
         options = [discord.SelectOption(label=name, value=name) for name in options_list]
         max_vals = min(len(options), 25) if options else 1
-        super().__init__(placeholder="Select General Roles...", min_values=0, max_values=max_vals, options=options, custom_id="roles_select:general")
+        super().__init__(placeholder="Select General Roles...", min_values=1, max_values=max_vals, options=options, custom_id="roles_select:general")
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         member = interaction.user
-        config = load_config()
-        general_roles_names = config.get("general", [])
         
-        roles_to_add = [discord.utils.get(guild.roles, name=n) for n in self.values if discord.utils.get(guild.roles, name=n) not in member.roles]
-        roles_to_remove = [discord.utils.get(guild.roles, name=n) for n in general_roles_names if n not in self.values and discord.utils.get(guild.roles, name=n) in member.roles]
+        roles_to_add = []
+        roles_to_remove = []
         
-        roles_to_add = [r for r in roles_to_add if r]
-        roles_to_remove = [r for r in roles_to_remove if r]
+        # Kiểm tra từng role được bấm chọn
+        for role_name in self.values:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role:
+                if role in member.roles:
+                    roles_to_remove.append(role) # Đã có -> Xóa
+                else:
+                    roles_to_add.append(role)   # Chưa có -> Thêm
         
-        if roles_to_add: await member.add_roles(*roles_to_add)
-        if roles_to_remove: await member.remove_roles(*roles_to_remove)
+        msg_parts = []
+        if roles_to_add:
+            await member.add_roles(*roles_to_add)
+            added_names = ", ".join([f"**{r.name}**" for r in roles_to_add])
+            msg_parts.append(f"➕ Đã thêm: {added_names}")
             
-        await interaction.followup.send("✅ Your General Roles list has been updated!", ephemeral=True)
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove)
+            removed_names = ", ".join([f"**{r.name}**" for r in roles_to_remove])
+            msg_parts.append(f"➖ Đã gỡ: {removed_names}")
+            
+        if msg_parts:
+            await interaction.followup.send("\n".join(msg_parts), ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Không có thay đổi nào được thực hiện.", ephemeral=True)
+
 
 class CombatSelect(discord.ui.Select):
     def __init__(self, options_list):
         options = [discord.SelectOption(label=name, value=name) for name in options_list]
         max_vals = min(len(options), 25) if options else 1
-        super().__init__(placeholder="Select Combat Roles...", min_values=0, max_values=max_vals, options=options, custom_id="roles_select:combat")
+        super().__init__(placeholder="Select Combat Roles...", min_values=1, max_values=max_vals, options=options, custom_id="roles_select:combat")
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         member = interaction.user
-        config = load_config()
-        combat_roles_names = config.get("combat", [])
         
-        roles_to_add = [discord.utils.get(guild.roles, name=n) for n in self.values if discord.utils.get(guild.roles, name=n) not in member.roles]
-        roles_to_remove = [discord.utils.get(guild.roles, name=n) for n in combat_roles_names if n not in self.values and discord.utils.get(guild.roles, name=n) in member.roles]
+        roles_to_add = []
+        roles_to_remove = []
         
-        roles_to_add = [r for r in roles_to_add if r]
-        roles_to_remove = [r for r in roles_to_remove if r]
+        # Kiểm tra từng role được bấm chọn
+        for role_name in self.values:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role:
+                if role in member.roles:
+                    roles_to_remove.append(role) # Đã có -> Xóa
+                else:
+                    roles_to_add.append(role)   # Chưa có -> Thêm
         
-        if roles_to_add: await member.add_roles(*roles_to_add)
-        if roles_to_remove: await member.remove_roles(*roles_to_remove)
+        msg_parts = []
+        if roles_to_add:
+            await member.add_roles(*roles_to_add)
+            added_names = ", ".join([f"**{r.name}**" for r in roles_to_add])
+            msg_parts.append(f"➕ Đã thêm: {added_names}")
             
-        await interaction.followup.send("✅ Your Combat Roles list has been updated!", ephemeral=True)
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove)
+            removed_names = ", ".join([f"**{r.name}**" for r in roles_to_remove])
+            msg_parts.append(f"➖ Đã gỡ: {removed_names}")
+            
+        if msg_parts:
+            await interaction.followup.send("\n".join(msg_parts), ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Không có thay đổi nào được thực hiện.", ephemeral=True)
+
 
 class RolesMenuView(discord.ui.View):
     def __init__(self):
