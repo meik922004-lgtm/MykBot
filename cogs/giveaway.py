@@ -31,11 +31,13 @@ def parse_duration(duration_str: str) -> int:
 
 # View chứa nút bấm tham gia/thoát Giveaway
 class GiveawayView(discord.ui.View):
-    def __init__(self, message_id: int, duration_seconds: int):
+    def __init__(self, message_id: int, duration_seconds: int, initial_count: int = 0):
         super().__init__(timeout=duration_seconds)
         self.message_id = message_id
+        # Cập nhật nhãn của nút bấm ban đầu
+        self.join_button.label = f"Tham gia 🎉 ({initial_count})"
 
-    @discord.ui.button(label="Tham gia 🎉", style=discord.ButtonStyle.primary, custom_id="join_giveaway")
+    @discord.ui.button(label="Tham gia 🎉 (0)", style=discord.ButtonStyle.primary, custom_id="join_giveaway")
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
         
@@ -53,14 +55,30 @@ class GiveawayView(discord.ui.View):
                 {"message_id": self.message_id},
                 {"$pull": {"participants": user_id}}
             )
-            await interaction.response.send_message("❌ Bạn đã **rút khỏi** Giveaway này!", ephemeral=True)
+            participants.remove(user_id)
+            msg = "❌ Bạn đã **rút khỏi** Giveaway này!"
         else:
             # Tham gia giveaway
             await giveaways_col.update_one(
                 {"message_id": self.message_id},
                 {"$addToSet": {"participants": user_id}}
             )
-            await interaction.response.send_message("✅ Bạn đã **tham gia** Giveaway thành công!", ephemeral=True)
+            participants.append(user_id)
+            msg = "✅ Bạn đã **tham gia** Giveaway thành công!"
+
+        # Cập nhật số người tham gia trên nút bấm và Embed
+        participant_count = len(participants)
+        button.label = f"Tham gia 🎉 ({participant_count})"
+        
+        embed = interaction.message.embeds[0]
+        # Tìm và cập nhật lại field "Người tham gia"
+        for i, field in enumerate(embed.fields):
+            if field.name == "👥 Người tham gia":
+                embed.set_field_at(i, name="👥 Người tham gia", value=f"**{participant_count}**", inline=True)
+                break
+
+        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.followup.send(msg, ephemeral=True)
 
 
 # Modal nhận dữ liệu đầu vào từ người tạo
@@ -114,6 +132,7 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         )
         embed.add_field(name="🎁 Phần thưởng", value=f"**{self.prize_input.value}**", inline=False)
         embed.add_field(name="🏆 Số người thắng", value=f"**{winners_count}**", inline=True)
+        embed.add_field(name="👥 Người tham gia", value="**0**", inline=True)  # Hiển thị số người tham gia ban đầu
         embed.add_field(name="👑 Người tạo", value=interaction.user.mention, inline=True)
         embed.add_field(name="⏰ Kết thúc vào", value=f"<t:{end_timestamp}:F> (<t:{end_timestamp}:R>)", inline=False)
         embed.set_footer(text="Bấm vào nút bên dưới để tham gia/thoát!")
@@ -123,11 +142,11 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         message = await interaction.original_response()
 
         # Thêm View vào message
-        view = GiveawayView(message_id=message.id, duration_seconds=duration_seconds)
+        view = GiveawayView(message_id=message.id, duration_seconds=duration_seconds, initial_count=0)
         await message.edit(view=view)
 
         # Lưu dữ liệu vào MongoDB
-        # Trường expireAt sẽ làm cơ sở cho TTL Index tự động xóa document
+        # Thêm 10 phút đệm vào expireAt để MongoDB không xóa trước khi Bot kịp chọn người thắng
         giveaway_doc = {
             "message_id": message.id,
             "guild_id": interaction.guild_id,
@@ -137,7 +156,7 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
             "winners_count": winners_count,
             "created_by": interaction.user.id,
             "participants": [],
-            "expireAt": end_time
+            "expireAt": end_time + datetime.timedelta(minutes=10)
         }
         await giveaways_col.insert_one(giveaway_doc)
 
@@ -176,6 +195,7 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         )
         end_embed.add_field(name="🎁 Phần thưởng", value=f"**{self.prize_input.value}**", inline=False)
         end_embed.add_field(name="🏆 Người chiến thắng", value=winners_str, inline=False)
+        end_embed.add_field(name="👥 Tổng người tham gia", value=f"**{len(participants)}**", inline=True)
         end_embed.add_field(name="👑 Người tạo", value=interaction.user.mention, inline=True)
         end_embed.set_footer(text="Chúc mừng người chiến thắng!")
 
@@ -190,7 +210,6 @@ class GiveawayCog(commands.Cog):
 
     async def cog_load(self):
         # Tự động tạo TTL Index khi nạp Cog. 
-        # Cấu hình expireAfterSeconds=0 sẽ xóa document ngay khi thời gian đạt đến 'expireAt'
         await giveaways_col.create_index("expireAt", expireAfterSeconds=0)
 
     @app_commands.command(name="giveaway", description="Tạo một chương trình giveaway mới")
