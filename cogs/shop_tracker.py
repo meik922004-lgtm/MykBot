@@ -57,25 +57,6 @@ class ItemSelect(discord.ui.Select):
             await interaction.response.send_message(f"✅ {message}", ephemeral=True)
 
 
-class HubDurationSelect(discord.ui.Select):
-    """Dropdown phân tích thị trường được nhúng trực tiếp vào Menu chính"""
-    def __init__(self, cog, row: int):
-        self.cog = cog
-        options = [
-            discord.SelectOption(label="Analyze: Last 24 Hours", value="1"),
-            discord.SelectOption(label="Analyze: Last 7 Days", value="7"),
-            discord.SelectOption(label="Analyze: Last 14 Days", value="14"),
-            discord.SelectOption(label="Analyze: Last 30 Days", value="30"),
-        ]
-        super().__init__(placeholder="📊 Select Timeframe Window to Analyze Market...", options=options, row=row)
-
-    async def callback(self, interaction: discord.Interaction):
-        days = int(self.values[0])
-        await interaction.response.defer(ephemeral=True)
-        embed = await self.cog.generate_market_analysis_embed(days)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-
 class ChartModal(discord.ui.Modal):
     """Modal yêu cầu nhập thông tin vẽ chart khi nhấn nút"""
     def __init__(self, cog):
@@ -94,24 +75,61 @@ class ChartModal(discord.ui.Modal):
         except ValueError:
             return await interaction.followup.send("❌ Days must be a valid number!", ephemeral=True)
         
-        # Gọi luồng xử lý vẽ đồ thị từ Cog Engine
         await self.cog.process_chart_render(interaction, item_name, days)
+
 
 # ==========================================
 # CENTRALIZED VIEW HUB
 # ==========================================
 
 class CentralHubView(discord.ui.View):
-    def __init__(self, cog, user_id):
+    def __init__(self, cog, user_id, alerts_enabled):
         super().__init__(timeout=300)
         self.cog = cog
         self.user_id = user_id
-        
-        # Nhúng trực tiếp Dropdown Phân tích vào dòng 0
-        self.add_item(HubDurationSelect(self.cog, row=0))
+        self.alerts_enabled = alerts_enabled
 
-    @discord.ui.button(label="📋 My Watchlist", style=discord.ButtonStyle.primary, row=1)
-    async def my_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Button 1: Toggle Alerts
+        self.toggle_btn = discord.ui.Button(
+            label="🔔 Alerts: ON" if alerts_enabled else "🔕 Alerts: OFF",
+            style=discord.ButtonStyle.success if alerts_enabled else discord.ButtonStyle.danger,
+            row=0
+        )
+        self.toggle_btn.callback = self.toggle_alerts
+        self.add_item(self.toggle_btn)
+
+        # Button 2: Watchlist
+        self.watchlist_btn = discord.ui.Button(label="📋 My Watchlist", style=discord.ButtonStyle.primary, row=0)
+        self.watchlist_btn.callback = self.my_list
+        self.add_item(self.watchlist_btn)
+
+        # Button 3: Chart
+        self.chart_btn = discord.ui.Button(label="📈 Price Chart", style=discord.ButtonStyle.secondary, row=0)
+        self.chart_btn.callback = self.price_chart
+        self.add_item(self.chart_btn)
+
+    async def toggle_alerts(self, interaction: discord.Interaction):
+        self.alerts_enabled = not self.alerts_enabled
+        
+        # Cập nhật DB
+        await user_slots_col.update_one(
+            {"_id": self.user_id}, 
+            {"$set": {"alerts_enabled": self.alerts_enabled}}, 
+            upsert=True
+        )
+
+        # Cập nhật UI của nút bấm
+        self.toggle_btn.label = "🔔 Alerts: ON" if self.alerts_enabled else "🔕 Alerts: OFF"
+        self.toggle_btn.style = discord.ButtonStyle.success if self.alerts_enabled else discord.ButtonStyle.danger
+
+        # Cập nhật lại Hub Message
+        embed = interaction.message.embeds[0]
+        status_text = '🟢 ON' if self.alerts_enabled else '🔴 OFF'
+        embed.description = embed.description.replace('🟢 ON', status_text).replace('🔴 OFF', status_text)
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def my_list(self, interaction: discord.Interaction):
         items = await self.cog.get_user_items(self.user_id)
         max_slots = await self.cog.get_max_slots(self.user_id)
         
@@ -128,15 +146,7 @@ class CentralHubView(discord.ui.View):
             
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="💰 Profitable Flips", style=discord.ButtonStyle.success, row=1)
-    async def profitable_flips(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        embed = await self.cog.calculate_flip_opportunities()
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="📈 Price Chart", style=discord.ButtonStyle.secondary, row=1)
-    async def price_chart(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Mở Modal nhập tên item cần vẽ đồ thị
+    async def price_chart(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ChartModal(self.cog))
 
 # ==========================================
@@ -146,14 +156,17 @@ class CentralHubView(discord.ui.View):
 class ShopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Dictionary lưu thông tin message cảnh báo đã gửi để update trạng thái
+        # Format: {"owner_itemname": [(user_id, message_id)]}
+        self.active_alerts = {}
 
     async def cog_load(self):
-        print("⏳ [Cơ sở dữ liệu]: Đang thiết lập cấu hình tự động dọn dẹp dữ liệu...")
+        print("⏳ [Database]: Configuring automatic data cleanup...")
         try:
             await market_history_col.create_index("timestamp", expireAfterSeconds=2592000)
-            print("✅ [Cơ sở dữ liệu]: Đã bật TTL Index! Dữ liệu cũ quá 30 ngày sẽ tự động bị tiêu hủy.")
+            print("✅ [Cơ sở dữ liệu]: TTL Index enabled! Data older than 30 days will be automatically deleted..")
         except Exception as e:
-            print(f"❌ [Cơ sở dữ liệu]: Không thể thiết lập TTL Index: {e}")
+            print(f"❌ [Database]: Unable to set up TTL Index: {e}")
             
     async def log_action(self, user_id: int, action: str, details: str):
         await bot_logs_col.insert_one({
@@ -172,7 +185,7 @@ class ShopTracker(commands.Cog):
 
     async def get_max_slots(self, user_id):
         user_doc = await user_slots_col.find_one({"_id": user_id})
-        return user_doc.get("max_slots", 0) if user_doc else 3
+        return user_doc.get("max_slots", 3) if user_doc else 3
 
     async def process_add_or_edit(self, user_id, item_name, max_price, is_edit=False):
         item_key = item_name.lower().strip()
@@ -215,79 +228,7 @@ class ShopTracker(commands.Cog):
             return True, f"Removed **{item_name}**."
         return False, "Item not found."
 
-    # --- MARKET INTELLIGENCE ENGINE (AGGREGATION) ---
-    async def generate_market_analysis_embed(self, days: int):
-        time_boundary = datetime.utcnow() - timedelta(days=days)
-        pipeline = [
-            {"$match": {"timestamp": {"$gte": time_boundary}, "type": "sold"}},
-            {"$unwind": "$items"},
-            {"$group": {
-                "_id": "$items.item_name",
-                "total_sold": {"$sum": "$items.quantity"},
-                "min_price": {"$min": "$items.cost"},
-                "max_price": {"$max": "$items.cost"},
-                "avg_price": {"$avg": "$items.cost"}
-            }},
-            {"$sort": {"total_sold": -1}},
-            {"$limit": 10}
-        ]
-        
-        embed = discord.Embed(title=f"🔥 Top 10 Best Sellers ({days} Days Window)", color=discord.Color.gold())
-        async for doc in market_history_col.aggregate(pipeline):
-            metrics = (
-                f"• Vol Sold: `{doc['total_sold']:,}` units\n"
-                f"• Min-Max: `{doc['min_price']:,}` - `{doc['max_price']:,}`\n"
-                f"• Avg Price: **{int(doc['avg_price']):,}** ea"
-            )
-            embed.add_field(name=f"📦 {doc['_id'].title()}", value=metrics, inline=False)
-        return embed
-
-    async def calculate_flip_opportunities(self):
-        time_boundary = datetime.utcnow() - timedelta(days=7)
-        sold_stats = {}
-        pipeline_sold = [
-            {"$match": {"timestamp": {"$gte": time_boundary}, "type": "sold"}},
-            {"$unwind": "$items"},
-            {"$group": {"_id": "$items.item_name", "avg_sold": {"$avg": "$items.cost"}, "vol": {"$sum": "$items.quantity"}}}
-        ]
-        async for doc in market_history_col.aggregate(pipeline_sold):
-            if doc["vol"] > 5:
-                sold_stats[doc["_id"]] = doc["avg_sold"]
-
-        pipeline_open = [
-            {"$match": {"timestamp": {"$gte": datetime.utcnow() - timedelta(hours=12)}, "type": "open"}},
-            {"$unwind": "$items"},
-            {"$sort": {"items.cost": 1}}
-        ]
-        
-        embed = discord.Embed(title="💰 Algorithmic Resell Signals (Flipping)", description="Suggested purchase targets with high margin yield", color=discord.Color.green())
-        count = 0
-        
-        async for doc in market_history_col.aggregate(pipeline_open):
-            item_name = doc["items"]["item_name"]
-            current_cost = doc["items"]["cost"]
-            
-            if item_name in sold_stats:
-                avg_market_value = sold_stats[item_name]
-                if current_cost < (avg_market_value * 0.75):
-                    profit_per_item = int(avg_market_value - current_cost)
-                    details = (
-                        f"🏪 Shop: `{doc['shop_name']}` | Owner: `{doc['owner']}`\n"
-                        f"📍 Map: **{doc['map']}**\n"
-                        f"📉 Current Listing: **{current_cost:,}** ea\n"
-                        f"📈 Historical Avg Value: `{int(avg_market_value):,}` ea\n"
-                        f"🔥 **Estimated Margin Profit: +{profit_per_item:,}** per unit"
-                    )
-                    embed.add_field(name=f"💎 Deal Target: {item_name.title()}", value=details, inline=False)
-                    count += 1
-                    if count >= 5: break
-                    
-        if count == 0:
-            embed.description = "No anomalies detected. Market prices are currently balanced stabily."
-        return embed
-
     async def process_chart_render(self, interaction: discord.Interaction, item_name: str, days: int):
-        """Hàm xử lý logic vẽ đồ thị Matplotlib"""
         time_boundary = datetime.utcnow() - timedelta(days=days)
         cursor = market_history_col.find({
             "timestamp": {"$gte": time_boundary},
@@ -330,72 +271,70 @@ class ShopTracker(commands.Cog):
         file = discord.File(buf, filename="market_trend.png")
         await interaction.followup.send(file=file, ephemeral=True)
 
+
     # --- SINGLE CENTRAL HUB SLASH COMMAND ---
-    @app_commands.command(name="market_hub", description="Open the central executive Market Analysis Dashboard.")
+    @app_commands.command(name="market_hub", description="Open the Market monitoring and management center..")
     async def market_hub(self, interaction: discord.Interaction):
         profile = await players_col.find_one({"user_id": interaction.user.id}, {"ign": 1})
         if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
             return await interaction.response.send_message("❌ Profile unlinked. Set via `/mygear` first.", ephemeral=True)
 
+        # Lấy thông tin cá nhân của User
+        user_doc = await user_slots_col.find_one({"_id": interaction.user.id})
+        alerts_enabled = user_doc.get("alerts_enabled", True) if user_doc else True
+        max_slots = user_doc.get("max_slots", 3) if user_doc else 3
+        tracked_items = await self.get_user_items(interaction.user.id)
+
         await interaction.response.defer(ephemeral=False)
         
         embed = discord.Embed(
-            title="📊 MyK Advanced Market Intelligence Hub",
-            description="Welcome to the center trading control panel. Access deep market data analytics via buttons/dropdown below.",
+            title="🎯 MyK Central Market Hub",
+            description=(
+                "Your personal market tracking dashboard. "
+                "Manage your watchlist and adjust real-time price alerts..\n\n"
+                f"**📦 Slot for track:** `{len(tracked_items)}/{max_slots}`\n"
+                f"**🔔 Receive notifications:** `{'🟢 ON' if alerts_enabled else '🔴 OFF'}`"
+            ),
             color=discord.Color.dark_theme()
         )
         embed.set_thumbnail(url=self.bot.user.avatar.url if self.bot.user.avatar else None)
-        embed.set_footer(text="MyK • automatic supporter")
+        embed.set_footer(text="MyK • Automatic Supporter")
         
-        # Gọi giao diện Hub tổng hợp mới
-        view = CentralHubView(self, interaction.user.id)
+        view = CentralHubView(self, interaction.user.id, alerts_enabled)
         await interaction.followup.send(embed=embed, view=view)
+
 
     # ==========================================
     # BOT OWNER ONLY COMMAND
     # ==========================================
 
-    @app_commands.command(name="addslot", description="[Bot Owner Only] Cấp hoặc điều chỉnh số lượng slot theo dõi tối đa của người dùng.")
-    @app_commands.describe(user="Chọn người dùng cần chỉnh sửa slot", slots="Tổng số lượng slot tối đa muốn cấp (Ví dụ: 10)")
+    @app_commands.command(name="addslot", description="[Bot Owner Only] Grant or adjust the user's maximum number of tracking slots.")
+    @app_commands.describe(user="CSelect the user whose slot needs editing.", slots="The maximum number of slots you wish to allocate (e.g., 10)")
     async def addslot(self, interaction: discord.Interaction, user: discord.User, slots: int):
-        """Lệnh ẩn chỉ có Bot Owner (Nhà phát triển) mới có quyền thực thi"""
-        # Kiểm tra xem người dùng bấm lệnh có phải là Owner của Bot không
         is_bot_owner = await self.bot.is_owner(interaction.user)
         
         if not is_bot_owner:
             return await interaction.response.send_message(
-                "❌ Lệnh này được bảo mật nghiêm ngặt và chỉ dành riêng cho **Bot Owner**!", 
+                "❌ This command is strictly secured and reserved exclusively for the **Bot Owner**.*!", 
                 ephemeral=True
             )
 
-        # Nếu đúng là Bot Owner, tiến hành xử lý dữ liệu
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # Cập nhật số lượng slot vào MongoDB (Sử dụng ID dạng số của user làm mốc định danh gốc)
             await user_slots_col.update_one(
                 {"_id": user.id},
                 {"$set": {"max_slots": slots}},
-                upsert=True  # Nếu user chưa từng có dữ liệu slot, tự động tạo bản ghi mới
+                upsert=True
             )
             
-            # Ghi log hệ thống để theo dõi
-            await self.log_action(
-                interaction.user.id, 
-                "OWNER_GRANT_SLOT", 
-                f"Set slots for {user.id} ({user.name}) to {slots}"
-            )
-            
-            await interaction.followup.send(
-                f"✅ Thành công! Đã cấu hình lại giới hạn của người dùng {user.mention} thành **{slots}** slots.", 
-                ephemeral=True
-            )
+            await self.log_action(interaction.user.id, "OWNER_GRANT_SLOT", f"Set slots for {user.id} ({user.name}) to {slots}")
+            await interaction.followup.send(f"✅ Success! User limits have been reconfigured. {user.mention} thành **{slots}** slots.", ephemeral=True)
             
         except Exception as e:
-            await interaction.followup.send(
-                f"❌ Thao tác thất bại. Lỗi cơ sở dữ liệu: {e}", 
-                ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Operation failed. Database error.: {e}", ephemeral=True)
+
+
     # --- STREAM FEED LISTENER ---
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -418,9 +357,35 @@ class ShopTracker(commands.Cog):
                         itm["item_name"] = itm["item_name"].lower().strip()
                     await market_history_col.insert_one(shop_data)
 
+                    # --- UPDATE TRẠNG THÁI NẾU ITEM ĐÃ BÁN ---
+                    if shop_data.get("type") == "sold":
+                        owner = shop_data.get("owner", "Unknown")
+                        for itm in items_in_shop:
+                            key = f"{owner}_{itm['item_name']}"
+                            if key in self.active_alerts:
+                                for user_id, dm_id in self.active_alerts[key]:
+                                    try:
+                                        user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                                        if not user.dm_channel:
+                                            await user.create_dm()
+                                            
+                                        msg = await user.dm_channel.fetch_message(dm_id)
+                                        if msg.embeds:
+                                            em = msg.embeds[0]
+                                            # Cập nhật Highlight trạng thái đã bán
+                                            em.description = "## 🔴 **(SOLD OUT)**"
+                                            em.color = discord.Color.red()
+                                            await msg.edit(embed=em)
+                                    except Exception:
+                                        pass
+                                # Xóa khỏi cache sau khi đã báo hết hàng
+                                self.active_alerts.pop(key, None)
+                        continue
+                    
                     if shop_data.get("type") != "open":
                         continue
 
+                    # --- GỬI THÔNG BÁO ITEM MỚI ---
                     item_names = [item["item_name"] for item in items_in_shop]
                     relevant_docs = await shop_subscriptions_col.find({"_id": {"$in": item_names}}).to_list(length=None)
                     active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
@@ -438,7 +403,17 @@ class ShopTracker(commands.Cog):
                         if subscribers:
                             for sub in subscribers:
                                 if cost <= sub["max_price"]:
-                                    embed = discord.Embed(title="🎉 MyK Hunter Alert", description="MyK found a cheap item for you!", color=discord.Color.green())
+                                    
+                                    # Kiểm tra xem người dùng có tắt thông báo hay không
+                                    user_doc = await user_slots_col.find_one({"_id": sub['user_id']})
+                                    if user_doc and not user_doc.get("alerts_enabled", True):
+                                        continue
+                                        
+                                    embed = discord.Embed(
+                                        title="🎉 MyK Hunter Alert", 
+                                        description="## 🟢 **AVAILABLE**", 
+                                        color=discord.Color.green()
+                                    )
                                     embed.add_field(name="📦 Item ", value=f"**{item['item_name'].title()}**", inline=True)
                                     embed.add_field(name="💰 Price", value=f"**{cost:,}** ea", inline=True)
                                     embed.add_field(name="⚖️ Stock", value=f"`{quantity:,}`" if isinstance(quantity, int) else f"`{quantity}`", inline=True)
@@ -447,7 +422,14 @@ class ShopTracker(commands.Cog):
                                     
                                     try:
                                         user = self.bot.get_user(sub['user_id']) or await self.bot.fetch_user(sub['user_id'])
-                                        await user.send(embed=embed)
+                                        sent_msg = await user.send(embed=embed)
+                                        
+                                        # Lưu tin nhắn vào Cache để update trạng thái sau này
+                                        key = f"{owner}_{name_lower}"
+                                        if key not in self.active_alerts:
+                                            self.active_alerts[key] = []
+                                        self.active_alerts[key].append((sub['user_id'], sent_msg.id))
+                                        
                                     except Exception:
                                         pass
 
