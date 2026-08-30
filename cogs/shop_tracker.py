@@ -185,7 +185,7 @@ class ShopTracker(commands.Cog):
 
     async def get_max_slots(self, user_id):
         user_doc = await user_slots_col.find_one({"_id": user_id})
-        return user_doc.get("max_slots", 3) if user_doc else 3
+        return user_doc.get("max_slots", 10) if user_doc else 10
 
     async def process_add_or_edit(self, user_id, item_name, max_price, is_edit=False):
         item_key = item_name.lower().strip()
