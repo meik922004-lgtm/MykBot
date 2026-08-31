@@ -279,10 +279,10 @@ class ShopTracker(commands.Cog):
         if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
             return await interaction.response.send_message("❌ Profile unlinked. Set via `/mygear` first.", ephemeral=True)
 
-        # Lấy thông tin cá nhân của User
+        # CẬP NHẬT: Đã đổi default slots thành 10
         user_doc = await user_slots_col.find_one({"_id": interaction.user.id})
         alerts_enabled = user_doc.get("alerts_enabled", True) if user_doc else True
-        max_slots = user_doc.get("max_slots", 3) if user_doc else 3
+        max_slots = user_doc.get("max_slots", 10) if user_doc else 10 
         tracked_items = await self.get_user_items(interaction.user.id)
 
         await interaction.response.defer(ephemeral=False)
@@ -305,11 +305,54 @@ class ShopTracker(commands.Cog):
 
 
     # ==========================================
-    # BOT OWNER ONLY COMMAND
+    # BOT OWNER ONLY COMMANDS
     # ==========================================
+    
+    # LỆNH MỚI: Check số lượng người dùng bằng lệnh prefix
+    @commands.command(name="checkusers", help="[Bot Owner Only] Hiển thị tổng số người dùng cùng tên Discord và IGN.")
+    @commands.is_owner()
+    async def checkusers(self, ctx):
+        # Lấy toàn bộ document trong collection của người chơi có IGN
+        cursor = players_col.find({"ign": {"$exists": True, "$ne": "Not Set"}})
+        users = await cursor.to_list(length=None)
+        
+        total_users = len(users)
+        if total_users == 0:
+            return await ctx.send("❌ Không có người dùng nào được tìm thấy trong cơ sở dữ liệu.")
+
+        await ctx.send(f"⏳ Đang thu thập dữ liệu của **{total_users}** người dùng...")
+
+        lines = []
+        for index, user_data in enumerate(users, 1):
+            user_id = user_data.get("user_id")
+            ign = user_data.get("ign")
+            
+            # Fetch Discord User Name
+            discord_user = self.bot.get_user(user_id)
+            if not discord_user:
+                try:
+                    discord_user = await self.bot.fetch_user(user_id)
+                except Exception:
+                    discord_user = None
+                    
+            discord_name = discord_user.name if discord_user else f"Unknown ID: {user_id}"
+            lines.append(f"`{index}.` **{discord_name}** | IGN: `{ign}`")
+
+        # Chia nhỏ text nếu vượt quá giới hạn 2000 ký tự của Discord
+        message_chunk = f"📊 **Danh sách tổng cộng {total_users} người dùng:**\n\n"
+        for line in lines:
+            if len(message_chunk) + len(line) + 1 > 1900:
+                await ctx.send(message_chunk)
+                message_chunk = line + "\n"
+            else:
+                message_chunk += line + "\n"
+        
+        if message_chunk.strip():
+            await ctx.send(message_chunk)
+
 
     @app_commands.command(name="addslot", description="[Bot Owner Only] Grant or adjust the user's maximum number of tracking slots.")
-    @app_commands.describe(user="CSelect the user whose slot needs editing.", slots="The maximum number of slots you wish to allocate (e.g., 10)")
+    @app_commands.describe(user="Select the user whose slot needs editing.", slots="The maximum number of slots you wish to allocate (e.g., 10)")
     async def addslot(self, interaction: discord.Interaction, user: discord.User, slots: int):
         is_bot_owner = await self.bot.is_owner(interaction.user)
         
