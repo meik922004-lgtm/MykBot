@@ -1,5 +1,6 @@
 import os
-from flask import Flask, request, redirect, url_for, session, flash, render_template_string
+import time
+from flask import Flask, request, redirect, url_for, session, render_template_string, jsonify
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -8,12 +9,10 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "super-secret-key-myk-bot-1928")
 
-MONGO_URI = os.getenv("MONGO_URI")
-if not MONGO_URI:
-    MONGO_URI = "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0")
 
-# Giới hạn maxPoolSize để tiết kiệm RAM kết nối với MongoDB
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, maxPoolSize=10)
+# Giới hạn tối đa 5 connection pools để tiết kiệm RAM tuyệt đối trên Render Free
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000, maxPoolSize=5)
 db = client["database0"]
 
 players_col = db["players"]
@@ -22,209 +21,268 @@ shop_col = db["shop_subscriptions"]
 
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin123")
 
-# ========================================================================
-# LAYOUT SYSTEM (Đã gỡ bỏ các trang con)
-# ========================================================================
-BASE_LAYOUT = """
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MyKBot - Admin Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        body { background-color: #0d1117; color: #ffffff; font-family: 'Segoe UI', sans-serif; font-weight: 500; }
-        .navbar { background-color: #161b22 !important; border-bottom: 1px solid #30363d; }
-        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; }
-        .card-header { background-color: #21262d; border-bottom: 1px solid #30363d; font-weight: bold; }
-        .table { color: #f0f6fc; border-color: #30363d; }
-        .table th { background-color: #1f242c; color: #58a6ff; font-weight: bold; }
-        .table td { vertical-align: middle; }
-        .sidebar { background-color: #161b22; min-height: calc(100vh - 56px); border-right: 1px solid #30363d; padding-top: 20px; }
-        .sidebar a { color: #c9d1d9; text-decoration: none; padding: 12px 20px; display: block; border-radius: 4px; margin: 4px 10px; font-weight: bold; transition: 0.2s; }
-        .sidebar a:hover, .sidebar a.active { background-color: #21262d; color: #58a6ff; transform: translateX(5px); }
-        .text-light-custom { color: #e6edf3 !important; }
-    </style>
-</head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand text-primary fw-bold fs-4" href="/"><i class="fa-solid fa-robot me-2"></i>MyKBot Center</a>
-            <div class="d-flex align-items-center">
-                <span class="navbar-text me-4 text-success fw-bold"><i class="fa-solid fa-circle-check me-1"></i> System Online</span>
-                <a href="{{ url_for('logout') }}" class="btn btn-sm btn-outline-danger fw-bold"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
-            </div>
-        </div>
-    </nav>
-    <div class="container-fluid">
-        <div class="row">
-            <div class="col-md-2 d-none d-md-block sidebar px-0">
-                <a href="{{ url_for('index') }}" class="{% if active_page == 'slots' %}active{% endif %}">Cấp Quyền & Slots</a>
-                <a href="{{ url_for('view_shops') }}" class="{% if active_page == 'shops' %}active{% endif %}">Mặt Hàng Theo Dõi</a>
-            </div>
-            <div class="col-md-10 ms-sm-auto px-4 py-4">
-                {% with messages = get_flashed_messages(with_categories=true) %}
-                    {% if messages %}
-                        {% for category, message in messages %}
-                            <div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fw-bold text-white fs-6 border-0 shadow">{{ message }}</div>
-                        {% endfor %}
-                    {% endif %}
-                {% endwith %}
-                {{ content|safe }}
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-"""
+# Cache RAM ngắn hạn cho IGN để tránh spam query MongoDB
+IGN_CACHE = {}
+CACHE_TTL = 30 # seconds
 
-@app.template_filter('comma_filter')
-def comma_filter(value):
-    return f"{value:,}"
+def get_ign_cached(user_id):
+    if not user_id:
+        return "Unknown"
+    
+    now = time.time()
+    if user_id in IGN_CACHE:
+        ign, timestamp = IGN_CACHE[user_id]
+        if now - timestamp < CACHE_TTL:
+            return ign
+
+    try:
+        p = players_col.find_one({"user_id": int(user_id)}, {"ign": 1, "_id": 0})
+        ign = p.get("ign") if p and p.get("ign") and p.get("ign") != "Not Set" else f"ID: {user_id}"
+    except Exception:
+        ign = f"ID: {user_id}"
+
+    IGN_CACHE[user_id] = (ign, now)
+    return ign
 
 def login_required(f):
     def wrapper(*args, **kwargs):
-        if not session.get('logged_in'): return redirect(url_for('login'))
+        if not session.get('logged_in'):
+            if request.path.startswith('/api/'):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect(url_for('login'))
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
     return wrapper
 
-# Tối ưu RAM: Chỉ kéo field 'ign' thay vì toàn bộ profile người chơi
-def get_ign(user_id):
-    if not user_id:
-        return "Unknown"
-    try:
-        p = players_col.find_one({"user_id": int(user_id)}, {"ign": 1, "_id": 0})
-        return p.get("ign") if p and p.get("ign") and p.get("ign") != "Not Set" else "Unknown (No Profile)"
-    except Exception:
-        return "Unknown"
-
-# ========================================================================
-# ROUTES 
-# ========================================================================
+# ==========================================
+# ROUTES & REALTIME API
+# ==========================================
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         if request.form.get('password') == DASHBOARD_PASSWORD:
             session['logged_in'] = True
-            return redirect(url_for('index'))
-        flash("Sai mật khẩu quản trị viên!", "danger")
+            return redirect(url_for('admin'))
     
-    login_html = """
-    <!DOCTYPE html><html><head><title>MyKBot Login</title>
+    return """
+    <!DOCTYPE html><html><head><title>Admin Login</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>body{background-color:#0d1117;color:#ffffff;height:100vh;display:flex;align-items:center;justify-content:center;font-weight:bold;} .login-card{background-color:#161b22;padding:40px;border-radius:12px; border:1px solid #30363d;}</style>
+    <style>body{background-color:#0d1117;color:#fff;height:100vh;display:flex;align-items:center;justify-content:center;}
+    .card{background:#161b22;padding:30px;border-radius:10px;border:1px solid #30363d;width:100%;max-width:380px;}</style>
     </head><body>
-    <div class="login-card shadow-lg text-center">
-        <h2 class="text-primary mb-4">MyKBot Admin</h2>
+    <div class="card shadow-lg text-center">
+        <h4 class="text-primary mb-3">MyKBot Control Panel</h4>
         <form method="POST">
-            <input type="password" name="password" class="form-control form-control-lg mb-4 bg-dark text-white border-secondary" required autofocus placeholder="Nhập mật khẩu...">
-            <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold">Đăng Nhập</button>
+            <input type="password" name="password" class="form-control bg-dark text-white border-secondary mb-3" placeholder="Mật khẩu Admin..." required autofocus>
+            <button class="btn btn-primary w-100 fw-bold">Đăng Nhập</button>
         </form>
     </div></body></html>
     """
-    return render_template_string(login_html)
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
+@app.route('/admin')
 @login_required
-def index():
-    # Gộp route /slots làm trang chủ để giảm thiểu lượng code và routing
-    if request.method == 'POST':
-        user_id_raw = request.form.get("user_id", "").strip()
-        if user_id_raw.isdigit():
-            user_id = int(user_id_raw)
-            max_slots = int(request.form.get("max_slots", 0))
-            slots_col.update_one({"_id": user_id}, {"$set": {"max_slots": max_slots}}, upsert=True)
-            flash(f"Đã cập nhật {max_slots} slots thành công!", "success")
-        else:
-            flash("ID Discord không hợp lệ!", "error")
-        return redirect(url_for('index'))
-        
-    all_slots = list(slots_col.find())
-    for item in all_slots:
-        item["ign"] = get_ign(item.get("_id"))
-
-    content = """
-    <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-user-shield text-warning me-2"></i>Quản Lý Quyền Truy Cập & Slots</h2>
-    
-    <div class="card p-4 border-warning shadow mb-4">
-        <h5 class="text-warning mb-3">Thêm / Chỉnh sửa Slot</h5>
-        <form method="POST" class="row g-3 align-items-center">
-            <div class="col-auto">
-                <input type="text" name="user_id" class="form-control bg-dark text-white border-secondary" placeholder="Nhập Discord ID" required>
+def admin():
+    # Trang Single-Page Admin giao diện gọn tối đa
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>MyKBot Admin Live Dashboard</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <style>
+            body { background: #0d1117; color: #c9d1d9; font-family: system-ui, -apple-system, sans-serif; }
+            .card { background: #161b22; border: 1px solid #30363d; }
+            .table-dark { --bs-table-bg: #161b22; border-color: #30363d; }
+            .pulse-dot { height: 10px; width: 10px; background-color: #238636; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #238636; animation: pulse 1.5s infinite; }
+            @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+            .item-badge { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 4px 8px; margin: 2px; display: inline-block; font-size: 0.85rem; }
+        </style>
+    </head>
+    <body>
+        <nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-3 mb-4">
+            <span class="navbar-brand fw-bold text-primary"><i class="fa-solid fa-gauge-high me-2"></i>MyKBot Monitor</span>
+            <div class="d-flex align-items-center">
+                <span class="me-3 small text-muted"><span class="pulse-dot me-1"></span> Live Data (5s)</span>
+                <a href="/logout" class="btn btn-sm btn-outline-danger"><i class="fa-solid fa-power-off"></i></a>
             </div>
-            <div class="col-auto">
-                <input type="number" name="max_slots" class="form-control bg-dark text-white border-secondary" placeholder="Số lượng Slots" required>
+        </nav>
+
+        <div class="container-fluid px-4">
+            <!-- Form cập nhật Slot nhanh -->
+            <div class="card p-3 mb-4">
+                <div class="row g-2 align-items-center">
+                    <div class="col-auto"><strong class="text-warning"><i class="fa-solid fa-user-gear me-1"></i> Cấp Slot:</strong></div>
+                    <div class="col-auto"><input type="text" id="slot_user_id" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="Discord User ID"></div>
+                    <div class="col-auto"><input type="number" id="slot_count" class="form-control form-control-sm bg-dark text-white border-secondary" style="width: 100px;" placeholder="Slots"></div>
+                    <div class="col-auto"><button onclick="updateSlot()" class="btn btn-sm btn-warning fw-bold">Cập Nhật</button></div>
+                    <div class="col-auto"><span id="slot_status" class="small ms-2"></span></div>
+                </div>
             </div>
-            <div class="col-auto">
-                <button type="submit" class="btn btn-warning fw-bold text-dark">Cập Nhật</button>
-            </div>
-        </form>
-    </div>
 
-    <div class="card p-4 border-secondary shadow">
-        <table class="table table-dark table-hover mb-0">
-            <thead>
-                <tr class="text-warning fs-5"><th>Người Chơi (IGN)</th><th>Discord ID</th><th>Hạn Mức Slots</th></tr>
-            </thead>
-            <tbody>
-                {% for item in all_slots %}
-                <tr>
-                    <td class="text-white fs-5 fw-bold">{{ item.ign }}</td>
-                    <td class="text-info fs-6">{{ item._id }}</td>
-                    <td><span class="badge bg-warning text-dark fw-bold px-3 py-2 fs-6">{{ item.max_slots }} Slots</span></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    """
-    
-    # Kết xuất nội dung nhúng thẳng vào layout
-    rendered_content = render_template_string(content, all_slots=all_slots)
-    return render_template_string(BASE_LAYOUT, content=rendered_content, active_page='slots')
-
-@app.route('/shops')
-@login_required
-def view_shops():
-    shops = list(shop_col.find())
-    for s in shops:
-        for sub in s.get("subscribers", []):
-            sub["ign"] = get_ign(sub.get("user_id"))
-
-    content = """
-    <h2 class="text-white mb-4 fw-bold"><i class="fa-solid fa-store text-success me-2"></i>Mặt Hàng Giám Sát</h2>
-    <div class="row">
-        {% for s in shops %}
-        <div class="col-md-4">
-            <div class="card border-success mb-4 shadow">
-                <div class="card-header bg-success text-white fw-bold fs-5">{{ s._id | upper }}</div>
-                <div class="card-body">
-                    <p class="text-light-custom fs-6 mb-3">Số người theo dõi: <b class="text-white fs-5">{{ s.subscribers|length }}</b></p>
-                    <ul class="list-unstyled mb-0">
-                        {% for sub in s.subscribers %}
-                        <li class="border-bottom border-secondary py-2 d-flex justify-content-between align-items-center">
-                            <span class="text-warning fw-bold fs-6">{{ sub.ign }}</span>
-                            <span class="text-info fw-bold fs-6">≤ {{ sub.max_price | comma_filter }}</span>
-                        </li>
-                        {% endfor %}
-                    </ul>
+            <!-- Bảng danh sách người dùng & Mặt hàng đang theo dõi -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark border-bottom border-secondary d-flex justify-content-between align-items-center">
+                    <h6 class="m-0 fw-bold text-white"><i class="fa-solid fa-users me-2 text-info"></i>Danh Sách Người Dùng & Watchlist Active</h6>
+                    <span class="badge bg-secondary" id="total_users_count">0 Users</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0">
+                        <thead>
+                            <tr class="text-secondary small">
+                                <th>NGƯỜI CHƠI (IGN)</th>
+                                <th>DISCORD ID</th>
+                                <th>SLOTS SỬ DỤNG</th>
+                                <th>MẶT HÀNG ĐANG THEO DÕI (TÊN | GIÁ MAX)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="user_table_body">
+                            <tr><td colspan="4" class="text-center py-4 text-muted">Đang tải dữ liệu...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
-        {% endfor %}
-    </div>
+
+        <script>
+            async function fetchData() {
+                try {
+                    const res = await fetch('/api/live_data');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    
+                    document.getElementById('total_users_count').innerText = `${data.length} Active Users`;
+                    const tbody = document.getElementById('user_table_body');
+                    
+                    if (data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">Chưa có người dùng nào theo dõi mặt hàng.</td></tr>';
+                        return;
+                    }
+
+                    let rows = '';
+                    data.forEach(u => {
+                        let itemsHtml = u.items.map(i => 
+                            `<span class="item-badge">
+                                <b class="text-info">${i.name}</b> 
+                                <span class="text-warning">≤ ${i.max_price.toLocaleString()}</span>
+                            </span>`
+                        ).join('');
+
+                        if (!itemsHtml) itemsHtml = '<i class="text-muted small">Chưa đăng ký item nào</i>';
+
+                        rows += `
+                            <tr>
+                                <td class="fw-bold text-white">${u.ign}</td>
+                                <td class="small text-muted">${u.user_id}</td>
+                                <td><span class="badge bg-dark border border-secondary">${u.used_slots}/${u.max_slots}</span></td>
+                                <td>${itemsHtml}</td>
+                            </tr>
+                        `;
+                    });
+                    tbody.innerHTML = rows;
+                } catch (e) {
+                    console.error("Lỗi cập nhật dữ liệu:", e);
+                }
+            }
+
+            async function updateSlot() {
+                const userId = document.getElementById('slot_user_id').value.trim();
+                const slots = document.getElementById('slot_count').value.trim();
+                const status = document.getElementById('slot_status');
+
+                if (!userId || !slots) {
+                    status.innerHTML = '<span class="text-danger">Vui lòng nhập đủ thông tin!</span>';
+                    return;
+                }
+
+                const res = await fetch('/api/update_slot', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: userId, max_slots: parseInt(slots)})
+                });
+
+                if (res.ok) {
+                    status.innerHTML = '<span class="text-success">✅ Thành công!</span>';
+                    document.getElementById('slot_user_id').value = '';
+                    document.getElementById('slot_count').value = '';
+                    fetchData();
+                } else {
+                    status.innerHTML = '<span class="text-danger">❌ Thất bại!</span>';
+                }
+                setTimeout(() => status.innerHTML = '', 3000);
+            }
+
+            // Tự động Polling mỗi 5 giây
+            fetchData();
+            setInterval(fetchData, 5000);
+        </script>
+    </body>
+    </html>
     """
-    rendered_content = render_template_string(content, shops=shops)
-    return render_template_string(BASE_LAYOUT, content=rendered_content, active_page='shops')
+    return render_template_string(html_template)
+
+
+# ==========================================
+# LIGHTWEIGHT REALTIME APIS
+# ==========================================
+
+@app.route('/api/live_data')
+@login_required
+def api_live_data():
+    # 1. Lấy danh sách giới hạn Slot
+    slots_map = {}
+    for doc in slots_col.find({}, {"_id": 1, "max_slots": 1}):
+        slots_map[doc["_id"]] = doc.get("max_slots", 10)
+
+    # 2. Lấy dữ liệu Shop Subscriptions
+    users_data = {}
+    
+    # Chỉ lấy trường `_id` và `subscribers`
+    cursor = shop_col.find({}, {"_id": 1, "subscribers": 1})
+    for doc in cursor:
+        item_name = doc["_id"].title()
+        for sub in doc.get("subscribers", []):
+            uid = sub["user_id"]
+            if uid not in users_data:
+                users_data[uid] = {
+                    "user_id": uid,
+                    "ign": get_ign_cached(uid),
+                    "max_slots": slots_map.get(uid, 10),
+                    "items": []
+                }
+            users_data[uid]["items"].append({
+                "name": item_name,
+                "max_price": sub["max_price"]
+            })
+
+    # Đưa kết quả về mảng và thêm thông tin used_slots
+    result = []
+    for uid, uinfo in users_data.items():
+        uinfo["used_slots"] = len(uinfo["items"])
+        result.append(uinfo)
+
+    return jsonify(result)
+
+@app.route('/api/update_slot', methods=['POST'])
+@login_required
+def api_update_slot():
+    data = request.json or {}
+    user_id_raw = str(data.get("user_id", "")).strip()
+    max_slots = data.get("max_slots")
+
+    if user_id_raw.isdigit() and isinstance(max_slots, int):
+        slots_col.update_one({"_id": int(user_id_raw)}, {"$set": {"max_slots": max_slots}}, upsert=True)
+        return jsonify({"status": "success"})
+    return jsonify({"error": "Invalid payload"}), 400
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
