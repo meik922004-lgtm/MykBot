@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 import os
 from dotenv import load_dotenv
-from database import db
+from Database import db
 
 # 1. Cấu hình Bot
 load_dotenv()
@@ -22,6 +22,7 @@ class MyKBot(commands.Bot):
             intents=intents,
             help_command=None
         )
+
     async def setup_hook(self):
         # Gọi hàm load cog ở đây
         await self.load_all_extensions()
@@ -58,7 +59,6 @@ async def sync(ctx):
 
 @bot.event
 async def on_ready():
-    # Đã được tự động add_view qua các hàm setup() của Cogs.
-    print(f"🤖 Bot {bot.user} đã sẵn sàng & toàn bộ Persistent Views đã hoạt động!")
+    print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
 
 bot.run(TOKEN)

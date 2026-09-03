@@ -7,7 +7,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime, timedelta
-from Database import shop_subscriptions_col, user_slots_col, bot_logs_col, players_col, market_history_col
+from database import shop_subscriptions_col, user_slots_col, bot_logs_col, players_col, market_history_col
 
 # ==========================================
 # UI COMPONENTS (AUTOCOMPLETE & MODALS)
