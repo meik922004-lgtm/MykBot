@@ -9,9 +9,11 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "super-secret-key-myk-bot-1928")
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0")
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise ValueError("❌ Thiếu cấu hình MONGO_URI trong tệp .env!")
 
-# Giới hạn tối đa 5 connection pools để tiết kiệm RAM tuyệt đối trên Render Free
+# Giới hạn tối đa 5 connection pools để tiết kiệm RAM trên Render Free
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000, maxPoolSize=5)
 db = client["database0"]
 
@@ -21,7 +23,6 @@ shop_col = db["shop_subscriptions"]
 
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin123")
 
-# Cache RAM ngắn hạn cho IGN để tránh spam query MongoDB
 IGN_CACHE = {}
 CACHE_TTL = 30 # seconds
 
@@ -54,10 +55,6 @@ def login_required(f):
     wrapper.__name__ = f.__name__
     return wrapper
 
-# ==========================================
-# ROUTES & REALTIME API
-# ==========================================
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -89,7 +86,6 @@ def logout():
 @app.route('/admin')
 @login_required
 def admin():
-    # Trang Single-Page Admin giao diện gọn tối đa
     html_template = """
     <!DOCTYPE html>
     <html lang="vi">
@@ -118,7 +114,6 @@ def admin():
         </nav>
 
         <div class="container-fluid px-4">
-            <!-- Form cập nhật Slot nhanh -->
             <div class="card p-3 mb-4">
                 <div class="row g-2 align-items-center">
                     <div class="col-auto"><strong class="text-warning"><i class="fa-solid fa-user-gear me-1"></i> Cấp Slot:</strong></div>
@@ -129,7 +124,6 @@ def admin():
                 </div>
             </div>
 
-            <!-- Bảng danh sách người dùng & Mặt hàng đang theo dõi -->
             <div class="card shadow-sm">
                 <div class="card-header bg-dark border-bottom border-secondary d-flex justify-content-between align-items-center">
                     <h6 class="m-0 fw-bold text-white"><i class="fa-solid fa-users me-2 text-info"></i>Danh Sách Người Dùng & Watchlist Active</h6>
@@ -221,7 +215,6 @@ def admin():
                 setTimeout(() => status.innerHTML = '', 3000);
             }
 
-            // Tự động Polling mỗi 5 giây
             fetchData();
             setInterval(fetchData, 5000);
         </script>
@@ -230,33 +223,27 @@ def admin():
     """
     return render_template_string(html_template)
 
-
-# ==========================================
-# LIGHTWEIGHT REALTIME APIS
-# ==========================================
-
 @app.route('/api/live_data')
 @login_required
 def api_live_data():
-    # 1. Lấy danh sách giới hạn Slot
     slots_map = {}
     for doc in slots_col.find({}, {"_id": 1, "max_slots": 1}):
-        slots_map[doc["_id"]] = doc.get("max_slots", 10)
+        try:
+            slots_map[int(doc["_id"])] = doc.get("max_slots", 10)
+        except (ValueError, TypeError):
+            slots_map[doc["_id"]] = doc.get("max_slots", 10)
 
-    # 2. Lấy dữ liệu Shop Subscriptions
     users_data = {}
-    
-    # Chỉ lấy trường `_id` và `subscribers`
     cursor = shop_col.find({}, {"_id": 1, "subscribers": 1})
     for doc in cursor:
-        item_name = doc["_id"].title()
+        item_name = str(doc["_id"]).title()
         for sub in doc.get("subscribers", []):
             uid = sub["user_id"]
             if uid not in users_data:
                 users_data[uid] = {
                     "user_id": uid,
                     "ign": get_ign_cached(uid),
-                    "max_slots": slots_map.get(uid, 10),
+                    "max_slots": slots_map.get(int(uid) if str(uid).isdigit() else uid, 10),
                     "items": []
                 }
             users_data[uid]["items"].append({
@@ -264,7 +251,6 @@ def api_live_data():
                 "max_price": sub["max_price"]
             })
 
-    # Đưa kết quả về mảng và thêm thông tin used_slots
     result = []
     for uid, uinfo in users_data.items():
         uinfo["used_slots"] = len(uinfo["items"])
