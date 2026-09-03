@@ -9,11 +9,11 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "super-secret-key-myk-bot-1928")
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@database0.gjbsfwh.mongodb.net/?appName=database0")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://meik922004_db_user:LrXxnoloY8TaezNI@Database0.gjbsfwh.mongodb.net/?appName=Database0")
 
 # Giới hạn tối đa 5 connection pools để tiết kiệm RAM tuyệt đối trên Render Free
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000, maxPoolSize=5)
-db = client["database0"]
+db = client["Database0"]
 
 players_col = db["players"]
 slots_col = db["user_slots"]

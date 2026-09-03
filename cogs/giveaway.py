@@ -6,8 +6,8 @@ import datetime
 import re
 import random
 
-# Import collection từ database.py của bạn
-from database import giveaways_col
+# Import collection từ Database.py của bạn
+from Database import giveaways_col
 
 
 # Hàm hỗ trợ parse thời gian từ chuỗi (vd: 10m, 2h, 1d) sang giây
@@ -41,7 +41,7 @@ class GiveawayView(discord.ui.View):
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
         
-        # Kiểm tra giveaway trong database
+        # Kiểm tra giveaway trong Database
         giveaway_data = await giveaways_col.find_one({"message_id": self.message_id})
         
         if not giveaway_data:
@@ -167,7 +167,7 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         for child in view.children:
             child.disabled = True
         
-        # Lấy danh sách người tham gia từ database
+        # Lấy danh sách người tham gia từ Database
         giveaway_data = await giveaways_col.find_one({"message_id": message.id})
         participants = giveaway_data.get("participants", []) if giveaway_data else []
 

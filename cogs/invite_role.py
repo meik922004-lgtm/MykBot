@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database import db # Giả định bạn dùng chung db với các file khác
+from Database import db # Giả định bạn dùng chung db với các file khác
 
 # Collection để lưu cấu hình: { "guild_id": 123, "invites": {"abcXYZ": 987654321} }
 # Trong đó abcXYZ là mã code, 987654321 là ID của role

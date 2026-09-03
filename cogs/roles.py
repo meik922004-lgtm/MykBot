@@ -269,7 +269,7 @@ class MainRolesMenuView(discord.ui.View):
         
         embed = discord.Embed(
             title="⚙️ ROLE MENU MANAGEMENT", 
-            description="Choose to add or remove roles from the database (roles_config.json):", 
+            description="Choose to add or remove roles from the Database (roles_config.json):", 
             color=discord.Color.blue()
         )
         await interaction.response.send_message(embed=embed, view=SettingMenuView(), ephemeral=True)

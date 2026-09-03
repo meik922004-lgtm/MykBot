@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from database import db
+from Database import db
 from datetime import datetime, timezone, timedelta
 import re
 

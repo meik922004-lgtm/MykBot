@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database import db, rpg_profiles_col
+from Database import db, rpg_profiles_col
 
 # ==========================================
 # CẤU HÌNH DỮ LIỆU
@@ -164,7 +164,7 @@ class DungeonStats(commands.Cog):
         player = await db.players.find_one({"user_id": interaction.user.id})
         cfg = await db.dungeon_configs.find_one({"dg_name": dg_name})
         
-        if not cfg: return await interaction.followup.send(f"❌ Error: Can't find data for `{dg_name}` in the database.", ephemeral=True)
+        if not cfg: return await interaction.followup.send(f"❌ Error: Can't find data for `{dg_name}` in the Database.", ephemeral=True)
         if not player or "my_stats" not in player or not player["my_stats"]: return await interaction.followup.send("❌ Please setup your profile using `/mygear` first!", ephemeral=True)
 
         req = cfg.get("reqs", {})
@@ -238,7 +238,7 @@ class DungeonStats(commands.Cog):
     async def dglist(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
-        if not dungeons: return await interaction.response.send_message("❌ database is empty.", ephemeral=True)
+        if not dungeons: return await interaction.response.send_message("❌ Database is empty.", ephemeral=True)
         await interaction.followup.send("📍 Please select a dungeon to check:", view=DungeonListView(dungeons))
 
 async def setup(bot):
