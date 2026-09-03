@@ -589,7 +589,7 @@ class PartyFinderCog(commands.Cog):
             except Exception as e:
                 print(f"Error notifying expired party {party.get('_id')}: {e}")
   
-        # Xóa hàng loạt các party quá hạn khỏi Database
+        # Xóa hàng loạt các party quá hạn khỏi database
         deleted = await parties_col.delete_many({"_id": {"$lt": threshold_id}})
         print(f"[Party Finder] Đã tự động dọn dẹp {deleted.deleted_count} parties quá 1 ngày.")
 

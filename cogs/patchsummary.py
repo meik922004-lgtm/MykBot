@@ -110,7 +110,7 @@ class DMWBroadcaster(commands.Cog):
         self.bot = bot
         # Khởi tạo kết nối MongoDB
         self.db_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
-        self.db = self.db_client.dmw_database # Tên Database
+        self.db = self.db_client.dmw_database # Tên database
         self.collection = self.db.news_channels # Tên Collection lưu ID
         logger.info("[Init] DMW Broadcaster Cog loaded and MongoDB connected.")
 

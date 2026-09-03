@@ -161,12 +161,12 @@ class ShopTracker(commands.Cog):
         self.active_alerts = {}
 
     async def cog_load(self):
-        print("⏳ [Database]: Configuring automatic data cleanup...")
+        print("⏳ [database]: Configuring automatic data cleanup...")
         try:
             await market_history_col.create_index("timestamp", expireAfterSeconds=2592000)
             print("✅ [Cơ sở dữ liệu]: TTL Index enabled! Data older than 30 days will be automatically deleted..")
         except Exception as e:
-            print(f"❌ [Database]: Unable to set up TTL Index: {e}")
+            print(f"❌ [database]: Unable to set up TTL Index: {e}")
             
     async def log_action(self, user_id: int, action: str, details: str):
         await bot_logs_col.insert_one({
@@ -333,7 +333,7 @@ class ShopTracker(commands.Cog):
             await interaction.followup.send(f"✅ Success! User limits have been reconfigured. {user.mention} thành **{slots}** slots.", ephemeral=True)
             
         except Exception as e:
-            await interaction.followup.send(f"❌ Operation failed. Database error.: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Operation failed. database error.: {e}", ephemeral=True)
 
 
     # --- STREAM FEED LISTENER ---

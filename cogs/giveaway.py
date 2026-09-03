@@ -6,7 +6,7 @@ import datetime
 import re
 import random
 
-# Import collection từ Database.py của bạn
+# Import collection từ database.py của bạn
 from database import giveaways_col
 
 
@@ -167,7 +167,7 @@ class GiveawayModal(discord.ui.Modal, title="Tạo Giveaway Mới"):
         for child in view.children:
             child.disabled = True
         
-        # Lấy danh sách người tham gia từ Database
+        # Lấy danh sách người tham gia từ database
         giveaway_data = await giveaways_col.find_one({"message_id": message.id})
         participants = giveaway_data.get("participants", []) if giveaway_data else []
 

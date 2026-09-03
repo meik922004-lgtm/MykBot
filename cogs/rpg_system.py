@@ -477,7 +477,7 @@ class BulkSellGearSelect(discord.ui.Select):
                 sold_count += 1
         if sold_count == 0:
             return await interaction.followup.send("❌ No valid items were processed for sale.", ephemeral=True)
-        # Tính toán tiền tệ và cập nhật Database tài sản
+        # Tính toán tiền tệ và cập nhật database tài sản
         earned_bits = sold_count * 200
         await rpg_profiles_col.update_one(
             {"user_id": user_id},
@@ -2057,7 +2057,7 @@ class RPGSystemCog(commands.Cog):
                 return await interaction.followup.send(f"❌ Cannot train x{multiplier}. It exceeds the {MAX_TRAIN_HP} HP limit.", ephemeral=True)
             updates["trained_hp"] = current_train_hp + gain
             
-        # 2. Xử lý trừ tiền và cập nhật Database
+        # 2. Xử lý trừ tiền và cập nhật database
         if profile.get("digibit", 0) < total_cost:
             return await interaction.followup.send(f"❌ Insufficient Digibits ({total_cost} Bits required).", ephemeral=True)
 
@@ -2286,7 +2286,7 @@ class RPGSystemCog(commands.Cog):
             # Đồng bộ lại máu Root theo lượng máu của con Digimon mới được đôn lên làm Active
             updates["$set"]["current_hp"] = new_active.get("hp", 100)
             
-        # Cập nhật một lần duy nhất vào Database
+        # Cập nhật một lần duy nhất vào database
         await rpg_profiles_col.update_one({"user_id": user_id}, updates)
         
         # Tạo chuỗi văn bản hiển thị danh sách tên các con đã bán

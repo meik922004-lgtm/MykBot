@@ -238,7 +238,7 @@ class DungeonStats(commands.Cog):
     async def dglist(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         dungeons = await db.dungeon_configs.find({}).to_list(length=25)
-        if not dungeons: return await interaction.response.send_message("❌ Database is empty.", ephemeral=True)
+        if not dungeons: return await interaction.response.send_message("❌ database is empty.", ephemeral=True)
         await interaction.followup.send("📍 Please select a dungeon to check:", view=DungeonListView(dungeons))
 
 async def setup(bot):

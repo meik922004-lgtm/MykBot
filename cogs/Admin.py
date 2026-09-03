@@ -32,7 +32,7 @@ class BroadcastModal(discord.ui.Modal):
         await interaction.response.defer(ephemeral=True)
         # Lấy nội dung trực tiếp từ Modal (đã có sẵn các dấu xuống dòng thực tế)
         message = self.message_input.value
-        # Lấy toàn bộ danh sách channel từ Database
+        # Lấy toàn bộ danh sách channel từ database
         cursor = news_channel_col.find({})
         channels_data = await cursor.to_list(length=None) 
         success_count = 0
@@ -109,7 +109,7 @@ class NewsSystemCog(commands.Cog):
         guild_id = interaction.guild.id
         channel_id = channel.id
 
-        # 2. Lưu vào Database
+        # 2. Lưu vào database
         await news_channel_col.update_one(
             {"guild_id": guild_id},
             {"$set": {"channel_id": channel_id}},
