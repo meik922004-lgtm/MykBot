@@ -77,7 +77,7 @@ class HelpSelect(discord.ui.Select):
             embed.title = "🛠️ Admin Commands"
             embed.description = "Configuration tools restricted to Administrators."
             embed.add_field(name="📺 Channel Setup", value="🔹 `/setup_party_channel`: Set up party notification channel.\n🔹 `/setup_news_channel`: Set up news/update channel.\n🔹 `/setup_boss_channel`: Set up cross-server boss chat relay.", inline=False)
-            embed.add_field(name="🎭 Roles & Events", value="🔹 `/roles_menu`: Post the automated role selection menu.\n🔹 `/addrole` / `/removerole`: Add or remove roles from the menu.\n🔹 `/set_invite_role`: Link invite codes to specific roles.\n🔹 `/setraid` / `/setraid90`: Configure automatic raid schedules.", inline=False)
+            embed.add_field(name="🎭 Roles & Events", value="🔹 `/roles_menu`: Post the automated role selection menu.\n🔹 `/addrole` / `/removerole`: Add or remove roles from the menu.\n🔹 `/set_invite_role`: Link invite codes to specific roles.\n🔹 `/setraid` / `/setraid90` / `/setevent`: Configure automatic schedules.", inline=False)
 
         elif selected_value == "general":
             embed.title = "🌍 General Utilities"
@@ -98,17 +98,19 @@ class General(commands.Cog, name="Basic command"):
     def __init__(self, bot):
         self.bot = bot
         self.raid_notifier.start()
+        self.event_notifier.start()
 
     def cog_unload(self):
         self.raid_notifier.cancel()
+        self.event_notifier.cancel()
 
+    # --- TASK THÔNG BÁO RAID BOSS (RAID ROLE) ---
     @tasks.loop(seconds=15)
     async def raid_notifier(self):
         now = datetime.now(timezone.utc)
         
         try:
             async for raid in db.raid_bosses.find():
-                guild_id = raid.get('guild_id')
                 channel_id = raid.get('channel_id')
                 name = raid.get('name')
                 map_name = raid.get('map')
@@ -128,37 +130,85 @@ class General(commands.Cog, name="Basic command"):
                     
                     channel = self.bot.get_channel(channel_id)
                     if channel:
-                        # 1 & 2. Giao diện gọn gàng hơn, hiển thị đếm ngược bằng Timestamp Discord
                         embed = discord.Embed(title="🚨 Raid incoming!", color=discord.Color.red())
                         embed.add_field(name="Name", value=f"**{name}**", inline=True)
                         embed.add_field(name="Map", value=f"**{map_name}**", inline=True)
-                        
-                        # Sử dụng <t:timestamp:R> để Discord tự động hiển thị đếm ngược (VD: in 4 minutes / trong 4 phút nữa) theo máy người dùng
                         embed.add_field(
                             name="Spawn time (your region)", 
                             value=f"⏰ <t:{spawn_timestamp}:t> (còn <t:{spawn_timestamp}:R>)", 
                             inline=False
                         )
                         
-                        # 3. Khắc phục lỗi không Ping được Role
-                        # Lấy object role có tên chính xác là "Raid" trong server
                         raid_role = discord.utils.get(channel.guild.roles, name="Raid")
-                        
-                        # Nếu tìm thấy role thì mention (<@&RoleID>), nếu không thì gửi text nhắc nhở
                         mention_text = raid_role.mention if raid_role else "⚠️ (Vui lòng tạo role có tên chính xác là `Raid` để bot có thể ping)"
                         
                         await channel.send(content=mention_text, embed=embed)
                         
-                        # Embed thông báo Boss tiếp theo (Tự động đổi theo múi giờ người xem)
                         next_next_spawn = next_spawn + timedelta(minutes=interval)
                         embed2 = discord.Embed(color=discord.Color.blue())
                         embed2.description = f"⏭️ **Information:** Boss **{name}** Next spawn at: <t:{int(next_next_spawn.timestamp())}:t> (còn <t:{int(next_next_spawn.timestamp())}:R>)"
                         await channel.send(embed=embed2)
                         
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error in raid_notifier: {e}")
+
     @raid_notifier.before_loop
     async def before_raid_notifier(self):
+        await self.bot.wait_until_ready()
+
+    # --- TASK THÔNG BÁO EVENT 3 TIẾNG (EVENT ROLE - PING BÁO TRƯỚC 3 PHÚT) ---
+    @tasks.loop(seconds=15)
+    async def event_notifier(self):
+        now = datetime.now(timezone.utc)
+        
+        try:
+            async for event_data in db.events.find():
+                channel_id = event_data.get('channel_id')
+                name = event_data.get('name')
+                map_name = event_data.get('map')
+                base_time = event_data.get('base_time')
+                interval = event_data.get('interval_minutes', 180) # Mặc định 180p (3 tiếng)
+                last_notified = event_data.get('last_notified_spawn', 0)
+                
+                next_spawn = get_next_spawn(base_time, interval)
+                # Báo trước 3 phút: từ 3:00 đến 2:45 trước giờ spawn
+                notify_time = next_spawn - timedelta(minutes=3)
+                
+                if notify_time <= now < (next_spawn - timedelta(minutes=2, seconds=45)):
+                    spawn_timestamp = int(next_spawn.timestamp())
+                    if last_notified == spawn_timestamp:
+                        continue
+                    
+                    await db.events.update_one({'_id': event_data['_id']}, {'$set': {'last_notified_spawn': spawn_timestamp}})
+                    
+                    channel = self.bot.get_channel(channel_id)
+                    if channel:
+                        embed = discord.Embed(title="🎉 EVENT IS STARTING SOON!", color=discord.Color.gold())
+                        embed.add_field(name="Event Name", value=f"**{name}**", inline=True)
+                        embed.add_field(name="Location / Map", value=f"**{map_name}**", inline=True)
+                        embed.add_field(
+                            name="Starts At", 
+                            value=f"⏰ <t:{spawn_timestamp}:t> (còn <t:{spawn_timestamp}:R>)", 
+                            inline=False
+                        )
+                        
+                        # Tim role "EVENT" trong server
+                        event_role = discord.utils.get(channel.guild.roles, name="EVENT")
+                        mention_text = event_role.mention if event_role else "⚠️ (Vui lòng tạo role có tên chính xác là `EVENT` để bot có thể ping)"
+                        
+                        await channel.send(content=f"🔔 {mention_text}", embed=embed)
+                        
+                        # Embed thông báo lượt tiếp theo
+                        next_next_spawn = next_spawn + timedelta(minutes=interval)
+                        embed2 = discord.Embed(color=discord.Color.orange())
+                        embed2.description = f"⏭️ **Next Event Wave:** **{name}** will spawn again at: <t:{int(next_next_spawn.timestamp())}:t> (<t:{int(next_next_spawn.timestamp())}:R>)"
+                        await channel.send(embed=embed2)
+                        
+        except Exception as e:
+            print(f"Error in event_notifier: {e}")
+
+    @event_notifier.before_loop
+    async def before_event_notifier(self):
         await self.bot.wait_until_ready()
 
     @app_commands.command(name="hello", description="Bot says hello to you")
@@ -183,36 +233,31 @@ class General(commands.Cog, name="Basic command"):
         embed.description = ("**Step 1:** Setup profile using `/mygear`.\n**Step 2:** Set up party channel using `/setup_party_channel`.\n**Step 3:** Set up news channel using `/setup_news_channel`.")
         await interaction.response.send_message(embed=embed)
     
-    @app_commands.command(name="schedule", description="See upcoming raid spawn times (Customized Timezone)")
+    @app_commands.command(name="schedule", description="See upcoming raid and event spawn times")
     async def schedule(self, interaction: discord.Interaction):
         await interaction.response.defer()
         guild_id = int(interaction.guild_id)
         user_id = int(interaction.user.id)
         
-        # Thử tìm dữ liệu cấu hình cá nhân của người dùng để check Timezone (Ví dụ từ bộ lưu trữ profiles/users của bạn)
         user_profile = await db.profiles.find_one({"user_id": user_id}) or await db.users.find_one({"user_id": user_id})
         
         user_offset = 0
         tz_label = "UTC+0 (Server)"
         
-        # Nếu tìm thấy dữ liệu Timezone được cài đặt bởi người dùng qua lệnh /mygear hoặc /set_timezone
         if user_profile and "timezone" in user_profile:
             tz_val = user_profile["timezone"]
             try:
-                # Nếu lưu dạng số nguyên/số thực (Ví dụ: 7 hoặc -5)
                 user_offset = float(tz_val)
                 tz_label = f"UTC{'+' if user_offset >= 0 else ''}{tz_val}"
             except ValueError:
-                # Nếu lưu dạng chuỗi chữ (Ví dụ: "GMT+7", "+07:00") -> Trích xuất số
                 match = re.search(r'([+-]?\d+)', str(tz_val))
                 if match:
                     user_offset = float(match.group(1))
                     tz_label = f"UTC{'+' if user_offset >= 0 else ''}{user_offset}"
 
-        # Tạo múi giờ động cho riêng user chạy lệnh này
         user_tz = timezone(timedelta(hours=user_offset))
         
-        embed = discord.Embed(title=f"📅 RAID SCHEDULE TIMERS ({tz_label})", color=discord.Color.blue())
+        embed = discord.Embed(title=f"📅 RAID & EVENT SCHEDULE TIMERS ({tz_label})", color=discord.Color.blue())
         embed.set_footer(text="💡 Set your time zone using the command /mygear or /set_timezone")
         
         boss_lines = []
@@ -221,20 +266,32 @@ class General(commands.Cog, name="Basic command"):
             unix_boss = int(next_spawn_utc.timestamp())
             interval_str = "2 Hours" if raid['interval_minutes'] == 120 else "1h30p"
             
-            # Chuyển đổi mốc thời gian sang Timezone dạng text cố định của riêng người dùng này
             next_spawn_user = next_spawn_utc.astimezone(user_tz)
             user_time_text = next_spawn_user.strftime("%H:%M")
             
             boss_lines.append(
-                f"**{raid['name']}** at {raid['map']} (every {interval_str}):\n"
-                f"🔹 Now the system translates automatically.: <t:{unix_boss}:t> (<t:{unix_boss}:R>)\n"
+                f"**[RAID] {raid['name']}** at {raid['map']} (every {interval_str}):\n"
+                f"🔹 Countdown: <t:{unix_boss}:t> (<t:{unix_boss}:R>)\n"
+                f"🔹 Text time ({tz_label}): **{user_time_text}**"
+            )
+
+        async for event_item in db.events.find({"guild_id": guild_id}):
+            next_spawn_utc = get_next_spawn(event_item['base_time'], event_item.get('interval_minutes', 180))
+            unix_event = int(next_spawn_utc.timestamp())
+            
+            next_spawn_user = next_spawn_utc.astimezone(user_tz)
+            user_time_text = next_spawn_user.strftime("%H:%M")
+            
+            boss_lines.append(
+                f"**[EVENT] {event_item['name']}** at {event_item['map']} (every 3 Hours):\n"
+                f"🔹 Countdown: <t:{unix_event}:t> (<t:{unix_event}:R>)\n"
                 f"🔹 Text time ({tz_label}): **{user_time_text}**"
             )
             
         if boss_lines:
-            embed.add_field(name="🚨Raid Timers", value="\n\n".join(boss_lines), inline=False)
+            embed.add_field(name="🚨 Active Timers", value="\n\n".join(boss_lines), inline=False)
         else:
-            embed.add_field(name="🚨Raid Timers", value="*No boss has been set up yet. (Owner uses the command `/setraid` or `/setraid90`)*", inline=False)
+            embed.add_field(name="🚨 Active Timers", value="*No raid or event has been set up yet.*", inline=False)
 
         await interaction.followup.send(embed=embed)
 
@@ -258,7 +315,7 @@ class General(commands.Cog, name="Basic command"):
             }},
             upsert=True
         )
-        await interaction.response.send_message(f"✅ Boss has been set up. **{name}** at **{map_name}**.\n⏳ **Every 2 hours** from the starting point `Base Time: {time_str} UTC+0`.\n📢 Notifications will be pushed at: <#{interaction.channel_id}>")
+        await interaction.response.send_message(f"✅ Boss has been set up. **{name}** at **{map_name}**.\n⏳ **Every 2 hours** from `Base Time: {time_str} UTC+0`.\n📢 Notifications will ping role **Raid** at: <#{interaction.channel_id}>")
 
     @app_commands.command(name="setraid90", description="Set up a 1.5-hour raid boss (Bot Owner only)")
     @app_commands.describe(name="Tên Boss", map_name="Tên Map", time_str="Giờ server định dạng HH:MM (UTC+0)")
@@ -280,7 +337,29 @@ class General(commands.Cog, name="Basic command"):
             }},
             upsert=True
         )
-        await interaction.response.send_message(f"✅Boss has been set up. **{name}** at **{map_name}**.\n⏳ **Every 1.30 hours** from the starting point `Base Time: {time_str} UTC+0`.\n📢 Notifications will be pushed at: <#{interaction.channel_id}>")
+        await interaction.response.send_message(f"✅ Boss has been set up. **{name}** at **{map_name}**.\n⏳ **Every 1.5 hours** from `Base Time: {time_str} UTC+0`.\n📢 Notifications will ping role **Raid** at: <#{interaction.channel_id}>")
+
+    @app_commands.command(name="setevent", description="Set up a 3-hour Event schedule with EVENT role ping (Bot Owner only)")
+    @app_commands.describe(name="Event Name", map_name="Map / Location Name", time_str="Server base time format: HH:MM (UTC+0)")
+    async def setevent(self, interaction: discord.Interaction, name: str, map_name: str, time_str: str):
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("❌ Only the Bot Owner has the right to use this command!", ephemeral=True)
+            
+        if not re.match(r'^\d{1,2}:\d{2}$', time_str):
+            return await interaction.response.send_message("❌ Incorrect time format. Please use `HH:MM` format (e.g., `00:00` or `03:00`).", ephemeral=True)
+            
+        await db.events.update_one(
+            {"guild_id": interaction.guild_id, "name": name},
+            {"$set": {
+                "channel_id": interaction.channel_id,
+                "map": map_name,
+                "base_time": time_str,
+                "interval_minutes": 180, # 3 tiếng
+                "last_notified_spawn": 0
+            }},
+            upsert=True
+        )
+        await interaction.response.send_message(f"🎉 **Event Schedule Set!** **{name}** at **{map_name}**.\n⏳ **Every 3 hours** starting from `Base Time: {time_str} UTC+0`.\n📢 Bot will ping role **EVENT** 3 minutes prior at <#{interaction.channel_id}>.")
 
 async def setup(bot):
     await bot.add_cog(General(bot))
