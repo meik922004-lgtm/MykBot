@@ -6,6 +6,8 @@ from utils.checks import is_admin_or_bot_owner
 
 
 class InviteRole(commands.Cog):
+    """Automatically assigns a specific role when a member joins via a configured invite link."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.invite_cache: dict[int, dict[str, int]] = {}
@@ -49,33 +51,36 @@ class InviteRole(commands.Cog):
         used_code = None
 
         for inv in new_invites:
-            old_uses = old_invites.get(inv.code, 0)
-            if (inv.uses or 0) > old_uses:
+            if (inv.uses or 0) > old_invites.get(inv.code, 0):
                 used_code = inv.code
                 break
 
-        # Cập nhật toàn bộ cache mới nhất
         self.invite_cache[guild.id] = {inv.code: inv.uses or 0 for inv in new_invites}
-
         if not used_code:
             return
 
         config = await invite_roles_col.find_one({"guild_id": guild.id})
         if config and used_code in config.get("invites", {}):
-            role_id = int(config["invites"][used_code])
-            role = guild.get_role(role_id)
+            role = guild.get_role(int(config["invites"][used_code]))
             if role:
                 try:
-                    await member.add_roles(role, reason=f"Joined via invite {used_code}")
+                    await member.add_roles(role, reason=f"Joined via invite code {used_code}")
                 except discord.Forbidden:
-                    print(f"[InviteRole] Thiếu quyền cấp role {role.name} tại server {guild.name}", flush=True)
+                    print(f"[InviteRole] Missing permission to assign {role.name} in {guild.name}", flush=True)
                 except Exception as e:
-                    print(f"[InviteRole] Lỗi cấp role: {e}", flush=True)
+                    print(f"[InviteRole] Error assigning role: {e}", flush=True)
 
-    @app_commands.command(name="set_invite_role", description="Liên kết link mời với một Role tự động")
-    @app_commands.describe(invite_code="Mã mời (VD: abcXYZ) hoặc dán trực tiếp link discord.gg/abcXYZ", role="Role cần cấp")
+    @app_commands.command(
+        name="setup_invite_role",
+        description="[Admin/Owner] Link an invite code to an automatic role",
+    )
+    @app_commands.describe(
+        invite_code="Invite code (e.g., abcXYZ) or full discord.gg link",
+        role="Role to automatically assign on join",
+    )
+    @app_commands.default_permissions(administrator=True)
     @is_admin_or_bot_owner()
-    async def set_invite_role(self, interaction: discord.Interaction, invite_code: str, role: discord.Role):
+    async def setup_invite_role(self, interaction: discord.Interaction, invite_code: str, role: discord.Role):
         clean_code = invite_code.strip().rstrip("/").split("/")[-1]
         await invite_roles_col.update_one(
             {"guild_id": interaction.guild_id},
@@ -83,7 +88,7 @@ class InviteRole(commands.Cog):
             upsert=True,
         )
         await interaction.response.send_message(
-            f"✅ Đã liên kết mã mời `{clean_code}` với role **{role.name}**.",
+            f"✅ Linked invite code `{clean_code}` to role **{role.name}**.",
             ephemeral=True,
         )
 

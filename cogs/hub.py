@@ -5,55 +5,92 @@ from utils.checks import check_is_owner
 
 
 def build_home_embed(user: discord.abc.User, is_owner: bool) -> discord.Embed:
+    """Build the main landing embed for the /menu central hub."""
     embed = discord.Embed(
-        title="🎛️ MyKBot — Trung Tâm Điều Khiển",
+        title="🎛️ MyKBot — Central Control Hub",
         description=(
-            f"Chào **{user.display_name}**! Chọn một nhóm chức năng ở menu bên dưới "
-            "để truy cập nhanh toàn bộ công cụ của MyKBot chỉ với 1 lệnh duy nhất."
+            f"Welcome, **{user.display_name}**! Use the dropdown menu below "
+            "to access all MyKBot features from one unified interface."
         ),
         color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="⚔️ Party & Dungeon",
-        value="Mở sảnh tìm Party liên server, xem lịch Raid/Event & kiểm tra yêu cầu Dungeon.",
+        name="⚔️ Party & Schedule",
+        value="Browse or create cross-server parties, restore your party DM, and view Raid/Event timers.",
         inline=False,
     )
     embed.add_field(
-        name="🛡️ Hồ sơ & Gear",
-        value="Cập nhật IGN/Gear (`/mygear`), xem hồ sơ Gear và chỉnh múi giờ cá nhân.",
+        name="👤 Profile & Timezone",
+        value="Set up or edit your In-Game Name (IGN) and local timezone for accurate party and raid timers.",
         inline=False,
     )
     embed.add_field(
-        name="🛒 Theo dõi Giá Chợ",
-        value="Quản lý Watchlist, bật/tắt cảnh báo DM & vẽ biểu đồ giá (Shop Tracker)"
-              + (" + **Chợ Tốt Tracker (Owner)**." if is_owner else "."),
+        name="🛒 Market & Community",
+        value="Manage your real-time Market Watchlist & price charts, read the latest DMW Patch Notes, and self-assign server roles.",
         inline=False,
     )
-    embed.add_field(
-        name="📢 Tin tức & Role",
-        value="Xem bản tóm tắt Patch Note DMW mới nhất (có dịch nhanh) & tự nhận/gỡ Role.",
-        inline=False,
-    )
-    embed.set_footer(text="MyKBot Hub • Menu tự động đóng sau 3 phút không tương tác")
+    if is_owner:
+        embed.add_field(
+            name="👑 Owner Control Panel",
+            value="Exclusive owner tools: Global Broadcast, Grant Market Slots, Set Raid/Event Timers, and Chotot Tracker.",
+            inline=False,
+        )
+    embed.set_footer(text="MyKBot Hub • Menu times out after 3 minutes of inactivity")
     return embed
 
 
 class HubSelect(discord.ui.Select):
+    """Category selector dropdown inside /menu."""
+
     def __init__(self, author_id: int, is_owner: bool):
         self.author_id = author_id
         self.is_owner = is_owner
+
         options = [
-            discord.SelectOption(label="Trang chủ", value="home", emoji="🏠", description="Tổng quan toàn bộ chức năng MyKBot"),
-            discord.SelectOption(label="Party Finder & Lịch Boss", value="party", emoji="⚔️", description="Tìm Party, xem Dungeon & lịch Raid/Event"),
-            discord.SelectOption(label="Hồ sơ & Gear cá nhân", value="profile", emoji="🛡️", description="Setup IGN/Gear, xem Gear & đổi múi giờ"),
-            discord.SelectOption(label="Theo dõi Giá Chợ", value="market", emoji="🛒", description="Market Hub, Watchlist & Biểu đồ giá"),
-            discord.SelectOption(label="Tin tức & Role", value="community", emoji="📢", description="Patch Summary mới nhất & tự chọn Role"),
+            discord.SelectOption(
+                label="Home",
+                value="home",
+                emoji="🏠",
+                description="Overview of all MyKBot features",
+            ),
+            discord.SelectOption(
+                label="Party & Schedule",
+                value="party",
+                emoji="⚔️",
+                description="Party Lobby, My Party DM & Raid/Event Timers",
+            ),
+            discord.SelectOption(
+                label="Profile & Timezone",
+                value="profile",
+                emoji="👤",
+                description="Setup/Edit IGN & Local Timezone",
+            ),
+            discord.SelectOption(
+                label="Market & Community",
+                value="market_comm",
+                emoji="🛒",
+                description="Market Hub, Latest Patch Notes & Self-Roles",
+            ),
         ]
-        super().__init__(placeholder="👇 Chọn danh mục chức năng...", options=options, row=0)
+
+        if is_owner:
+            options.append(
+                discord.SelectOption(
+                    label="Owner Control Panel",
+                    value="owner",
+                    emoji="👑",
+                    description="Broadcast, Grant Slots, Timers & Chotot Tracker",
+                )
+            )
+
+        super().__init__(placeholder="👇 Select a category...", options=options, row=0)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.author_id:
-            return await interaction.response.send_message("Hãy gõ `/menu` để mở bảng điều khiển của riêng bạn!", ephemeral=True)
+            return await interaction.response.send_message(
+                "Please run `/menu` to open your own control panel.",
+                ephemeral=True,
+            )
 
         choice = self.values[0]
         view: MyKBotHubView = self.view  # type: ignore
@@ -62,27 +99,27 @@ class HubSelect(discord.ui.Select):
             embed = build_home_embed(interaction.user, self.is_owner)
         elif choice == "party":
             embed = discord.Embed(
-                title="⚔️ Party Finder & Lịch Raid/Event",
-                description="Bấm các nút bên dưới để mở sảnh tìm Party, xem yêu cầu Dungeon hoặc kiểm tra lịch Boss/Event.",
+                title="⚔️ Party Finder & Schedules",
+                description="Choose an action below to find/create a party or check upcoming Raid and Event timers.",
                 color=discord.Color.green(),
             )
         elif choice == "profile":
             embed = discord.Embed(
-                title="🛡️ Hồ sơ & Gear Cá Nhân",
-                description="Cập nhật IGN, chỉ số Gear (AA/SK/TANK) và múi giờ để đồng bộ lịch chính xác.",
+                title="👤 Player Profile & Timezone",
+                description="Set your In-Game Name (IGN) and local timezone so party times and raid schedules match your region.",
                 color=discord.Color.blue(),
             )
-        elif choice == "market":
+        elif choice == "market_comm":
             embed = discord.Embed(
-                title="🛒 Trung Tâm Theo Dõi Giá Chợ",
-                description="Mở **Market Hub** để quản lý danh sách item đang săn, bật/tắt thông báo DM và xem biểu đồ giá.",
+                title="🛒 Market Tracker & Community",
+                description="Track in-game shop prices, read translated DMW patch summaries, or manage your server roles.",
                 color=discord.Color.gold(),
             )
         else:
             embed = discord.Embed(
-                title="📢 Tin Tức & Tự Chọn Role",
-                description="Đọc bản tóm tắt Patch Note DMW mới nhất (kèm dịch đa ngôn ngữ) hoặc tự nhận/gỡ Role.",
-                color=discord.Color.teal(),
+                title="👑 Bot Owner Control Panel",
+                description="Administrative controls restricted exclusively to Bot Owners.",
+                color=discord.Color.red(),
             )
 
         view.set_section_buttons(choice)
@@ -90,6 +127,8 @@ class HubSelect(discord.ui.Select):
 
 
 class MyKBotHubView(discord.ui.View):
+    """Unified interactive hub view containing category dropdown and dynamic action buttons."""
+
     def __init__(self, bot: commands.Bot, author_id: int, is_owner: bool, timeout: float = 180.0):
         super().__init__(timeout=timeout)
         self.bot = bot
@@ -104,76 +143,79 @@ class MyKBotHubView(discord.ui.View):
                 self.remove_item(item)
 
         if section == "party":
-            self.add_item(self._make_btn("Mở Party Lobby", "🌐", discord.ButtonStyle.success, "party_lobby"))
-            self.add_item(self._make_btn("Check Dungeon", "🔎", discord.ButtonStyle.primary, "dglist"))
-            self.add_item(self._make_btn("Lịch Raid / Event", "📅", discord.ButtonStyle.secondary, "schedule"))
+            self.add_item(self._make_btn("Party Lobby", "🌐", discord.ButtonStyle.success, "party_lobby", row=1))
+            self.add_item(self._make_btn("My Party (DM)", "📩", discord.ButtonStyle.primary, "my_party", row=1))
+            self.add_item(self._make_btn("Raid / Event Schedule", "📅", discord.ButtonStyle.secondary, "schedule", row=1))
 
         elif section == "profile":
-            self.add_item(self._make_btn("Setup / Sửa Gear", "⚙️", discord.ButtonStyle.success, "mygear"))
-            self.add_item(self._make_btn("Xem Gear của tôi", "🛡️", discord.ButtonStyle.primary, "showmygear"))
-            self.add_item(self._make_btn("Đổi múi giờ", "🌍", discord.ButtonStyle.secondary, "set_timezone"))
+            self.add_item(self._make_btn("Setup / Edit Profile", "⚙️", discord.ButtonStyle.success, "setup_profile", row=1))
+            self.add_item(self._make_btn("View My Profile", "🪪", discord.ButtonStyle.primary, "view_profile", row=1))
+            self.add_item(self._make_btn("Change Timezone", "🌍", discord.ButtonStyle.secondary, "set_timezone", row=1))
 
-        elif section == "market":
-            self.add_item(self._make_btn("Mở Market Hub", "🎯", discord.ButtonStyle.primary, "market_hub"))
-            if self.is_owner:
-                self.add_item(self._make_btn("Chợ Tốt Tracker", "🏍️", discord.ButtonStyle.secondary, "chotot"))
+        elif section == "market_comm":
+            self.add_item(self._make_btn("Market Hub", "🎯", discord.ButtonStyle.success, "market_hub", row=1))
+            self.add_item(self._make_btn("Latest Patch Notes", "📰", discord.ButtonStyle.primary, "patch_latest", row=1))
+            self.add_item(self._make_btn("Self-Assign Roles", "🎭", discord.ButtonStyle.secondary, "roles_panel", row=1))
 
-        elif section == "community":
-            self.add_item(self._make_btn("Patch Note mới nhất", "📰", discord.ButtonStyle.primary, "patch_latest"))
-            self.add_item(self._make_btn("Nhận / Gỡ Role", "🎭", discord.ButtonStyle.secondary, "roles_panel"))
+        elif section == "owner" and self.is_owner:
+            self.add_item(self._make_btn("Global Broadcast", "📢", discord.ButtonStyle.danger, "owner_broadcast", row=1))
+            self.add_item(self._make_btn("Grant Market Slots", "🎟️", discord.ButtonStyle.primary, "owner_addslot", row=1))
+            self.add_item(self._make_btn("Set Raid/Event Timer", "⏰", discord.ButtonStyle.secondary, "owner_settimer", row=1))
+            self.add_item(self._make_btn("Chotot Tracker", "🏍️", discord.ButtonStyle.secondary, "owner_chotot", row=1))
 
-        close_btn = discord.ui.Button(label="Đóng", emoji="✖️", style=discord.ButtonStyle.danger, row=1)
+        close_btn = discord.ui.Button(label="Close", emoji="✖️", style=discord.ButtonStyle.danger, row=2)
         close_btn.callback = self._close_cb
         self.add_item(close_btn)
 
-    def _make_btn(self, label: str, emoji: str, style: discord.ButtonStyle, action: str):
-        btn = discord.ui.Button(label=label, emoji=emoji, style=style, row=1)
+    def _make_btn(self, label: str, emoji: str, style: discord.ButtonStyle, action: str, row: int = 1):
+        btn = discord.ui.Button(label=label, emoji=emoji, style=style, row=row)
 
         async def _cb(interaction: discord.Interaction):
             if interaction.user.id != self.author_id:
-                return await interaction.response.send_message("Menu này không phải của bạn. Hãy gõ `/menu`!", ephemeral=True)
+                return await interaction.response.send_message(
+                    "This menu does not belong to you. Run `/menu` to open your own.",
+                    ephemeral=True,
+                )
 
+            # Party & Schedule actions
             if action == "party_lobby":
                 cog = self.bot.get_cog("PartyFinderCog")
                 if cog:
                     return await cog.open_party_lobby(interaction)
 
-            elif action == "dglist":
-                cog = self.bot.get_cog("DungeonStats")
+            elif action == "my_party":
+                cog = self.bot.get_cog("PartyFinderCog")
                 if cog:
-                    return await cog.open_dglist(interaction)
+                    return await cog.open_my_party(interaction)
 
             elif action == "schedule":
-                cog = self.bot.get_cog("Basic command")
+                cog = self.bot.get_cog("General")
                 if cog:
                     await interaction.response.defer(ephemeral=True)
                     embed = await cog.build_schedule_embed(interaction.guild_id, interaction.user.id)
                     return await interaction.followup.send(embed=embed, ephemeral=True)
 
-            elif action == "mygear":
+            # Profile & Timezone actions
+            elif action == "setup_profile":
                 cog = self.bot.get_cog("DungeonStats")
                 if cog:
-                    return await cog.open_mygear(interaction)
+                    return await cog.open_profile_setup(interaction)
 
-            elif action == "showmygear":
+            elif action == "view_profile":
                 cog = self.bot.get_cog("DungeonStats")
                 if cog:
-                    return await cog.open_showmygear(interaction, ephemeral=True)
+                    return await cog.open_view_profile(interaction, ephemeral=True)
 
             elif action == "set_timezone":
                 cog = self.bot.get_cog("DungeonStats")
                 if cog:
                     return await cog.open_set_timezone(interaction)
 
+            # Market & Community actions
             elif action == "market_hub":
                 cog = self.bot.get_cog("ShopTracker")
                 if cog:
                     return await cog.open_market_hub(interaction, ephemeral=True)
-
-            elif action == "chotot":
-                cog = self.bot.get_cog("ChototTracker")
-                if cog:
-                    return await cog.open_chotot_dashboard(interaction, ephemeral=True)
 
             elif action == "patch_latest":
                 cog = self.bot.get_cog("DMWBroadcaster")
@@ -186,29 +228,54 @@ class MyKBotHubView(discord.ui.View):
                     embed, view = cog.build_roles_panel()
                     return await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-            await interaction.response.send_message("⚠️ Module chức năng này hiện chưa được nạp.", ephemeral=True)
+            # Owner-only actions
+            elif action.startswith("owner_"):
+                if not await check_is_owner(self.bot, interaction.user):
+                    return await interaction.response.send_message("⛔ Bot Owner permission required.", ephemeral=True)
+
+                if action == "owner_broadcast":
+                    cog = self.bot.get_cog("NewsSystemCog")
+                    if cog:
+                        return await cog.open_broadcast_modal(interaction)
+                elif action == "owner_addslot":
+                    cog = self.bot.get_cog("ShopTracker")
+                    if cog:
+                        return await cog.open_grant_slot_modal(interaction)
+                elif action == "owner_settimer":
+                    cog = self.bot.get_cog("General")
+                    if cog:
+                        return await cog.open_set_timer_modal(interaction)
+                elif action == "owner_chotot":
+                    cog = self.bot.get_cog("ChototTracker")
+                    if cog:
+                        return await cog.open_chotot_dashboard(interaction, ephemeral=True)
+
+            await interaction.response.send_message("⚠️ This module is currently unavailable.", ephemeral=True)
 
         btn.callback = _cb
         return btn
 
     async def _close_cb(self, interaction: discord.Interaction):
         if interaction.user.id != self.author_id:
-            return await interaction.response.send_message("Bạn không thể đóng menu của người khác.", ephemeral=True)
+            return await interaction.response.send_message("You cannot close someone else's menu.", ephemeral=True)
         await interaction.message.delete()
         self.stop()
 
 
 class HubCog(commands.Cog):
+    """Provides the single unified /menu slash command for all users."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="menu", description="Mở trung tâm điều khiển MyKBot (truy cập toàn bộ chức năng)")
+    @app_commands.command(name="menu", description="Open the MyKBot Central Control Hub")
     async def menu_command(self, interaction: discord.Interaction):
         is_owner = await check_is_owner(self.bot, interaction.user)
         view = MyKBotHubView(self.bot, interaction.user.id, is_owner)
         await interaction.response.send_message(
             embed=build_home_embed(interaction.user, is_owner),
             view=view,
+            ephemeral=True,
         )
 
 

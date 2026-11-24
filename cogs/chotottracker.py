@@ -2,13 +2,13 @@ import asyncio
 from datetime import datetime, timezone
 import aiohttp
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 from pymongo.errors import BulkWriteError
-from utils.checks import check_is_owner, is_bot_owner_slash
+from utils.checks import check_is_owner
 
 
 def parse_price_string(text: str) -> int:
+    """Parse shorthand Vietnamese currency inputs (e.g., 500k, 1.5tr, 8tr5, 2 tỷ) into VND integer."""
     text = text.strip().lower().replace(" ", "").replace(",", ".")
     if not text or text == "0":
         return 0
@@ -38,9 +38,11 @@ def parse_price_string(text: str) -> int:
         return -1
 
 
-class PriceModal(discord.ui.Modal, title="💰 Cấu hình Bộ Lọc Giá Tiền"):
-    min_p = discord.ui.TextInput(label="Giá tối thiểu (VD: 0, 500k, 1.5tr, 2tr5)", required=True)
-    max_p = discord.ui.TextInput(label="Giá tối đa (VD: 8.5tr, 8tr5, 12tr, 3 tỷ)", required=True)
+class PriceModal(discord.ui.Modal, title="💰 Configure Price Filter"):
+    """Modal for configuring minimum and maximum price thresholds."""
+
+    min_p = discord.ui.TextInput(label="Minimum Price (e.g., 0, 500k, 1.5tr, 2tr5)", required=True)
+    max_p = discord.ui.TextInput(label="Maximum Price (e.g., 8.5tr, 8tr5, 12tr, 3 tỷ)", required=True)
 
     def __init__(self, view):
         super().__init__()
@@ -53,7 +55,7 @@ class PriceModal(discord.ui.Modal, title="💰 Cấu hình Bộ Lọc Giá Tiề
         max_val = parse_price_string(self.max_p.value)
         if min_val < 0 or max_val <= 0 or min_val > max_val:
             return await interaction.response.send_message(
-                "❌ Khoảng giá không hợp lệ! Ví dụ hợp lệ: `0`, `500k`, `2.5tr`, `8tr5`, `1.5 tỷ`.",
+                "❌ Invalid price range! Examples: `0`, `500k`, `2.5tr`, `8tr5`, `1.5 tỷ`.",
                 ephemeral=True,
             )
 
@@ -65,8 +67,10 @@ class PriceModal(discord.ui.Modal, title="💰 Cấu hình Bộ Lọc Giá Tiề
 
 
 class TextFilterModal(discord.ui.Modal):
+    """Modal for editing comma-separated filter lists (areas, keywords, exclusions)."""
+
     inputs = discord.ui.TextInput(
-        label="Danh sách (Cách nhau bởi dấu phẩy ',')",
+        label="Values (Comma-separated ',')",
         style=discord.TextStyle.paragraph,
         required=False,
     )
@@ -88,6 +92,8 @@ class TextFilterModal(discord.ui.Modal):
 
 
 class ChototDashboardView(discord.ui.View):
+    """Owner-only interactive dashboard for managing Chotot listing filters."""
+
     def __init__(self, cog, config: dict):
         super().__init__(timeout=300)
         self.cog = cog
@@ -97,12 +103,12 @@ class ChototDashboardView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if await check_is_owner(interaction.client, interaction.user):
             return True
-        await interaction.response.send_message("⛔ Chỉ **Bot Owner** mới có quyền chỉnh sửa bộ lọc Chợ Tốt.", ephemeral=True)
+        await interaction.response.send_message("⛔ Only **Bot Owners** can manage the Chotot Tracker.", ephemeral=True)
         return False
 
     def update_buttons_label(self):
         is_active = self.config.get("is_active", True)
-        self.btn_toggle.label = "Trạng thái: BẬT 🟢" if is_active else "Trạng thái: TẮT 🔴"
+        self.btn_toggle.label = "Status: ON 🟢" if is_active else "Status: OFF 🔴"
         self.btn_toggle.style = discord.ButtonStyle.success if is_active else discord.ButtonStyle.danger
 
     async def refresh_dashboard(self, interaction: discord.Interaction):
@@ -111,7 +117,7 @@ class ChototDashboardView(discord.ui.View):
         embed = self.cog.create_status_embed(self.config)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Trạng thái", row=0)
+    @discord.ui.button(label="Status", row=0)
     async def btn_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
         current_status = self.config.get("is_active", True)
         await self.cog.config_col.update_one(
@@ -120,35 +126,37 @@ class ChototDashboardView(discord.ui.View):
         )
         await self.refresh_dashboard(interaction)
 
-    @discord.ui.button(label="💰 Sửa Khoảng Giá", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="💰 Edit Price Range", style=discord.ButtonStyle.primary, row=0)
     async def btn_price(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(PriceModal(self))
 
-    @discord.ui.button(label="📍 Sửa Khu Vực", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="📍 Edit Areas", style=discord.ButtonStyle.primary, row=1)
     async def btn_areas(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            TextFilterModal(self, "areas", "📍 Khu Vực Theo Dõi", "Ví dụ: gò vấp, quận 12, bình thạnh...")
+            TextFilterModal(self, "areas", "📍 Target Areas", "e.g., gò vấp, quận 12, bình thạnh...")
         )
 
-    @discord.ui.button(label="🔑 Từ Khóa Tìm", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="🔑 Required Keywords", style=discord.ButtonStyle.primary, row=1)
     async def btn_keywords(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            TextFilterModal(self, "keywords", "🔑 Từ Khóa Bắt Buộc", "Ví dụ: hẻm xe hơi, phòng trọ, full nội thất...")
+            TextFilterModal(self, "keywords", "🔑 Required Keywords", "e.g., phòng trọ, full nội thất, ban công...")
         )
 
-    @discord.ui.button(label="🚫 Từ Khóa Loại Trừ", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="🚫 Exclude Keywords", style=discord.ButtonStyle.secondary, row=2)
     async def btn_exclude(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            TextFilterModal(self, "exclude_keywords", "🚫 Từ Khóa Loại Trừ", "Ví dụ: cần mua, cần thuê, pass đồ...")
+            TextFilterModal(self, "exclude_keywords", "🚫 Excluded Keywords", "e.g., cần mua, cần thuê, pass đồ...")
         )
 
-    @discord.ui.button(label="🧹 Xóa Cache Tin Cũ", style=discord.ButtonStyle.danger, row=2)
+    @discord.ui.button(label="🧹 Clear Seen Cache", style=discord.ButtonStyle.danger, row=2)
     async def btn_clear(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.seen_ads_col.delete_many({})
-        await interaction.response.send_message("🧹 Đã xóa toàn bộ bộ nhớ đệm tin cũ!", ephemeral=True)
+        await interaction.response.send_message("🧹 Cleared all cached seen listing IDs!", ephemeral=True)
 
 
 class ChototTracker(commands.Cog):
+    """Background Chotot listing scanner managed from the /menu Owner Control Panel."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.config_col = self.bot.db["chotot_config"]
@@ -158,7 +166,6 @@ class ChototTracker(commands.Cog):
         self.scan_market.start()
 
     async def cog_load(self):
-        # Tự động xóa tin cũ sau 14 ngày (1,209,600 giây) để tiết kiệm dung lượng Atlas
         try:
             await self.seen_ads_col.create_index("at", expireAfterSeconds=1209600)
         except Exception:
@@ -176,48 +183,49 @@ class ChototTracker(commands.Cog):
 
     def format_price(self, price_vnd: int) -> str:
         if price_vnd >= 1_000_000_000:
-            return f"{price_vnd / 1_000_000_000:.2f} Tỷ"
+            return f"{price_vnd / 1_000_000_000:.2f}B VND"
         if price_vnd >= 1_000_000:
-            return f"{price_vnd / 1_000_000:.1f} Triệu"
-        return f"{price_vnd:,} VNĐ"
+            return f"{price_vnd / 1_000_000:.1f}M VND"
+        return f"{price_vnd:,} VND"
 
     def create_status_embed(self, config: dict) -> discord.Embed:
-        status_text = "ĐANG CHẠY QUÉT 🟢" if config.get("is_active", True) else "ĐANG TẠM DỪNG 🔴"
+        status_text = "ACTIVE 🟢" if config.get("is_active", True) else "PAUSED 🔴"
         channel_id = config.get("channel_id")
-        channel_mention = f"<#{channel_id}>" if channel_id else "`Chưa cấu hình`"
+        channel_mention = f"<#{channel_id}>" if channel_id else "`Not Configured`"
 
         embed = discord.Embed(
-            title="🎯 BẢNG ĐIỀU KHIỂN: CHỢ TỐT SMART TRACKER",
+            title="🎯 CHOTOT SMART TRACKER CONTROL PANEL",
             color=discord.Color.blue(),
             timestamp=datetime.now(timezone.utc),
         )
-        embed.add_field(name="⚙️ Trạng thái", value=f"**{status_text}**", inline=True)
-        embed.add_field(name="📍 Kênh thông báo", value=channel_mention, inline=True)
+        embed.add_field(name="⚙️ Scanner Status", value=f"**{status_text}**", inline=True)
+        embed.add_field(name="📍 Alert Channel", value=channel_mention, inline=True)
         embed.add_field(
-            name="💰 Khoảng giá lọc",
+            name="💰 Price Range",
             value=f"`{self.format_price(config.get('min_price', 0))}` → `{self.format_price(config.get('max_price', 8_500_000))}`",
             inline=False,
         )
         embed.add_field(
-            name="🗺️ Khu vực",
-            value=f"`{', '.join(config.get('areas', []))}`" if config.get("areas") else "_Toàn quốc_",
+            name="🗺️ Target Areas",
+            value=f"`{', '.join(config.get('areas', []))}`" if config.get("areas") else "_Nationwide (No filter)_",
             inline=False,
         )
         embed.add_field(
-            name="🔑 Từ khóa bắt buộc",
-            value=f"`{', '.join(config.get('keywords', []))}`" if config.get("keywords") else "_Bất kỳ_",
+            name="🔑 Required Keywords",
+            value=f"`{', '.join(config.get('keywords', []))}`" if config.get("keywords") else "_Any listing_",
             inline=False,
         )
         embed.add_field(
-            name="🚫 Từ khóa loại trừ",
-            value=f"`{', '.join(config.get('exclude_keywords', []))}`" if config.get("exclude_keywords") else "_Không có_",
+            name="🚫 Excluded Keywords",
+            value=f"`{', '.join(config.get('exclude_keywords', []))}`" if config.get("exclude_keywords") else "_None_",
             inline=False,
         )
         return embed
 
-    async def open_chotot_dashboard(self, interaction: discord.Interaction, ephemeral: bool = False):
+    async def open_chotot_dashboard(self, interaction: discord.Interaction, ephemeral: bool = True):
+        """Invoked from /menu Owner Control Panel."""
         if not await check_is_owner(self.bot, interaction.user):
-            return await interaction.response.send_message("⛔ Chỉ **Bot Owner** mới có quyền quản lý Chợ Tốt Tracker.", ephemeral=True)
+            return await interaction.response.send_message("⛔ Only **Bot Owners** can access Chotot Tracker.", ephemeral=True)
 
         config = await self.config_col.find_one({"_id": "user_filter_config"})
         if not config:
@@ -242,11 +250,6 @@ class ChototTracker(commands.Cog):
         embed = self.create_status_embed(config)
         await interaction.response.send_message(embed=embed, view=ChototDashboardView(self, config), ephemeral=ephemeral)
 
-    @app_commands.command(name="chotot", description="[Bot Owner] Mở bảng điều khiển Chợ Tốt Tracker")
-    @is_bot_owner_slash()
-    async def chotot_command(self, interaction: discord.Interaction):
-        await self.open_chotot_dashboard(interaction, ephemeral=False)
-
     @tasks.loop(minutes=5)
     async def scan_market(self):
         config = await self.config_col.find_one({"_id": "user_filter_config"})
@@ -267,14 +270,13 @@ class ChototTracker(commands.Cog):
                     return
                 ads = (await resp.json()).get("ads", [])
         except Exception as e:
-            print(f"[Chotot] Lỗi gọi API: {e}", flush=True)
+            print(f"[Chotot] API request failed: {e}", flush=True)
             return
 
         ad_ids = [ad["list_id"] for ad in ads if ad.get("list_id")]
         if not ad_ids:
             return
 
-        # Gộp kiểm tra toàn bộ 50 ID trong 1 truy vấn duy nhất (Fix N+1 query)
         existing_docs = await self.seen_ads_col.find({"_id": {"$in": ad_ids}}, {"_id": 1}).to_list(length=None)
         seen_set = {doc["_id"] for doc in existing_docs}
 
@@ -312,7 +314,6 @@ class ChototTracker(commands.Cog):
 
             matched_ads.append(ad)
 
-        # Lưu hàng loạt tất cả tin mới quét vào DB trong 1 lệnh duy nhất
         if to_mark_seen:
             try:
                 await self.seen_ads_col.insert_many(to_mark_seen, ordered=False)
@@ -321,34 +322,34 @@ class ChototTracker(commands.Cog):
 
         if self.is_first_run:
             self.is_first_run = False
-            print("[Chotot Tracker] Đã đồng bộ dữ liệu khởi tạo.", flush=True)
+            print("[Chotot Tracker] Initial baseline sync completed.", flush=True)
             return
 
         for ad in matched_ads:
             ad_id = ad["list_id"]
-            desc = ad.get("body", "Không có mô tả chi tiết.")
+            desc = ad.get("body", "No detailed description provided.")
             if len(desc) > 350:
                 desc = desc[:350] + "..."
             loc_display = f"{ad.get('ward_name', '')}, {ad.get('area_name', '')}, {ad.get('region_name', '')}".strip(", ")
 
             embed = discord.Embed(
-                title=ad.get("subject", "Không có tiêu đề"),
+                title=ad.get("subject", "Untitled Listing"),
                 url=f"https://www.nhatot.com/vi/{ad_id}.htm",
                 description=desc,
                 color=discord.Color.green(),
                 timestamp=now_utc,
             )
-            embed.add_field(name="💰 Giá", value=f"**{self.format_price(int(ad.get('price', 0)))}**", inline=True)
-            embed.add_field(name="📍 Khu vực", value=loc_display or "Không rõ", inline=True)
+            embed.add_field(name="💰 Price", value=f"**{self.format_price(int(ad.get('price', 0)))}**", inline=True)
+            embed.add_field(name="📍 Location", value=loc_display or "Unknown", inline=True)
             if ad.get("image"):
                 embed.set_image(url=f"https://cdn.chotot.com/{ad['image']}")
-            embed.set_footer(text=f"Nhà Tốt Tracker • ID: {ad_id}")
+            embed.set_footer(text=f"Chotot Tracker • Listing ID: {ad_id}")
 
             try:
                 await channel.send(embed=embed)
                 await asyncio.sleep(1.2)
             except Exception as e:
-                print(f"[Chotot] Lỗi gửi tin {ad_id}: {e}", flush=True)
+                print(f"[Chotot] Failed to send listing {ad_id}: {e}", flush=True)
 
     @scan_market.before_loop
     async def before_scan_market(self):

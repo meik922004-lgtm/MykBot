@@ -6,12 +6,11 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 import matplotlib
-matplotlib.use("Agg")  # Bắt buộc cho server không có màn hình (Render)
+matplotlib.use("Agg")  # Headless backend required for Linux/Render servers
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 from Database import (
     shop_subscriptions_col,
@@ -20,14 +19,13 @@ from Database import (
     players_col,
     market_history_col,
 )
-from utils.checks import is_bot_owner_slash
 
 BRIDGE_CHANNEL_ID = int(os.getenv("SHOP_BRIDGE_CHANNEL_ID", "1515038293643759728"))
 MAX_ACTIVE_ALERTS = 500
 
 
 def _render_chart_sync(item_name: str, timestamps: list, prices: list) -> io.BytesIO:
-    """Hàm đồng bộ thuần (thread-safe) chạy qua asyncio.to_thread để không block Event Loop."""
+    """Thread-safe synchronous chart renderer executed via asyncio.to_thread."""
     fig = Figure(figsize=(10, 5), facecolor="#121212")
     ax = fig.add_subplot(111, facecolor="#1a1a1a")
 
@@ -57,7 +55,49 @@ def _render_chart_sync(item_name: str, timestamps: list, prices: list) -> io.Byt
 # ==========================================
 # MODALS & SELECTS
 # ==========================================
+class GrantSlotModal(discord.ui.Modal, title="🎟️ Grant User Market Slots"):
+    """Owner modal (invoked from /menu) to set a user's maximum watchlist slots."""
+
+    target_user_id = discord.ui.TextInput(
+        label="Target Discord User ID",
+        placeholder="e.g., 1283689737567211581",
+        required=True,
+        max_length=25,
+    )
+    max_slots = discord.ui.TextInput(
+        label="Maximum Slots",
+        placeholder="e.g., 10",
+        required=True,
+        max_length=5,
+    )
+
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uid_str = self.target_user_id.value.strip()
+        slots_str = self.max_slots.value.strip()
+
+        if not uid_str.isdigit() or not slots_str.isdigit():
+            return await interaction.response.send_message(
+                "❌ Both User ID and Slots must be valid non-negative integers.",
+                ephemeral=True,
+            )
+
+        uid = int(uid_str)
+        slots = int(slots_str)
+        await user_slots_col.update_one({"_id": uid}, {"$set": {"max_slots": slots}}, upsert=True)
+        await self.cog.log_action(interaction.user.id, "OWNER_GRANT_SLOT", f"Set slots for {uid} to {slots}")
+        await interaction.response.send_message(
+            f"✅ Updated maximum watchlist slots for <@{uid}> (`{uid}`) to **{slots}** slots.",
+            ephemeral=True,
+        )
+
+
 class ItemModal(discord.ui.Modal):
+    """Modal for adding a new tracked item or editing an existing item's alert price."""
+
     def __init__(self, cog, action: str, item_name: str | None = None):
         super().__init__(title="Track New Item" if action == "add" else f"Edit: {item_name[:35]}")
         self.cog = cog
@@ -67,7 +107,7 @@ class ItemModal(discord.ui.Modal):
         if self.action == "add":
             self.item_name_input = discord.ui.TextInput(
                 label="Item Name",
-                placeholder="Nhập chính xác tên item...",
+                placeholder="Enter exact in-game item name...",
                 required=True,
                 max_length=100,
             )
@@ -75,7 +115,7 @@ class ItemModal(discord.ui.Modal):
 
         self.price_input = discord.ui.TextInput(
             label="Max Alert Price",
-            placeholder="VD: 5000000",
+            placeholder="e.g., 5000000",
             required=True,
             max_length=20,
         )
@@ -87,7 +127,7 @@ class ItemModal(discord.ui.Modal):
             if max_price <= 0:
                 raise ValueError
         except ValueError:
-            return await interaction.response.send_message("❌ Giá phải là một số nguyên dương hợp lệ!", ephemeral=True)
+            return await interaction.response.send_message("❌ Price must be a valid positive integer!", ephemeral=True)
 
         item_name = self.target_item if self.action == "edit" else self.item_name_input.value.strip()
         success, message = await self.cog.process_add_or_edit(
@@ -97,6 +137,8 @@ class ItemModal(discord.ui.Modal):
 
 
 class ItemSelect(discord.ui.Select):
+    """Dropdown selector to edit or delete a tracked item from the user's watchlist."""
+
     def __init__(self, items: list[dict], action: str, cog):
         self.action = action
         self.cog = cog
@@ -108,7 +150,7 @@ class ItemSelect(discord.ui.Select):
             )
             for i in items[:25]
         ]
-        super().__init__(placeholder=f"Chọn item để {'sửa giá' if action == 'edit' else 'xóa'}...", options=options)
+        super().__init__(placeholder=f"Select item to {action}...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         selected = self.values[0]
@@ -119,9 +161,11 @@ class ItemSelect(discord.ui.Select):
             await interaction.response.send_message(f"{'✅' if success else '⚠️'} {message}", ephemeral=True)
 
 
-class ChartModal(discord.ui.Modal, title="📈 Xem Biểu Đồ Giá"):
-    item_name_input = discord.ui.TextInput(label="Item Name", placeholder="Nhập chính xác tên item...", required=True)
-    days_input = discord.ui.TextInput(label="Số ngày (1 - 30)", placeholder="VD: 7", default="7", required=False)
+class ChartModal(discord.ui.Modal, title="📈 Render Price Chart"):
+    """Modal requesting item name and lookback window to render a historical price chart."""
+
+    item_name_input = discord.ui.TextInput(label="Item Name", placeholder="Enter exact item name...", required=True)
+    days_input = discord.ui.TextInput(label="Days to Look Back (1 - 30)", placeholder="e.g., 7", default="7", required=False)
 
     def __init__(self, cog):
         super().__init__()
@@ -134,7 +178,7 @@ class ChartModal(discord.ui.Modal, title="📈 Xem Biểu Đồ Giá"):
             days = int(self.days_input.value.strip()) if self.days_input.value.strip() else 7
             days = max(1, min(30, days))
         except ValueError:
-            return await interaction.followup.send("❌ Số ngày không hợp lệ (hãy nhập từ 1 đến 30)!", ephemeral=True)
+            return await interaction.followup.send("❌ Days must be a valid number between 1 and 30!", ephemeral=True)
 
         await self.cog.process_chart_render(interaction, item_name, days)
 
@@ -143,6 +187,8 @@ class ChartModal(discord.ui.Modal, title="📈 Xem Biểu Đồ Giá"):
 # CENTRALIZED MARKET HUB VIEW
 # ==========================================
 class CentralHubView(discord.ui.View):
+    """Personal market tracker dashboard view."""
+
     def __init__(self, cog, user_id: int, alerts_enabled: bool):
         super().__init__(timeout=300)
         self.cog = cog
@@ -168,7 +214,7 @@ class CentralHubView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
-                "⛔ Bảng Market Hub này không phải của bạn! Hãy gõ `/menu` hoặc `/market_hub` để mở bảng riêng.",
+                "⛔ This Market Hub belongs to someone else. Run `/menu` to open your own.",
                 ephemeral=True,
             )
             return False
@@ -195,13 +241,13 @@ class CentralHubView(discord.ui.View):
         max_slots = await self.cog.get_max_slots(self.user_id)
 
         embed = discord.Embed(
-            title="📋 Quản Lý Watchlist",
-            description=f"Đã dùng: `{len(items)}/{max_slots}` slots",
+            title="📋 Watchlist Management",
+            description=f"Used capacity: `{len(items)}/{max_slots}` slots",
             color=discord.Color.blue(),
         )
         if items:
             lines = [f"• **{i['name'].title()}** — `≤ {i['max_price']:,}`" for i in items[:25]]
-            embed.add_field(name="Danh sách đang theo dõi", value="\n".join(lines), inline=False)
+            embed.add_field(name="Active Tracked Items", value="\n".join(lines), inline=False)
 
         view = discord.ui.View(timeout=180)
         add_btn = discord.ui.Button(
@@ -226,9 +272,10 @@ class CentralHubView(discord.ui.View):
 # MAIN COG
 # ==========================================
 class ShopTracker(commands.Cog):
+    """Real-time shop feed listener, watchlist manager, and price analytics engine."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Giới hạn kích thước bằng OrderedDict chống rò rỉ RAM trên Render
         self.active_alerts: OrderedDict[str, list[tuple[int, int]]] = OrderedDict()
 
     async def log_action(self, user_id: int, action: str, details: str):
@@ -236,7 +283,7 @@ class ShopTracker(commands.Cog):
             "user_id": str(user_id),
             "action": action,
             "details": details,
-            "created_at": datetime.now(timezone.utc),  # Khớp TTL Index 7 ngày trong Database.py
+            "created_at": datetime.now(timezone.utc),
         })
 
     async def get_user_items(self, user_id: int) -> list[dict]:
@@ -256,17 +303,16 @@ class ShopTracker(commands.Cog):
     async def process_add_or_edit(self, user_id: int, item_name: str, max_price: int, is_edit: bool = False) -> tuple[bool, str]:
         item_key = item_name.lower().strip()
         if not item_key:
-            return False, "Tên item không được để trống."
+            return False, "Item name cannot be empty."
 
         if not is_edit:
             user_items = await self.get_user_items(user_id)
             if any(i["name"] == item_key for i in user_items):
-                return False, "Bạn đang theo dõi item này rồi!"
+                return False, "You are already tracking this item!"
             max_slots = await self.get_max_slots(user_id)
             if len(user_items) >= max_slots:
-                return False, f"Đã đạt giới hạn slot ({len(user_items)}/{max_slots})."
+                return False, f"Slot limit reached ({len(user_items)}/{max_slots})."
 
-        # Atomic update chống race condition: thử cập nhật giá nếu user đã có trong mảng
         res = await shop_subscriptions_col.update_one(
             {"_id": item_key, "subscribers.user_id": user_id},
             {"$set": {"subscribers.$.max_price": max_price}},
@@ -279,7 +325,7 @@ class ShopTracker(commands.Cog):
             )
 
         await self.log_action(user_id, "ADD/EDIT", f"{item_key} -> {max_price}")
-        return True, f"Đang theo dõi **{item_name}** với giá ≤ **{max_price:,}**"
+        return True, f"Tracking **{item_name}** at price ≤ **{max_price:,}**"
 
     async def process_remove(self, user_id: int, item_name: str) -> tuple[bool, str]:
         item_key = item_name.lower().strip()
@@ -288,11 +334,10 @@ class ShopTracker(commands.Cog):
             {"$pull": {"subscribers": {"user_id": user_id}}},
         )
         if res.modified_count > 0:
-            # Xóa document rỗng nếu không còn ai theo dõi
             await shop_subscriptions_col.delete_one({"_id": item_key, "subscribers": {"$size": 0}})
             await self.log_action(user_id, "REMOVE", item_key)
-            return True, f"Đã xóa **{item_name}** khỏi Watchlist."
-        return False, "Không tìm thấy item trong danh sách của bạn."
+            return True, f"Removed **{item_name}** from your watchlist."
+        return False, "Item not found in your watchlist."
 
     async def process_chart_render(self, interaction: discord.Interaction, item_name: str, days: int):
         item_key = item_name.lower().strip()
@@ -312,19 +357,18 @@ class ShopTracker(commands.Cog):
 
         if not prices:
             return await interaction.followup.send(
-                f"❌ Không có dữ liệu lịch sử giá cho **{item_name}** trong {days} ngày qua.",
+                f"❌ No price history recorded for **{item_name}** in the past {days} day(s).",
                 ephemeral=True,
             )
 
-        # Vẽ biểu đồ ở luồng nền để không làm lag/treo Bot
         buf = await asyncio.to_thread(_render_chart_sync, item_name, timestamps, prices)
         await interaction.followup.send(file=discord.File(buf, filename="market_trend.png"), ephemeral=True)
 
-    # --- HELPER CHO CẢ /market_hub VÀ /menu ---
+    # --- HELPERS INVOKED BY /menu ---
     async def open_market_hub(self, interaction: discord.Interaction, ephemeral: bool = True):
         profile = await players_col.find_one({"user_id": interaction.user.id}, {"ign": 1})
         if not profile or not profile.get("ign") or profile.get("ign") == "Not Set":
-            msg = "❌ Bạn chưa liên kết hồ sơ! Hãy dùng `/mygear` trước."
+            msg = "❌ Profile not set up yet! Please set your IGN via `/menu` → **Profile & Timezone** first."
             if interaction.response.is_done():
                 return await interaction.followup.send(msg, ephemeral=True)
             return await interaction.response.send_message(msg, ephemeral=True)
@@ -340,33 +384,23 @@ class ShopTracker(commands.Cog):
         embed = discord.Embed(
             title="🎯 MyK Central Market Hub",
             description=(
-                "Bảng điều khiển theo dõi giá chợ cá nhân.\n\n"
-                f"**📦 Slots đang dùng:** `{len(tracked_items)}/{max_slots}`\n"
-                f"**🔔 Thông báo DM:** `{'🟢 ON' if alerts_enabled else '🔴 OFF'}`"
+                "Your personal market tracking dashboard. "
+                "Manage your watchlist and toggle real-time DM alerts.\n\n"
+                f"**📦 Tracking Slots:** `{len(tracked_items)}/{max_slots}`\n"
+                f"**🔔 DM Notifications:** `{'🟢 ON' if alerts_enabled else '🔴 OFF'}`"
             ),
             color=discord.Color.gold(),
         )
         if self.bot.user and self.bot.user.display_avatar:
             embed.set_thumbnail(url=self.bot.user.display_avatar.url)
-        embed.set_footer(text="MyKBot • Real-time Market Tracker")
+        embed.set_footer(text="MyKBot • Real-Time Market Tracker")
 
         view = CentralHubView(self, interaction.user.id, alerts_enabled)
         await interaction.followup.send(embed=embed, view=view, ephemeral=ephemeral)
 
-    @app_commands.command(name="market_hub", description="Mở trung tâm quản lý Watchlist & Biểu đồ giá chợ")
-    async def market_hub(self, interaction: discord.Interaction):
-        await self.open_market_hub(interaction, ephemeral=True)
-
-    @app_commands.command(name="addslot", description="[Bot Owner] Cấp hoặc chỉnh sửa số slot theo dõi chợ cho user")
-    @app_commands.describe(user="Chọn người dùng", slots="Số slot tối đa (VD: 10)")
-    @is_bot_owner_slash()
-    async def addslot(self, interaction: discord.Interaction, user: discord.User, slots: int):
-        if slots < 0:
-            return await interaction.response.send_message("❌ Số slot phải lớn hơn hoặc bằng 0.", ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
-        await user_slots_col.update_one({"_id": user.id}, {"$set": {"max_slots": slots}}, upsert=True)
-        await self.log_action(interaction.user.id, "OWNER_GRANT_SLOT", f"Set slots for {user.id} to {slots}")
-        await interaction.followup.send(f"✅ Đã cập nhật giới hạn cho {user.mention} thành **{slots}** slots.", ephemeral=True)
+    async def open_grant_slot_modal(self, interaction: discord.Interaction):
+        """Open the Owner modal to allocate watchlist slots to a user."""
+        await interaction.response.send_modal(GrantSlotModal(self))
 
     # --- STREAM FEED LISTENER ---
     @commands.Cog.listener()
@@ -393,7 +427,7 @@ class ShopTracker(commands.Cog):
                 itm["item_name"] = itm["item_name"].lower().strip()
             await market_history_col.insert_one(shop_data)
 
-            # 1. CẬP NHẬT TRẠNG THÁI ĐÃ BÁN (SOLD OUT)
+            # 1. Mark previously alerted items as SOLD OUT
             if shop_data.get("type") == "sold":
                 owner = shop_data.get("owner", "Unknown")
                 for itm in items_in_shop:
@@ -418,12 +452,11 @@ class ShopTracker(commands.Cog):
             if shop_data.get("type") != "open":
                 continue
 
-            # 2. GỬI CẢNH BÁO ITEM MỚI (ĐÃ TỐI ƯU BATCH QUERY)
+            # 2. Send real-time alerts to matching subscribers
             item_names = list({item["item_name"] for item in items_in_shop})
             relevant_docs = await shop_subscriptions_col.find({"_id": {"$in": item_names}}).to_list(length=None)
             active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
 
-            # Gom toàn bộ user_id liên quan để kiểm tra alerts_enabled trong 1 query duy nhất
             all_sub_ids = list({sub["user_id"] for subs in active_subs.values() for sub in subs})
             if not all_sub_ids:
                 continue
