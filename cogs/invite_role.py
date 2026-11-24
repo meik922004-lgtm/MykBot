@@ -1,62 +1,92 @@
 import discord
-from discord.ext import commands
 from discord import app_commands
-from Database import db # Giả định bạn dùng chung db với các file khác
+from discord.ext import commands
+from Database import invite_roles_col
+from utils.checks import is_admin_or_bot_owner
 
-# Collection để lưu cấu hình: { "guild_id": 123, "invites": {"abcXYZ": 987654321} }
-# Trong đó abcXYZ là mã code, 987654321 là ID của role
-invite_roles_col = db["invite_roles_config"]
 
 class InviteRole(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Cache để theo dõi số lượng sử dụng của các invite link
-        self.invite_cache = {}
+        self.invite_cache: dict[int, dict[str, int]] = {}
+
+    async def _cache_guild_invites(self, guild: discord.Guild):
+        if not guild.me or not guild.me.guild_permissions.manage_guild:
+            return
+        try:
+            invites = await guild.invites()
+            self.invite_cache[guild.id] = {inv.code: inv.uses or 0 for inv in invites}
+        except (discord.Forbidden, discord.HTTPException):
+            pass
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # Lưu lại trạng thái ban đầu của các invite link khi bot khởi động
         for guild in self.bot.guilds:
-            if guild.me.guild_permissions.manage_guild:
-                invites = await guild.invites()
-                self.invite_cache[guild.id] = {invite.code: invite.uses for invite in invites}
+            await self._cache_guild_invites(guild)
+
+    @commands.Cog.listener()
+    async def on_invite_create(self, invite: discord.Invite):
+        if invite.guild:
+            self.invite_cache.setdefault(invite.guild.id, {})[invite.code] = invite.uses or 0
+
+    @commands.Cog.listener()
+    async def on_invite_delete(self, invite: discord.Invite):
+        if invite.guild and invite.guild.id in self.invite_cache:
+            self.invite_cache[invite.guild.id].pop(invite.code, None)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        if not member.guild.me.guild_permissions.manage_guild:
+        guild = member.guild
+        if not guild.me or not guild.me.guild_permissions.manage_guild:
             return
 
-        # Lấy danh sách invite hiện tại để so sánh
-        new_invites = await member.guild.invites()
-        old_invites = self.invite_cache.get(member.guild.id, {})
+        try:
+            new_invites = await guild.invites()
+        except (discord.Forbidden, discord.HTTPException):
+            return
 
-        for invite in new_invites:
-            if invite.code in old_invites and invite.uses > old_invites[invite.code]:
-                # Đây là link vừa được sử dụng
-                config = await invite_roles_col.find_one({"guild_id": member.guild.id})
-                if config and invite.code in config.get("invites", {}):
-                    role_id = int(config["invites"][invite.code])
-                    role = member.guild.get_role(role_id)
-                    if role:
-                        try:
-                            await member.add_roles(role)
-                        except Exception as e:
-                            print(f"Error adding role: {e}")
-                
-                # Cập nhật lại cache
-                self.invite_cache[member.guild.id][invite.code] = invite.uses
+        old_invites = self.invite_cache.get(guild.id, {})
+        used_code = None
+
+        for inv in new_invites:
+            old_uses = old_invites.get(inv.code, 0)
+            if (inv.uses or 0) > old_uses:
+                used_code = inv.code
                 break
 
-    @app_commands.command(name="set_invite_role", description="Liên kết link mời với một Role")
-    @app_commands.checks.has_permissions(administrator=True)
+        # Cập nhật toàn bộ cache mới nhất
+        self.invite_cache[guild.id] = {inv.code: inv.uses or 0 for inv in new_invites}
+
+        if not used_code:
+            return
+
+        config = await invite_roles_col.find_one({"guild_id": guild.id})
+        if config and used_code in config.get("invites", {}):
+            role_id = int(config["invites"][used_code])
+            role = guild.get_role(role_id)
+            if role:
+                try:
+                    await member.add_roles(role, reason=f"Joined via invite {used_code}")
+                except discord.Forbidden:
+                    print(f"[InviteRole] Thiếu quyền cấp role {role.name} tại server {guild.name}", flush=True)
+                except Exception as e:
+                    print(f"[InviteRole] Lỗi cấp role: {e}", flush=True)
+
+    @app_commands.command(name="set_invite_role", description="Liên kết link mời với một Role tự động")
+    @app_commands.describe(invite_code="Mã mời (VD: abcXYZ) hoặc dán trực tiếp link discord.gg/abcXYZ", role="Role cần cấp")
+    @is_admin_or_bot_owner()
     async def set_invite_role(self, interaction: discord.Interaction, invite_code: str, role: discord.Role):
-        # Lưu cấu hình vào DB
+        clean_code = invite_code.strip().rstrip("/").split("/")[-1]
         await invite_roles_col.update_one(
             {"guild_id": interaction.guild_id},
-            {"$set": {f"invites.{invite_code}": role.id}},
-            upsert=True
+            {"$set": {f"invites.{clean_code}": role.id}},
+            upsert=True,
         )
-        await interaction.response.send_message(f"✅ Đã liên kết code `{invite_code}` với role **{role.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"✅ Đã liên kết mã mời `{clean_code}` với role **{role.name}**.",
+            ephemeral=True,
+        )
 
-async def setup(bot):
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(InviteRole(bot))

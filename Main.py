@@ -1,15 +1,16 @@
+import os
+import traceback
 import discord
 from discord.ext import commands
-import os
 from dotenv import load_dotenv
-from Database import db
+from Database import db, client as mongo_client, init_indexes
+from utils.checks import BOT_OWNER_IDS
 
-# 1. Cấu hình Bot
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-
 if not TOKEN:
-    raise ValueError("❌ Không tìm thấy BOT_TOKEN!")
+    raise ValueError("❌ Không tìm thấy BOT_TOKEN trong biến môi trường!")
+
 
 class MyKBot(commands.Bot):
     def __init__(self):
@@ -20,45 +21,64 @@ class MyKBot(commands.Bot):
         super().__init__(
             command_prefix="!",
             intents=intents,
-            help_command=None
+            help_command=None,
+            owner_ids=BOT_OWNER_IDS,
         )
+        self.db = db
 
     async def setup_hook(self):
-        # Gọi hàm load cog ở đây
+        await init_indexes()
         await self.load_all_extensions()
-        print("✅ Synced commands to test guild")
 
     async def load_all_extensions(self):
         print("=== Bắt đầu load cogs ===", flush=True)
-        for filename in os.listdir('./cogs'):
-            if filename.endswith('.py'):
+        cogs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cogs")
+        for filename in sorted(os.listdir(cogs_dir)):
+            if filename.endswith(".py") and not filename.startswith("_"):
+                ext_name = f"cogs.{filename[:-3]}"
                 try:
-                    await self.load_extension(f'cogs.{filename[:-3]}')
-                    print(f"✅ Loaded cog thành công: {filename}", flush=True)
+                    await self.load_extension(ext_name)
+                    print(f"✅ Loaded cog: {filename}", flush=True)
                 except Exception as e:
-                    print(f"❌ KHÔNG THỂ load được file {filename}!", flush=True)
-                    print(f"Lỗi cụ thể: {repr(e)}", flush=True)
-                    import traceback
+                    print(f"❌ KHÔNG THỂ load file {filename}: {repr(e)}", flush=True)
                     print(traceback.format_exc(), flush=True)
 
-bot = MyKBot()
-bot.db = db  # Gán biến db vào thuộc tính của bot để dùng trong các Cog
+    async def close(self):
+        mongo_client.close()
+        await super().close()
 
-@bot.command()
-async def sync(ctx):
-    if ctx.author.id == 1283689737567211581:
-        try:
+
+bot = MyKBot()
+
+
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_cmd(ctx: commands.Context, scope: str = "global"):
+    """Đồng bộ Slash Commands. Dùng: !sync (global) hoặc !sync guild (server hiện tại)."""
+    try:
+        if scope.lower() == "guild":
+            bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await bot.tree.sync(guild=ctx.guild)
+            await ctx.send(f"✅ Đã đồng bộ **{len(synced)}** lệnh Slash vào server này!")
+        else:
             bot.tree.clear_commands(guild=ctx.guild)
             await bot.tree.sync(guild=ctx.guild)
             synced = await bot.tree.sync()
-            await ctx.send(f"✅ Đã đồng bộ thành công {len(synced)} lệnh Slash Global!")
-        except Exception as e:
-            await ctx.send(f"❌ Lỗi: {e}")
-    else:
-        await ctx.send("❌ You don't have permission to use this command.")
+            await ctx.send(f"✅ Đã đồng bộ **{len(synced)}** lệnh Slash Global!")
+    except Exception as e:
+        await ctx.send(f"❌ Lỗi đồng bộ: `{e}`")
+
+
+@sync_cmd.error
+async def sync_error(ctx: commands.Context, error):
+    if isinstance(error, commands.NotOwner):
+        await ctx.send("⛔ Chỉ **Bot Owner** mới được phép sử dụng lệnh này.")
+
 
 @bot.event
 async def on_ready():
-    print(f"🟢 Bot đã sẵn sàng với tên {bot.user} (ID: {bot.user.id})")
+    print(f"🟢 Bot đã sẵn sàng: {bot.user} (ID: {bot.user.id}) | Owners: {BOT_OWNER_IDS}", flush=True)
 
-bot.run(TOKEN)
+
+if __name__ == "__main__":
+    bot.run(TOKEN)

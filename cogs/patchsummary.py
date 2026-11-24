@@ -1,260 +1,359 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import aiohttp
+import asyncio
 import logging
-import motor.motor_asyncio
 import os
 import textwrap
-import asyncio
-# Thiết lập Logger cho Debugging (Yêu cầu 5)
-logger = logging.getLogger('DMW_Broadcaster')
-logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+from datetime import datetime, timezone
+from bson.objectid import ObjectId
+import aiohttp
+import discord
+from discord import app_commands
+from discord.ext import commands
+from Database import patch_subscribers_col, patch_history_col
+from utils.checks import is_admin_or_bot_owner
+
+logger = logging.getLogger("DMW_Broadcaster")
+logger.setLevel(logging.INFO)
 if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s:%(levelname)s:%(name)s: %(message)s"))
     logger.addHandler(handler)
 
-# --- CONFIGURATION ---
-# Bạn có thể đưa các biến này vào file .env
+DATA_CENTER_CHANNEL_ID = int(os.getenv("DATA_CENTER_CHANNEL_ID", "1517166085940445284"))
+DEBOUNCE_SECONDS = 90  # Chờ 90 giây sau tin cuối cùng của GM để gom trọn bộ Patch Note
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
-DATA_CENTER_CHANNEL_ID = 1517166085940445284  # THAY BẰNG ID KÊNH MYK DATA CENTER CỦA BẠN
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
 
-# Sử dụng model free phổ biến và mạnh mẽ trên OpenRouter
-AI_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free"
-# ---------------------
+LANG_MAP = {
+    "vn": ("Vietnamese", "🇻🇳 Tiếng Việt"),
+    "de": ("German", "🇩🇪 Deutsch"),
+    "ms": ("Malay", "🇲🇾 Bahasa Melayu"),
+    "id": ("Indonesian", "🇮🇩 Bahasa Indonesia"),
+}
 
-class PaginationAndTranslationView(discord.ui.View):
-    """View quản lý phân trang và các nút dịch thuật (Yêu cầu 2 & 8)"""
-    def __init__(self, cog, chunks, original_text):
+
+def build_patch_embed(chunks: list[str], page: int, title: str = "📰 DMW Patch Summary") -> discord.Embed:
+    safe_page = max(0, min(page, len(chunks) - 1))
+    embed = discord.Embed(
+        title=title,
+        description=chunks[safe_page],
+        color=discord.Color.blue(),
+    )
+    embed.set_footer(text=f"Page {safe_page + 1}/{len(chunks)} • Bấm nút bên dưới để dịch nhanh")
+    return embed
+
+
+class PatchView(discord.ui.View):
+    """View bền vững dựa trên MongoDB patch_id — hoạt động ổn định ngay cả sau khi Render restart."""
+
+    def __init__(self, patch_id: str, total_pages: int = 1, current_page: int = 0):
         super().__init__(timeout=None)
-        self.cog = cog
-        self.chunks = chunks
-        self.original_text = original_text # Giữ lại text gốc để dịch toàn bộ
-        self.current_page = 0
+        if total_pages > 1:
+            self.add_item(
+                discord.ui.Button(
+                    label="◀ Prev",
+                    style=discord.ButtonStyle.grey,
+                    custom_id=f"patch:nav:{patch_id}:{max(0, current_page - 1)}",
+                    disabled=(current_page <= 0),
+                    row=0,
+                )
+            )
+            self.add_item(
+                discord.ui.Button(
+                    label="Next ▶",
+                    style=discord.ButtonStyle.grey,
+                    custom_id=f"patch:nav:{patch_id}:{min(total_pages - 1, current_page + 1)}",
+                    disabled=(current_page >= total_pages - 1),
+                    row=0,
+                )
+            )
 
-        # Nếu chỉ có 1 trang, vô hiệu hóa nút chuyển trang
-        if len(self.chunks) <= 1:
-            self.prev_button.disabled = True
-            self.next_button.disabled = True
-
-    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.grey, custom_id="prev_page")
-    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            await self.update_message(interaction)
-
-    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.grey, custom_id="next_page")
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < len(self.chunks) - 1:
-            self.current_page += 1
-            await self.update_message(interaction)
-
-    async def update_message(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="📰 DMW Data Center Update", 
-            description=self.chunks[self.current_page], 
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text=f"Page {self.current_page + 1}/{len(self.chunks)}")
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    # --- CÁC NÚT DỊCH THUẬT (EPHEMERAL) ---
-    async def handle_translation(self, interaction: discord.Interaction, target_lang: str):
-        # Bắt buộc defer vì gọi AI có thể mất hơn 3 giây
-        await interaction.response.defer(ephemeral=True)
-        logger.debug(f"[Translation] User {interaction.user} requested translation to {target_lang}")
-        
-        system_prompt = (
-            f"You are a gaming translator. Translate the following text to {target_lang}. "
-            "CRITICAL RULE: DO NOT translate game-specific terms like Digimon names, "
-            "Dungeon names, NPC names, or item names. Keep them strictly in English."
-        )
-        
-        translated_text = await self.cog.call_openrouter(system_prompt, self.original_text)
-        
-        if not translated_text:
-            await interaction.followup.send("Failed to translate data. Please try again later.", ephemeral=True)
-            return
-
-        # Phân trang cho bản dịch nếu quá dài
-        trans_chunks = textwrap.wrap(translated_text, 4000, replace_whitespace=False)
-        for i, chunk in enumerate(trans_chunks):
-            embed = discord.Embed(title=f"DMW Update ({target_lang})", description=chunk, color=discord.Color.green())
-            if i == 0:
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            else:
-                # Gửi thêm các phần tiếp theo nếu văn bản quá dài
-                await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="🇻🇳 VN", style=discord.ButtonStyle.primary, custom_id="trans_vn")
-    async def translate_vn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_translation(interaction, "Vietnamese")
-
-    @discord.ui.button(label="🇩🇪 DE", style=discord.ButtonStyle.primary, custom_id="trans_de")
-    async def translate_de(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_translation(interaction, "German")
-
-    @discord.ui.button(label="🇲🇾 MS", style=discord.ButtonStyle.primary, custom_id="trans_ms")
-    async def translate_ms(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_translation(interaction, "Malay")
-
-    @discord.ui.button(label="🇮🇩 ID", style=discord.ButtonStyle.primary, custom_id="trans_id")
-    async def translate_id(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_translation(interaction, "Indonesian")
+        for code, (_, label) in LANG_MAP.items():
+            self.add_item(
+                discord.ui.Button(
+                    label=label.split(" ")[0] + " " + code.upper(),
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"patch:trans:{patch_id}:{code}",
+                    row=1,
+                )
+            )
 
 
 class DMWBroadcaster(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Khởi tạo kết nối MongoDB
-        self.db_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
-        self.db = self.db_client.dmw_Database # Tên Database
-        self.collection = self.db.news_channels # Tên Collection lưu ID
-        logger.info("[Init] DMW Broadcaster Cog loaded and MongoDB connected.")
+        self._session: aiohttp.ClientSession | None = None
+        self._message_buffer: list[str] = []
+        self._debounce_task: asyncio.Task | None = None
 
-    async def call_openrouter(self, system_prompt: str, user_text: str) -> str:
-        """Gọi API OpenRouter (Yêu cầu 2)"""
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "HTTP-Referer": "https://github.com/meik922004-lgtm/MykBot", # Thay bằng link của bạn
-            "X-Title": "DMW Discord Bot",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text}
-            ]
-        }
-        
-        logger.debug(f"[OpenRouter] Sending request to OpenRouter using {AI_MODEL}...")
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
+    async def cog_unload(self):
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
+        return self._session
+
+    async def call_ai(self, system_prompt: str, user_text: str) -> str | None:
+        """Gọi AI theo thứ tự ưu tiên: Groq -> Gemini REST -> OpenRouter."""
+        session = await self._get_session()
+
+        # 1. Ưu tiên Groq (Rất nhanh, miễn phí ổn định)
+        if GROQ_API_KEY:
+            try:
+                async with session.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_text},
+                        ],
+                        "temperature": 0.3,
+                    },
+                ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        logger.debug("[OpenRouter] Request successful.")
-                        return data['choices'][0]['message']['content']
-                    else:
-                        error_data = await resp.text()
-                        logger.error(f"[OpenRouter] Request failed with status {resp.status}: {error_data}")
-                        return None
-        except Exception as e:
-            logger.error(f"[OpenRouter] Exception occurred: {e}")
-            return None
+                        return data["choices"][0]["message"]["content"]
+                    logger.warning(f"[Groq] HTTP {resp.status}: {await resp.text()}")
+            except Exception as e:
+                logger.error(f"[Groq] Exception: {e}")
 
+        # 2. Dự phòng Google Gemini API (qua REST để không block event loop)
+        if GEMINI_API_KEY:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+                payload = {
+                    "system_instruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"parts": [{"text": user_text}]}],
+                }
+                async with session.post(url, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data["candidates"][0]["content"]["parts"][0]["text"]
+                    logger.warning(f"[Gemini] HTTP {resp.status}: {await resp.text()}")
+            except Exception as e:
+                logger.error(f"[Gemini] Exception: {e}")
+
+        # 3. Dự phòng cuối cùng: OpenRouter
+        if OPENROUTER_API_KEY:
+            try:
+                async with session.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "HTTP-Referer": "https://github.com/meik922004-lgtm/MykBot",
+                        "X-Title": "MyKBot DMW Patch Summary",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_text},
+                        ],
+                    },
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data["choices"][0]["message"]["content"]
+                    logger.error(f"[OpenRouter] HTTP {resp.status}: {await resp.text()}")
+            except Exception as e:
+                logger.error(f"[OpenRouter] Exception: {e}")
+
+        return None
+
+    # ==========================================
+    # DEBOUNCE BUFFER GOM TIN NHẮN PATCH NOTE
+    # ==========================================
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Lắng nghe tin nhắn từ Data Center (Yêu cầu 1)"""
-        if message.author.bot and message.author == self.bot.user:
-            return # Bỏ qua tin nhắn do chính bot này gửi
+        if message.author == self.bot.user:
+            return
+        if message.channel.id != DATA_CENTER_CHANNEL_ID:
+            return
 
-        if message.channel.id == DATA_CENTER_CHANNEL_ID:
-            logger.info(f"[Data Center] Detected new message in source channel. ID: {message.id}")
-            
-            # Lấy nội dung tin nhắn (bao gồm cả embed nếu có)
-            content = message.content
-            if message.embeds:
-                for embed in message.embeds:
-                    if embed.description:
-                        content += f"\n{embed.description}"
+        parts = []
+        if message.content.strip():
+            parts.append(message.content.strip())
+        for emb in message.embeds:
+            if emb.title:
+                parts.append(f"**{emb.title}**")
+            if emb.description:
+                parts.append(emb.description)
+            for field in emb.fields:
+                parts.append(f"{field.name}: {field.value}")
 
-            if not content.strip():
-                logger.debug("[Data Center] Message is empty, skipping.")
+        combined = "\n".join(parts).strip()
+        if not combined:
+            return
+
+        self._message_buffer.append(combined)
+        logger.info(f"[PatchBuffer] Đã gom {len(self._message_buffer)} tin nhắn. Đợi {DEBOUNCE_SECONDS}s...")
+
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        self._debounce_task = asyncio.create_task(self._flush_buffer_after_delay())
+
+    async def _flush_buffer_after_delay(self):
+        try:
+            await asyncio.sleep(DEBOUNCE_SECONDS)
+            if not self._message_buffer:
                 return
 
+            full_text = "\n\n---\n\n".join(self._message_buffer)
+            self._message_buffer.clear()
+
             system_prompt = (
-                "You are an AI assistant for a Digimon Masters server. "
-                "Summarize the following game updates/news. Output ONLY in English. "
-                "CRITICAL: Keep all specific terms like Digimon names, Dungeon names, "
-                "and item names exactly as they are in English. Be concise and format nicely with bullet points."
+                "You are an AI assistant for a Digimon Masters World (DMW) community. "
+                "Summarize the following game patch notes/updates clearly in English using concise bullet points. "
+                "Group by sections (e.g., Events, Cash Shop, Fixes, Balance). "
+                "CRITICAL: Keep all Digimon names, Dungeon names, NPC names, and Item names strictly in English."
             )
+            summary = await self.call_ai(system_prompt, full_text)
+            if not summary:
+                logger.error("[PatchSummary] Không thể tạo bản tóm tắt từ AI.")
+                return
 
-            summary = await self.call_openrouter(system_prompt, content)
-            
-            if summary:
-                await self.broadcast_summary(summary)
-            else:
-                logger.error("[Process] Failed to generate summary from AI.")
+            chunks = textwrap.wrap(summary, 3900, replace_whitespace=False)
+            doc = {
+                "summary": summary,
+                "chunks": chunks,
+                "translations": {},
+                "created_at": datetime.now(timezone.utc),
+            }
+            res = await patch_history_col.insert_one(doc)
+            await self.broadcast_summary(str(res.inserted_id), chunks)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[PatchSummary] Lỗi xử lý buffer: {e}")
 
-    async def broadcast_summary(self, summary: str):
-        """Gửi thông báo tới các server đã đăng ký (Yêu cầu 3 & 4)"""
-        logger.info("[Broadcast] Starting broadcast to registered channels.")
-        
-        # Cắt nội dung thành các phần nhỏ 4000 ký tự (Yêu cầu 8)
-        chunks = textwrap.wrap(summary, 4000, replace_whitespace=False)
-        
-        cursor = self.collection.find({})
-        async for document in cursor:
-            guild_id = document.get("guild_id")
-            channel_id = document.get("channel_id")
-            
-            channel = self.bot.get_channel(channel_id)
-            
-            if channel is None:
-                try:
-                    # Thử fetch nếu channel không nằm trong cache
-                    channel = await self.bot.fetch_channel(channel_id)
-                except (discord.NotFound, discord.Forbidden):
-                    # Kênh bị xóa hoặc bot bị mất quyền
-                    logger.warning(f"[Broadcast] Lost access or channel deleted for Guild {guild_id}. Removing from DB.")
-                    await self.collection.delete_one({"guild_id": guild_id})
-                    continue
-                except Exception as e:
-                    logger.error(f"[Broadcast] Error fetching channel {channel_id}: {e}")
-                    continue
+    async def broadcast_summary(self, patch_id: str, chunks: list[str]):
+        embed = build_patch_embed(chunks, 0)
+        view = PatchView(patch_id, len(chunks), 0)
+
+        async for doc in patch_subscribers_col.find({}):
+            guild_id = doc.get("guild_id")
+            channel_id = doc.get("channel_id")
+            if not channel_id:
+                continue
 
             try:
-                view = PaginationAndTranslationView(self, chunks, summary)
-                embed = discord.Embed(
-                    title="📰 DMW Data Center Update", 
-                    description=chunks[0], 
-                    color=discord.Color.blue()
-                )
-                if len(chunks) > 1:
-                    embed.set_footer(text=f"Page 1/{len(chunks)}")
-                    
+                channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
                 await channel.send(embed=embed, view=view)
-                logger.debug(f"[Broadcast] Successfully sent to Guild {guild_id}, Channel {channel.name}.")
-                
-            except discord.Forbidden:
-                # Bot không có quyền chat -> Xóa khỏi DB (Yêu cầu 4)
-                logger.warning(f"[Broadcast] Missing permissions to send in Guild {guild_id}. Removing from DB.")
-                await self.collection.delete_one({"guild_id": guild_id})
+                await asyncio.sleep(0.3)
+            except (discord.NotFound, discord.Forbidden):
+                logger.warning(f"[PatchBroadcast] Mất quyền hoặc xóa kênh tại Guild {guild_id}. Đã gỡ khỏi DB.")
+                await patch_subscribers_col.delete_one({"guild_id": guild_id})
             except Exception as e:
-                logger.error(f"[Broadcast] Failed to send message to {channel_id}: {e}")
+                logger.error(f"[PatchBroadcast] Lỗi gửi tới kênh {channel_id}: {e}")
+
+    # ==========================================
+    # XỬ LÝ NÚT CHUYỂN TRANG & DỊCH THUẬT (PERSISTENT)
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        if not interaction.data:
+            return
+        custom_id = interaction.data.get("custom_id", "")
+        if not custom_id.startswith("patch:"):
+            return
+
+        parts = custom_id.split(":")
+        if len(parts) != 4:
+            return
+
+        _, action, patch_id, arg = parts
+        if not ObjectId.is_valid(patch_id):
+            return await interaction.response.send_message("❌ Bản tin này không còn hợp lệ.", ephemeral=True)
+
+        doc = await patch_history_col.find_one({"_id": ObjectId(patch_id)})
+        if not doc:
+            return await interaction.response.send_message("❌ Không tìm thấy dữ liệu bản tin trong Database.", ephemeral=True)
+
+        chunks = doc.get("chunks") or textwrap.wrap(doc.get("summary", ""), 3900, replace_whitespace=False)
+
+        if action == "nav":
+            page = int(arg)
+            embed = build_patch_embed(chunks, page)
+            view = PatchView(patch_id, len(chunks), page)
+            return await interaction.response.edit_message(embed=embed, view=view)
+
+        if action == "trans":
+            if arg not in LANG_MAP:
+                return
+            target_lang, display_name = LANG_MAP[arg]
+            await interaction.response.defer(ephemeral=True)
+
+            # Kiểm tra cache bản dịch trên MongoDB trước khi gọi AI
+            cached_trans = doc.get("translations", {}).get(arg)
+            if not cached_trans:
+                system_prompt = (
+                    f"You are a gaming translator. Translate the following DMW patch summary into {target_lang}. "
+                    "CRITICAL RULE: Keep all Digimon names, Dungeon names, NPC names, and item names strictly in English."
+                )
+                cached_trans = await self.call_ai(system_prompt, doc.get("summary", ""))
+                if not cached_trans:
+                    return await interaction.followup.send("❌ Dịch thất bại, vui lòng thử lại sau.", ephemeral=True)
+                await patch_history_col.update_one(
+                    {"_id": ObjectId(patch_id)},
+                    {"$set": {f"translations.{arg}": cached_trans}},
+                )
+
+            trans_chunks = textwrap.wrap(cached_trans, 3900, replace_whitespace=False)
+            for idx, chunk in enumerate(trans_chunks):
+                emb = discord.Embed(
+                    title=f"📰 DMW Patch Summary ({display_name})" + (f" [{idx + 1}/{len(trans_chunks)}]" if len(trans_chunks) > 1 else ""),
+                    description=chunk,
+                    color=discord.Color.green(),
+                )
+                await interaction.followup.send(embed=emb, ephemeral=True)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild):
-        """Tự động xóa DB khi bot bị kick khỏi server (Yêu cầu 4)"""
-        logger.info(f"[Event] Bot was removed from Guild: {guild.name} ({guild.id}). Cleaning up DB.")
-        await self.collection.delete_one({"guild_id": guild.id})
+        await patch_subscribers_col.delete_one({"guild_id": guild.id})
 
-    # --- SLASH COMMANDS (Yêu cầu 6 & 7) ---
-    @app_commands.command(name="setup_news", description="Register the current channel to receive DMW news broadcasts.")
-    @app_commands.default_permissions(administrator=True) # Chỉ Admin mới thấy/sài được
+    # ==========================================
+    # HELPER CHO /menu & SLASH COMMANDS
+    # ==========================================
+    async def open_latest_patch(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        latest = await patch_history_col.find_one(sort=[("created_at", -1)])
+        if not latest:
+            return await interaction.followup.send("📭 Chưa có bản tóm tắt Patch Note nào được lưu.", ephemeral=True)
+
+        chunks = latest.get("chunks") or textwrap.wrap(latest.get("summary", ""), 3900, replace_whitespace=False)
+        embed = build_patch_embed(chunks, 0, title="📰 DMW Patch Summary (Mới nhất)")
+        view = PatchView(str(latest["_id"]), len(chunks), 0)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @app_commands.command(name="setup_news", description="Đăng ký kênh hiện tại nhận tóm tắt Patch Note DMW tự động")
+    @is_admin_or_bot_owner()
     async def setup_news(self, interaction: discord.Interaction):
-        guild_id = interaction.guild.id
-        channel_id = interaction.channel.id
-
-        logger.info(f"[Command] Setup requested by {interaction.user} for Guild {guild_id} in Channel {channel_id}")
-
-        # Upsert: Lưu ID guild và channel, tạo collection mới nếu chưa có
-        await self.collection.update_one(
-            {"guild_id": guild_id},
-            {"$set": {"guild_id": guild_id, "channel_id": channel_id}},
-            upsert=True
+        await patch_subscribers_col.update_one(
+            {"guild_id": interaction.guild_id},
+            {"$set": {"guild_id": interaction.guild_id, "channel_id": interaction.channel_id}},
+            upsert=True,
         )
-
         embed = discord.Embed(
-            title="✅ Setup Complete",
-            description=f"This channel (`{interaction.channel.name}`) has been successfully registered to receive DMW news broadcasts.",
-            color=discord.Color.green()
+            title="✅ Setup Patch Summary Thành Công",
+            description=f"Kênh {interaction.channel.mention} đã được đăng ký nhận bản tóm tắt Patch Note tự động.",
+            color=discord.Color.green(),
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-async def setup(bot):
+    @app_commands.command(name="patch_latest", description="Xem bản tóm tắt Patch Note DMW mới nhất")
+    async def patch_latest(self, interaction: discord.Interaction):
+        await self.open_latest_patch(interaction)
+
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(DMWBroadcaster(bot))
