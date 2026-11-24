@@ -1,0 +1,75 @@
+[33mcommit cc5569df038c963ee1d4754437f9186a207d93f8[m
+Author: Meik <meik922004@gmail.com>
+Date:   Tue Nov 24 18:42:59 2026 +0700
+
+    Refactor: remove RPG/Giveaway, optimize DB, add /menu hub
+
+ delete mode 100644 cogs/giveaway.py
+ delete mode 100644 cogs/rpg_system.py
+ delete mode 100644 rpg_system backup
+
+[33mcommit 5c51977be965fe0ec0d269dc5a6f50fb715ffb5c[m
+Author: Meik <meik922004@gmail.com>
+Date:   Thu Sep 3 20:35:57 2026 +0700
+
+     backup old bot
+
+ delete mode 100644 cogs/hub.py
+ delete mode 100644 cogs/management.py
+ delete mode 100644 cogs/party_dungeon.py
+
+[33mcommit 73bc2f95c8544ba54857bc8c5b4eb97f3c3d9501[m
+Author: Meik <meik922004@gmail.com>
+Date:   Thu Sep 3 20:17:23 2026 +0700
+
+    remake all system
+
+ delete mode 100644 cogs/Admin.py
+ delete mode 100644 cogs/dungeon_stats.py
+ delete mode 100644 cogs/general.py
+ delete mode 100644 cogs/giveaway.py
+ delete mode 100644 cogs/invite_role.py
+ delete mode 100644 cogs/party_finder.py
+ delete mode 100644 cogs/patchsummary.py
+ delete mode 100644 cogs/roles.py
+ delete mode 100644 cogs/rpg_system.py
+
+[33mcommit ad67a94d66c219d9cf87584faf74124f9f8978fb[m
+Author: Meik <meik922004@gmail.com>
+Date:   Fri Jun 19 20:06:15 2026 +0700
+
+     try new code for patch summary
+
+ delete mode 100644 cogs/patch_note_cog.py
+
+[33mcommit e631bd9487d037acc4409da4f90f82a555c123d4[m
+Author: Meik <meik922004@gmail.com>
+Date:   Thu Jun 18 22:45:26 2026 +0700
+
+    add new function
+
+ delete mode 100644 cogs/patch_summary.py
+
+[33mcommit 1b23e4eeb2bd74fb3e28f69dd0f8ce457b737738[m
+Author: Meik <meik922004@gmail.com>
+Date:   Sat Jun 6 17:21:53 2026 +0700
+
+    fix rpg world boss
+
+ delete mode 100644 cogs/world_boss.py
+
+[33mcommit 274770e478ebd6b7b0cc232884f5a1e668bdf5ca[m
+Author: Meik <meik922004@gmail.com>
+Date:   Sun May 24 15:50:49 2026 +0700
+
+    update all command to slash comman
+
+ delete mode 100644 cogs/wiki.py
+
+[33mcommit 7e87a5d3d589bb8153e83e2e187ad501bef3be6c[m
+Author: Meik <meik922004@gmail.com>
+Date:   Sat May 23 20:39:55 2026 +0700
+
+    Remove Dockerfile and clear audioop
+
+ delete mode 100644 Dockerfile
