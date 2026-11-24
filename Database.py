@@ -48,6 +48,9 @@ boss_channels_col = db["boss_channels"]
 cross_messages_col = db["cross_chat_logs"]
 
 
+siem_events_col = db["siem_events"]
+siem_alerts_col = db["siem_alerts"]
+
 async def init_indexes():
     """Khởi tạo các Index quan trọng khi Bot khởi động để tăng tốc truy vấn và tiết kiệm dung lượng."""
     try:
@@ -59,6 +62,13 @@ async def init_indexes():
         # Index vẽ biểu đồ giá chợ + tự xóa dữ liệu cũ hơn 30 ngày
         await market_history_col.create_index([("items.item_name", 1), ("timestamp", -1)])
         await market_history_col.create_index("timestamp", expireAfterSeconds=2592000)
+
+        # SIEM telemetry TTL (14 days) & worker query index
+        await siem_events_col.create_index("ingested_at", expireAfterSeconds=14 * 86400)
+        await siem_events_col.create_index([("alerted", 1), ("event_id", 1), ("timestamp", -1)])
+
+        # Correlated SIEM alerts audit history (30 days)
+        await siem_alerts_col.create_index("created_at", expireAfterSeconds=30 * 86400)
 
         # Tự xóa log cũ hơn 7 ngày
         await bot_logs_col.create_index("created_at", expireAfterSeconds=604800)

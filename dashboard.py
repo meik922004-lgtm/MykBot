@@ -1,7 +1,10 @@
 import os
+import hmac
 import time
 from functools import wraps
 from collections import OrderedDict
+from datetime import datetime, timezone
+from flask import request, jsonify
 import certifi
 from flask import Flask, request, redirect, url_for, session, render_template_string, jsonify
 from pymongo import MongoClient
@@ -315,7 +318,86 @@ def api_update_slot():
         return jsonify({"status": "success"})
     return jsonify({"error": "Invalid payload"}), 400
 
+# Load SIEM ingestion key from environment
+SIEM_API_KEY = os.getenv("SIEM_API_KEY", "")
+siem_events_col = db["siem_events"]
+
+# Bounded LRU cache for per-IP rate limiting (max 60 requests / 60s)
+SIEM_RATE_LIMIT = OrderedDict()
+MAX_TRACKED_IPS = 500
+RATE_WINDOW_SECONDS = 60
+MAX_REQUESTS_PER_WINDOW = 60
+
+
+def _is_siem_rate_limited(client_ip: str) -> bool:
+    """Enforce sliding-window rate limiting per client IP using bounded memory."""
+    now = time.time()
+    timestamps = SIEM_RATE_LIMIT.get(client_ip, [])
+    timestamps = [ts for ts in timestamps if now - ts < RATE_WINDOW_SECONDS]
+
+    if len(timestamps) >= MAX_REQUESTS_PER_WINDOW:
+        SIEM_RATE_LIMIT[client_ip] = timestamps
+        SIEM_RATE_LIMIT.move_to_end(client_ip)
+        return True
+
+    timestamps.append(now)
+    SIEM_RATE_LIMIT[client_ip] = timestamps
+    SIEM_RATE_LIMIT.move_to_end(client_ip)
+
+    if len(SIEM_RATE_LIMIT) > MAX_TRACKED_IPS:
+        SIEM_RATE_LIMIT.popitem(last=False)
+    return False
+
+
+@app.route("/api/siem/ingest", methods=["POST"])
+def ingest_siem_event():
+    """Receive Windows/Active Directory security telemetry over HTTPS."""
+    if not SIEM_API_KEY:
+        return jsonify({"error": "SIEM ingestion is not configured on server"}), 503
+
+    # Constant-time comparison to prevent timing side-channel attacks
+    provided_key = request.headers.get("X-SIEM-API-KEY", "")
+    if not provided_key or not hmac.compare_digest(provided_key, SIEM_API_KEY):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    if _is_siem_rate_limited(client_ip):
+        return jsonify({"error": "Rate limit exceeded"}), 429
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Invalid JSON payload"}), 400
+
+    # Validate required telemetry fields
+    required_fields = ("hostname", "event_id", "channel", "message")
+    if any(field not in payload for field in required_fields):
+        return jsonify({"error": "Missing required telemetry fields"}), 400
+
+    try:
+        event_id = int(payload["event_id"])
+    except (ValueError, TypeError):
+        return jsonify({"error": "event_id must be an integer"}), 400
+
+    # Sanitize and bound string lengths to prevent oversized document injection
+    doc = {
+        "hostname": str(payload.get("hostname", ""))[:128],
+        "domain": str(payload.get("domain", "WORKGROUP"))[:128],
+        "event_id": event_id,
+        "channel": str(payload.get("channel", "Security"))[:64],
+        "level": str(payload.get("level", "Information"))[:32],
+        "target_user": str(payload.get("target_user", ""))[:128],
+        "source_ip": str(payload.get("source_ip", ""))[:64],
+        "logon_type": str(payload.get("logon_type", ""))[:16],
+        "message": str(payload.get("message", ""))[:2000],
+        "timestamp": str(payload.get("timestamp", datetime.now(timezone.utc).isoformat()))[:64],
+        "ingested_at": datetime.now(timezone.utc),
+        "alerted": False,
+    }
+
+    siem_events_col.insert_one(doc)
+    return jsonify({"status": "ingested", "event_id": event_id}), 201
 
 if __name__ == "__main__":
+    
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
