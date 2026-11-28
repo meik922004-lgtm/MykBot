@@ -5,6 +5,8 @@ import os
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
+from utils.market_live_engine import MarketLiveEngineMixin
+
 import matplotlib
 matplotlib.use("Agg")  # Headless backend required for Linux/Render servers
 from matplotlib.figure import Figure
@@ -277,6 +279,13 @@ class ShopTracker(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.active_alerts: OrderedDict[str, list[tuple[int, int]]] = OrderedDict()
+        self._init_market_live_engine()
+
+    async def cog_load(self):
+        self._start_market_live_engine()
+
+    async def cog_unload(self):
+        self._stop_market_live_engine()
 
     async def log_action(self, user_id: int, action: str, details: str):
         await bot_logs_col.insert_one({
@@ -402,7 +411,110 @@ class ShopTracker(commands.Cog):
         """Open the Owner modal to allocate watchlist slots to a user."""
         await interaction.response.send_modal(GrantSlotModal(self))
 
-    # --- STREAM FEED LISTENER ---
+    # --- UNIFIED MARKET FEED PIPELINE (24/7 GATEWAY + BRIDGE FALLBACK) ---
+    async def process_live_shop_payload(self, shop_data: dict):
+        """Process shop payloads from both the 24/7 Gateway listener and bridge JSON files."""
+        items_in_shop = shop_data.get("items", [])
+        if not items_in_shop:
+            return
+
+        # Keep item_name lowercase so process_chart_render and watchlists match consistently
+        shop_data["timestamp"] = datetime.now(timezone.utc)
+        for itm in items_in_shop:
+            itm["item_name"] = str(itm.get("item_name", "")).lower().strip()
+
+        await market_history_col.insert_one(shop_data)
+
+        # Trigger real-time Whale Buyout (sold) / Fire Sale (open) alerts safely
+        try:
+            await self.check_market_anomalies(shop_data)
+        except Exception:
+            pass
+
+        update_type = shop_data.get("type")
+
+        # 1. Mark previously alerted items as SOLD OUT
+        if update_type == "sold":
+            owner = shop_data.get("owner", "Unknown")
+            for itm in items_in_shop:
+                key = f"{owner}_{itm['item_name']}"
+                targets = self.active_alerts.pop(key, None)
+                if not targets:
+                    continue
+                for user_id, dm_id in targets:
+                    try:
+                        user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                        dm_channel = user.dm_channel or await user.create_dm()
+                        msg = await dm_channel.fetch_message(dm_id)
+                        if msg.embeds:
+                            em = msg.embeds[0]
+                            em.description = "## 🔴 **(SOLD OUT)**"
+                            em.color = discord.Color.red()
+                            await msg.edit(embed=em)
+                    except Exception:
+                        pass
+            return
+
+        if update_type != "open":
+            return
+
+        # 2. Send real-time alerts to matching subscribers
+        item_names = list({item["item_name"] for item in items_in_shop if item.get("item_name")})
+        if not item_names:
+            return
+
+        relevant_docs = await shop_subscriptions_col.find({"_id": {"$in": item_names}}).to_list(length=None)
+        active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
+
+        all_sub_ids = list({sub["user_id"] for subs in active_subs.values() for sub in subs})
+        if not all_sub_ids:
+            return
+
+        disabled_docs = await user_slots_col.find(
+            {"_id": {"$in": all_sub_ids}, "alerts_enabled": False},
+            {"_id": 1},
+        ).to_list(length=None)
+        disabled_users = {doc["_id"] for doc in disabled_docs}
+
+        shop_name = shop_data.get("shop_name", "Unknown")
+        owner = shop_data.get("owner", "Unknown")
+        map_name = shop_data.get("map", "Unknown")
+
+        for item in items_in_shop:
+            name_lower = item["item_name"]
+            cost = item["cost"]
+            quantity = item.get("quantity", "Unknown")
+            subscribers = active_subs.get(name_lower, [])
+
+            for sub in subscribers:
+                uid = sub["user_id"]
+                if uid in disabled_users or cost > sub["max_price"]:
+                    continue
+
+                embed = discord.Embed(
+                    title="🎉 MyK Hunter Alert",
+                    description="## 🟢 **AVAILABLE**",
+                    color=discord.Color.green(),
+                )
+                embed.add_field(name="📦 Item", value=f"**{name_lower.title()}**", inline=True)
+                embed.add_field(name="💰 Price", value=f"**{cost:,}** ea", inline=True)
+                embed.add_field(name="⚖️ Stock", value=f"`{quantity:,}`" if isinstance(quantity, int) else f"`{quantity}`", inline=True)
+                embed.add_field(name="🏪 Location", value=f"Map: `{map_name}`\nShop: `{shop_name}`\nOwner: `{owner}`", inline=False)
+                embed.add_field(name="⌨️ Quick Copy", value=f"```/shop {shop_name}```", inline=False)
+
+                try:
+                    user = self.bot.get_user(uid) or await self.bot.fetch_user(uid)
+                    sent_msg = await user.send(embed=embed)
+
+                    key = f"{owner}_{name_lower}"
+                    self.active_alerts.setdefault(key, []).append((uid, sent_msg.id))
+                    self.active_alerts.move_to_end(key)
+                    while len(self.active_alerts) > MAX_ACTIVE_ALERTS:
+                        self.active_alerts.popitem(last=False)
+                except Exception:
+                    pass
+
+    # --- BRIDGE CHANNEL FALLBACK LISTENER ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.channel.id != BRIDGE_CHANNEL_ID or not message.attachments:
@@ -418,92 +530,7 @@ class ShopTracker(commands.Cog):
             except Exception:
                 continue
 
-            items_in_shop = shop_data.get("items", [])
-            if not items_in_shop:
-                continue
-
-            shop_data["timestamp"] = datetime.now(timezone.utc)
-            for itm in items_in_shop:
-                itm["item_name"] = itm["item_name"].lower().strip()
-            await market_history_col.insert_one(shop_data)
-
-            # 1. Mark previously alerted items as SOLD OUT
-            if shop_data.get("type") == "sold":
-                owner = shop_data.get("owner", "Unknown")
-                for itm in items_in_shop:
-                    key = f"{owner}_{itm['item_name']}"
-                    targets = self.active_alerts.pop(key, None)
-                    if not targets:
-                        continue
-                    for user_id, dm_id in targets:
-                        try:
-                            user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
-                            dm_channel = user.dm_channel or await user.create_dm()
-                            msg = await dm_channel.fetch_message(dm_id)
-                            if msg.embeds:
-                                em = msg.embeds[0]
-                                em.description = "## 🔴 **(SOLD OUT)**"
-                                em.color = discord.Color.red()
-                                await msg.edit(embed=em)
-                        except Exception:
-                            pass
-                continue
-
-            if shop_data.get("type") != "open":
-                continue
-
-            # 2. Send real-time alerts to matching subscribers
-            item_names = list({item["item_name"] for item in items_in_shop})
-            relevant_docs = await shop_subscriptions_col.find({"_id": {"$in": item_names}}).to_list(length=None)
-            active_subs = {doc["_id"]: doc.get("subscribers", []) for doc in relevant_docs}
-
-            all_sub_ids = list({sub["user_id"] for subs in active_subs.values() for sub in subs})
-            if not all_sub_ids:
-                continue
-
-            disabled_docs = await user_slots_col.find(
-                {"_id": {"$in": all_sub_ids}, "alerts_enabled": False},
-                {"_id": 1},
-            ).to_list(length=None)
-            disabled_users = {doc["_id"] for doc in disabled_docs}
-
-            shop_name = shop_data.get("shop_name", "Unknown")
-            owner = shop_data.get("owner", "Unknown")
-            map_name = shop_data.get("map", "Unknown")
-
-            for item in items_in_shop:
-                name_lower = item["item_name"]
-                cost = item["cost"]
-                quantity = item.get("quantity", "Unknown")
-                subscribers = active_subs.get(name_lower, [])
-
-                for sub in subscribers:
-                    uid = sub["user_id"]
-                    if uid in disabled_users or cost > sub["max_price"]:
-                        continue
-
-                    embed = discord.Embed(
-                        title="🎉 MyK Hunter Alert",
-                        description="## 🟢 **AVAILABLE**",
-                        color=discord.Color.green(),
-                    )
-                    embed.add_field(name="📦 Item", value=f"**{name_lower.title()}**", inline=True)
-                    embed.add_field(name="💰 Price", value=f"**{cost:,}** ea", inline=True)
-                    embed.add_field(name="⚖️ Stock", value=f"`{quantity:,}`" if isinstance(quantity, int) else f"`{quantity}`", inline=True)
-                    embed.add_field(name="🏪 Location", value=f"Map: `{map_name}`\nShop: `{shop_name}`\nOwner: `{owner}`", inline=False)
-                    embed.add_field(name="⌨️ Quick Copy", value=f"```/shop {shop_name}```", inline=False)
-
-                    try:
-                        user = self.bot.get_user(uid) or await self.bot.fetch_user(uid)
-                        sent_msg = await user.send(embed=embed)
-
-                        key = f"{owner}_{name_lower}"
-                        self.active_alerts.setdefault(key, []).append((uid, sent_msg.id))
-                        self.active_alerts.move_to_end(key)
-                        while len(self.active_alerts) > MAX_ACTIVE_ALERTS:
-                            self.active_alerts.popitem(last=False)
-                    except Exception:
-                        pass
+            await self.process_live_shop_payload(shop_data)
 
 
 async def setup(bot: commands.Bot):

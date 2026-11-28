@@ -162,6 +162,7 @@ class MyKBotHubView(discord.ui.View):
             self.add_item(self._make_btn("Grant Market Slots", "🎟️", discord.ButtonStyle.primary, "owner_addslot", row=1))
             self.add_item(self._make_btn("Set Raid/Event Timer", "⏰", discord.ButtonStyle.secondary, "owner_settimer", row=1))
             self.add_item(self._make_btn("Chotot Tracker", "🏍️", discord.ButtonStyle.secondary, "owner_chotot", row=1))
+            self.add_item(self._make_btn("Market Live & Digest", "📡", discord.ButtonStyle.success, "owner_market_live", row=1))
 
         close_btn = discord.ui.Button(label="Close", emoji="✖️", style=discord.ButtonStyle.danger, row=2)
         close_btn.callback = self._close_cb
@@ -249,6 +250,10 @@ class MyKBotHubView(discord.ui.View):
                     cog = self.bot.get_cog("ChototTracker")
                     if cog:
                         return await cog.open_chotot_dashboard(interaction, ephemeral=True)
+                elif action == "owner_market_live":
+                    cog = self.bot.get_cog("ShopTracker")
+                    if cog:
+                        return await cog.open_market_live_control(interaction)
 
             await interaction.response.send_message("⚠️ This module is currently unavailable.", ephemeral=True)
 
