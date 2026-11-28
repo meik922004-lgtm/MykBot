@@ -273,7 +273,7 @@ class CentralHubView(discord.ui.View):
 # ==========================================
 # MAIN COG
 # ==========================================
-class ShopTracker(commands.Cog):
+class ShopTracker(MarketLiveEngineMixin, commands.Cog):
     """Real-time shop feed listener, watchlist manager, and price analytics engine."""
 
     def __init__(self, bot: commands.Bot):
