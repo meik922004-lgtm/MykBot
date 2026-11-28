@@ -32,7 +32,7 @@ SHOP_SOLD_CHANNEL_ID = int(os.getenv("DMW_SHOP_SOLD_CHANNEL_ID", "14685674922670
 # Anomaly detection & RAM-safe cache limits (Render Free tier)
 WHALE_SPIKE_RATIO = 1.35          # +35% sold price above 7-day normal price
 DUMP_DROP_RATIO = 0.70            # -30% listing price below 7-day normal price
-MIN_ANOMALY_PRICE = 100_000       # Ignore cheap items under 100M (100,000 Bits)
+MIN_ANOMALY_PRICE = 500_000       # Ignore cheap items under 100M (100,000 Bits)
 MIN_HISTORY_SAMPLES = 5           # Minimum 7-day data points to prevent noise
 ALERT_COOLDOWN_SECONDS = 12 * 3600
 MAX_ALERT_CACHE_SIZE = 200
