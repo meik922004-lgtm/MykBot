@@ -5,7 +5,7 @@ import os
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
-from utils.market_live_engine import MarketLiveEngineMixin
+from utils.market_live_engine import MarketLiveEngineMixin, MarketAlertSubscribeView
 
 import matplotlib
 matplotlib.use("Agg")  # Headless backend required for Linux/Render servers
@@ -116,7 +116,7 @@ class ItemModal(discord.ui.Modal):
             self.add_item(self.item_name_input)
 
         self.price_input = discord.ui.TextInput(
-            label="Max Alert Price",
+            label="Max Alert Price (in Bits, 1M = 1000)",
             placeholder="e.g., 5000000",
             required=True,
             max_length=20,
@@ -213,6 +213,14 @@ class CentralHubView(discord.ui.View):
         self.chart_btn.callback = self.price_chart
         self.add_item(self.chart_btn)
 
+        self.deal_prefs_btn = discord.ui.Button(
+            label="📰 Deal & Digest Alerts",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.deal_prefs_btn.callback = self.deal_prefs
+        self.add_item(self.deal_prefs_btn)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
@@ -269,6 +277,9 @@ class CentralHubView(discord.ui.View):
     async def price_chart(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ChartModal(self.cog))
 
+    async def deal_prefs(self, interaction: discord.Interaction):
+        await self.cog.open_deal_alert_preferences(interaction)
+
 
 # ==========================================
 # MAIN COG
@@ -283,6 +294,9 @@ class ShopTracker(MarketLiveEngineMixin, commands.Cog):
 
     async def cog_load(self):
         self._start_market_live_engine()
+        if not getattr(self.bot, "_market_alert_view_registered", False):
+            self.bot.add_view(MarketAlertSubscribeView(self))
+            self.bot._market_alert_view_registered = True
 
     async def cog_unload(self):
         self._stop_market_live_engine()
@@ -394,9 +408,9 @@ class ShopTracker(MarketLiveEngineMixin, commands.Cog):
             title="🎯 MyK Central Market Hub",
             description=(
                 "Your personal market tracking dashboard. "
-                "Manage your watchlist and toggle real-time DM alerts.\n\n"
+                "Manage your watchlist, deal alerts, and 30-day price charts.\n\n"
                 f"**📦 Tracking Slots:** `{len(tracked_items)}/{max_slots}`\n"
-                f"**🔔 DM Notifications:** `{'🟢 ON' if alerts_enabled else '🔴 OFF'}`"
+                f"**🔔 Watchlist DM Alerts:** `{'🟢 ON' if alerts_enabled else '🔴 OFF'}`"
             ),
             color=discord.Color.gold(),
         )
@@ -425,11 +439,11 @@ class ShopTracker(MarketLiveEngineMixin, commands.Cog):
 
         await market_history_col.insert_one(shop_data)
 
-        # Trigger real-time Whale Buyout (sold) / Fire Sale (open) alerts safely
+        # Trigger real-time Cheap Deal (open) / Price Spike (sold) alerts safely
         try:
             await self.check_market_anomalies(shop_data)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[MarketLive] Anomaly check error: {exc}")
 
         update_type = shop_data.get("type")
 
@@ -497,7 +511,7 @@ class ShopTracker(MarketLiveEngineMixin, commands.Cog):
                     color=discord.Color.green(),
                 )
                 embed.add_field(name="📦 Item", value=f"**{name_lower.title()}**", inline=True)
-                embed.add_field(name="💰 Price", value=f"**{cost:,}** ea", inline=True)
+                embed.add_field(name="💰 Price", value=f"**{self._format_currency(cost)}** ea", inline=True)
                 embed.add_field(name="⚖️ Stock", value=f"`{quantity:,}`" if isinstance(quantity, int) else f"`{quantity}`", inline=True)
                 embed.add_field(name="🏪 Location", value=f"Map: `{map_name}`\nShop: `{shop_name}`\nOwner: `{owner}`", inline=False)
                 embed.add_field(name="⌨️ Quick Copy", value=f"```/shop {shop_name}```", inline=False)

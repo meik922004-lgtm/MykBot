@@ -9,12 +9,13 @@ import time
 from collections import OrderedDict
 from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Any, Optional
-from utils.checks import check_is_owner
+
 import aiohttp
 import discord
 from discord.ext import tasks
 
 from Database import db
+from utils.checks import check_is_owner
 
 logger = logging.getLogger("MyKBot.MarketLive")
 
@@ -30,8 +31,9 @@ SHOP_OPEN_CHANNEL_ID = int(os.getenv("DMW_SHOP_OPEN_CHANNEL_ID", "13719144770707
 SHOP_SOLD_CHANNEL_ID = int(os.getenv("DMW_SHOP_SOLD_CHANNEL_ID", "1468567492267081789"))
 
 # Anomaly detection & RAM-safe cache limits (Render Free tier)
-WHALE_SPIKE_RATIO = 1.35          # +35% sold price above 7-day median
-DUMP_DROP_RATIO = 0.70            # -30% listing price below 7-day median
+WHALE_SPIKE_RATIO = 1.35          # +35% sold price above 7-day normal price
+DUMP_DROP_RATIO = 0.70            # -30% listing price below 7-day normal price
+MIN_ANOMALY_PRICE = 100_000       # Ignore cheap items under 100M (100,000 Bits)
 MIN_HISTORY_SAMPLES = 5           # Minimum 7-day data points to prevent noise
 ALERT_COOLDOWN_SECONDS = 12 * 3600
 MAX_ALERT_CACHE_SIZE = 200
@@ -93,8 +95,9 @@ class MarketLiveEngineMixin:
     """
     Mixin for ShopTracker providing:
     1. 24/7 Discord Gateway listener via pure aiohttp (no local PC or webhook needed).
-    2. Real-time Whale Buyout & Fire Sale anomaly alerts.
+    2. Real-time Cheap Deal & Price Spike alerts with native DMW currency formatting.
     3. Automated Nightly Market Digest (24h summary).
+    4. User opt-in DM subscriptions & custom item keyword filters.
     """
 
     def _init_market_live_engine(self):
@@ -135,7 +138,7 @@ class MarketLiveEngineMixin:
         while not self.bot.is_closed():
             try:
                 await self._connect_gateway_once(token)
-                backoff = 5  # Reset backoff after a clean session
+                backoff = 5
             except asyncio.CancelledError:
                 logger.info("[MarketLive] Gateway listener cancelled cleanly.")
                 raise
@@ -255,112 +258,16 @@ class MarketLiveEngineMixin:
         await self.process_live_shop_payload(parsed)
 
     async def process_live_shop_payload(self, shop_data: dict[str, Any]):
-        """Persist shop snapshot to MongoDB, notify watchlist subscribers, and detect anomalies."""
+        """Fallback pipeline if not overridden by ShopTracker."""
         doc = {
             **shop_data,
             "timestamp": datetime.now(timezone.utc),
         }
         await market_history_col.insert_one(doc)
-
-        # 1. Notify personal Watchlist DM subscribers on new open shops
-        if shop_data.get("type") == "open":
-            await self._notify_watchlist_subscribers(shop_data)
-
-        # 2. Run Whale Buyout / Fire Sale anomaly detection
         await self.check_market_anomalies(shop_data)
 
     # =========================================================================
-    # 2. WATCHLIST DM ALERTS (COMPATIBLE WITH EXISTING SCHEMA)
-    # =========================================================================
-
-    async def _notify_watchlist_subscribers(self, shop_data: dict[str, Any]):
-        """Match newly opened shop items against shop_subscriptions and DM eligible users."""
-        items_by_key: dict[str, dict[str, Any]] = {}
-        for item in shop_data.get("items", []):
-            name = str(item.get("item_name", "")).strip()
-            cost = self._extract_item_price(item)
-            if not name or cost <= 0:
-                continue
-            key = name.lower()
-            if key not in items_by_key or cost < items_by_key[key]["cost"]:
-                items_by_key[key] = {
-                    "item_name": name,
-                    "cost": cost,
-                    "quantity": item.get("quantity", 1),
-                }
-
-        if not items_by_key:
-            return
-
-        sub_cursor = shop_subscriptions_col.find({"_id": {"$in": list(items_by_key.keys())}})
-        pending_matches: list[tuple[int, dict[str, Any], float]] = []
-        candidate_user_ids: set[int] = set()
-
-        async for sub_doc in sub_cursor:
-            item_key = sub_doc["_id"]
-            item_info = items_by_key.get(item_key)
-            if not item_info:
-                continue
-            for sub in sub_doc.get("subscribers", []):
-                uid = sub.get("user_id")
-                max_price = float(sub.get("max_price", 0))
-                if uid and max_price > 0 and item_info["cost"] <= max_price:
-                    pending_matches.append((int(uid), item_info, max_price))
-                    candidate_user_ids.add(int(uid))
-
-        if not pending_matches:
-            return
-
-        # Batch-check alerts_enabled from user_slots (default True if no doc)
-        disabled_users: set[int] = set()
-        slot_cursor = user_slots_col.find(
-            {"_id": {"$in": list(candidate_user_ids)}, "alerts_enabled": False},
-            {"_id": 1},
-        )
-        async for slot_doc in slot_cursor:
-            disabled_users.add(int(slot_doc["_id"]))
-
-        now = time.monotonic()
-        for uid, item_info, max_price in pending_matches:
-            if uid in disabled_users:
-                continue
-
-            # Deduplicate same user + item + shop within 15 minutes
-            dedup_key = f"{uid}:{item_info['item_name'].lower()}:{shop_data.get('owner', '')}"
-            if dedup_key in self._dm_alert_dedup and (now - self._dm_alert_dedup[dedup_key]) < 900:
-                continue
-            self._dm_alert_dedup[dedup_key] = now
-            self._dm_alert_dedup.move_to_end(dedup_key)
-            if len(self._dm_alert_dedup) > 500:
-                self._dm_alert_dedup.popitem(last=False)
-
-            user = self.bot.get_user(uid)
-            if user is None:
-                try:
-                    user = await self.bot.fetch_user(uid)
-                except discord.HTTPException:
-                    continue
-
-            embed = discord.Embed(
-                title="🔔 Watchlist Price Match Found!",
-                color=discord.Color.green(),
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.add_field(name="Item", value=f"**{item_info['item_name']}** (x{item_info['quantity']})", inline=False)
-            embed.add_field(name="Listed Price", value=f"**{self._format_currency(item_info['cost'])}**", inline=True)
-            embed.add_field(name="Your Target", value=f"<= `{self._format_currency(max_price)}`", inline=True)
-            embed.add_field(
-                name="Shop Location",
-                value=f"`{shop_data.get('shop_name', 'N/A')}` by **{shop_data.get('owner', 'N/A')}** ({shop_data.get('map', 'N/A')})",
-                inline=False,
-            )
-            try:
-                await user.send(embed=embed)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-
-    # =========================================================================
-    # 3. REAL-TIME WHALE BUYOUT & FIRE SALE ANOMALY ALERTS
+    # 2. REAL-TIME CHEAP DEAL & PRICE SPIKE ALERTS
     # =========================================================================
 
     def _is_anomaly_on_cooldown(self, cooldown_key: str) -> bool:
@@ -385,13 +292,14 @@ class MarketLiveEngineMixin:
 
     @staticmethod
     def _format_currency(amount: float) -> str:
-        if amount >= 1_000_000_000:
-            return f"{amount / 1_000_000_000:.2f}B"
+        """Format raw DMW Bit values into native Tera (T), Mega (M), and Bit (B)."""
         if amount >= 1_000_000:
-            return f"{amount / 1_000_000:.2f}M"
+            tera = amount / 1_000_000
+            return f"{tera:.2f}T".rstrip("0").rstrip(".")
         if amount >= 1_000:
-            return f"{amount / 1_000:.1f}K"
-        return f"{amount:,.0f}"
+            mega = amount / 1_000
+            return f"{mega:.1f}M".rstrip("0").rstrip(".")
+        return f"{amount:,.0f}B"
 
     async def _broadcast_market_embed(self, embed: discord.Embed, cross_chat_summary: str):
         """Send market intelligence to /setup_announcement channels and Cross-Chat network."""
@@ -400,6 +308,8 @@ class MarketLiveEngineMixin:
             {"channel_id": 1},
         )
         sent_channels: set[int] = set()
+        alert_view = MarketAlertSubscribeView(self)
+
         async for cfg in cursor:
             cid = cfg.get("channel_id")
             if not cid or int(cid) in sent_channels:
@@ -407,7 +317,7 @@ class MarketLiveEngineMixin:
             channel = self.bot.get_channel(int(cid))
             if isinstance(channel, discord.TextChannel):
                 try:
-                    await channel.send(embed=embed)
+                    await channel.send(embed=embed, view=alert_view)
                     sent_channels.add(int(cid))
                 except (discord.Forbidden, discord.HTTPException):
                     pass
@@ -418,9 +328,8 @@ class MarketLiveEngineMixin:
 
     async def check_market_anomalies(self, shop_data: dict[str, Any]):
         """
-        Detect market anomalies while preventing troll-shop false positives:
-        - 'open' shops trigger FIRE SALE alerts if priced <= 70% of 7-day median.
-        - 'sold' events trigger WHALE BUYOUT alerts if actually bought >= 135% of 7-day median.
+        Detect notable price drops (Cheap Deals) and high-value buyouts (Price Spikes)
+        while filtering out low-value junk items.
         """
         update_type = shop_data.get("type", "open")
         item_map: dict[str, dict[str, Any]] = {}
@@ -432,7 +341,7 @@ class MarketLiveEngineMixin:
                 continue
             key = raw_name.lower()
             if key not in item_map:
-                item_map[key] = {"display_name": raw_name, "price": price}
+                item_map[key] = {"display_name": raw_name.title(), "price": price}
             else:
                 if update_type == "open" and price < item_map[key]["price"]:
                     item_map[key]["price"] = price
@@ -472,19 +381,21 @@ class MarketLiveEngineMixin:
                 continue
 
             median_price = statistics.median(hist_prices)
-            if median_price <= 0:
+            cur_price = item_map[key]["price"]
+
+            # Ignore low-value items (e.g., 2M-4M cards) to prevent noisy alerts
+            if max(cur_price, median_price) < MIN_ANOMALY_PRICE or median_price <= 0:
                 continue
 
-            cur_price = item_map[key]["price"]
             ratio = cur_price / median_price
             pct_change = (ratio - 1.0) * 100
 
             if update_type == "sold" and ratio >= WHALE_SPIKE_RATIO:
                 if not self._is_anomaly_on_cooldown(f"whale:{key}"):
-                    alerts.append(("WHALE", item_map[key]["display_name"], cur_price, median_price, pct_change))
+                    alerts.append(("SPIKE", item_map[key]["display_name"], cur_price, median_price, pct_change))
             elif update_type == "open" and ratio <= DUMP_DROP_RATIO:
                 if not self._is_anomaly_on_cooldown(f"dump:{key}"):
-                    alerts.append(("DUMP", item_map[key]["display_name"], cur_price, median_price, pct_change))
+                    alerts.append(("DEAL", item_map[key]["display_name"], cur_price, median_price, pct_change))
 
         if not alerts:
             return
@@ -492,36 +403,52 @@ class MarketLiveEngineMixin:
         alerts.sort(key=lambda x: abs(x[4]), reverse=True)
         top_alerts = alerts[:3]
 
+        shop_name = shop_data.get("shop_name", "Unknown")
+        owner = shop_data.get("owner", "Unknown")
+        map_name = shop_data.get("map", "Unknown")
+
         embed = discord.Embed(
-            title="🚨 Live Market Anomaly Alert",
-            description=f"Shop: **{shop_data.get('shop_name', 'Unknown')}** | Owner: `{shop_data.get('owner', 'Unknown')}` ({shop_data.get('map', 'N/A')})",
-            color=discord.Color.gold(),
+            title="📢 Market Price Alert",
+            description=f"🏪 **{shop_name}** • Seller: `{owner}` • Location: `{map_name}`",
+            color=discord.Color.green() if update_type == "open" else discord.Color.orange(),
             timestamp=datetime.now(timezone.utc),
         )
         headlines = []
 
         for kind, name, cur_p, med_p, pct in top_alerts:
-            if kind == "WHALE":
-                tag = f"📈 **WHALE BUYOUT (+{pct:.0f}%)**"
-                headlines.append(f"📈 **{name}** sold at **+{pct:.0f}%** (`{self._format_currency(cur_p)}`)")
+            cur_str = self._format_currency(cur_p)
+            med_str = self._format_currency(med_p)
+
+            if kind == "DEAL":
+                discount = abs(pct)
+                tag = f"💸 **CHEAP DEAL ({discount:.0f}% OFF)**"
+                value_text = f"• Listed At: **{cur_str}** (Normal price: ~`{med_str}`)"
+                headlines.append(f"💸 **{name}** for **{cur_str}** (**{discount:.0f}% cheaper** than ~{med_str})")
             else:
-                tag = f"📉 **FIRE SALE ({pct:.0f}%)**"
-                headlines.append(f"📉 **{name}** listed at **{pct:.0f}%** (`{self._format_currency(cur_p)}`)")
+                tag = f"🔥 **BOUGHT HIGH (+{pct:.0f}%)**"
+                value_text = f"• Sold For: **{cur_str}** (Normal price: ~`{med_str}`)"
+                headlines.append(f"🔥 **{name}** sold for **{cur_str}** (**+{pct:.0f}%** above ~{med_str})")
 
             embed.add_field(
                 name=f"{tag} — {name}",
-                value=(
-                    f"• Trigger Price: **{self._format_currency(cur_p)}**\n"
-                    f"• 7-Day Median: `{self._format_currency(med_p)}`"
-                ),
+                value=value_text,
                 inline=False,
             )
 
-        embed.set_footer(text="MyKBot Market Intelligence • Open /menu -> Market Hub for 30d charts")
-        await self._broadcast_market_embed(embed, "🚨 **[Market Alert]** " + " | ".join(headlines))
+        if update_type == "open":
+            embed.add_field(name="⌨️ Quick Copy", value=f"```/shop {shop_name}```", inline=False)
+
+        embed.set_footer(text="MyKBot Market Tracker • Click 🔔 below to subscribe/filter DM alerts")
+        cross_msg = (
+            "📢 **[Market Alert]** "
+            + " | ".join(headlines)
+            + f" — Shop: `{shop_name}` ({map_name})"
+        )
+        await self._broadcast_market_embed(embed, cross_msg)
+        await self._dispatch_anomaly_dms(embed, [a[1].lower() for a in top_alerts])
 
     # =========================================================================
-    # 4. AUTOMATED NIGHTLY MARKET DIGEST & OWNER CONTROL PANEL
+    # 3. AUTOMATED NIGHTLY MARKET DIGEST & OWNER CONTROL PANEL
     # =========================================================================
 
     async def build_daily_digest_embed(self) -> Optional[discord.Embed]:
@@ -599,24 +526,24 @@ class MarketLiveEngineMixin:
         )
 
         gainers_text = "\n".join(
-            f"• **{name.title()}**: **+{pct:.1f}%** (Floor: `{self._format_currency(floor)}`)"
+            f"• **{name.title()}**: **+{pct:.1f}%** (Lowest: `{self._format_currency(floor)}`)"
             for name, pct, floor in top_gainers
         ) or "No significant price spikes today."
 
         losers_text = "\n".join(
-            f"• **{name.title()}**: **{pct:.1f}%** (Floor: `{self._format_currency(floor)}`)"
+            f"• **{name.title()}**: **{pct:.1f}%** (Lowest: `{self._format_currency(floor)}`)"
             for name, pct, floor in top_losers
         ) or "No major price drops today."
 
         volume_text = "\n".join(
-            f"• **{name.title()}**: `{count}` listings (Floor: `{self._format_currency(floor)}`)"
+            f"• **{name.title()}**: `{count}` listings (Lowest: `{self._format_currency(floor)}`)"
             for name, count, floor in top_volume
         ) or "Insufficient volume data."
 
         embed.add_field(name="📈 Top Price Gainers", value=gainers_text, inline=False)
         embed.add_field(name="📉 Best Bargains / Drops", value=losers_text, inline=False)
         embed.add_field(name="🔥 Most Active Volume", value=volume_text, inline=False)
-        embed.set_footer(text="MyKBot Nightly Market Report • Open /menu -> Market Hub to set DM alerts")
+        embed.set_footer(text="MyKBot Nightly Market Report • Click 🔔 below to get this report in DM")
         return embed
 
     @tasks.loop(time=DIGEST_TIME_UTC)
@@ -630,6 +557,7 @@ class MarketLiveEngineMixin:
             "Open `/menu` -> **Market Hub** for 30-day price charts."
         )
         await self._broadcast_market_embed(embed, cross_summary)
+        await self._dispatch_digest_dms(embed)
 
     @daily_market_digest.before_loop
     async def _before_daily_digest(self):
@@ -671,6 +599,110 @@ class MarketLiveEngineMixin:
         view = _MarketDigestControlView(self)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    # =========================================================================
+    # 4. USER DEAL & DIGEST SUBSCRIPTION ENGINE (OPT-IN / CUSTOM KEYWORDS)
+    # =========================================================================
+
+    async def get_user_deal_prefs(self, user_id: int) -> dict[str, Any]:
+        """Fetch user's market news & custom deal alert preferences from user_slots."""
+        doc = await user_slots_col.find_one(
+            {"_id": user_id},
+            {"deal_alert_mode": 1, "digest_dm_enabled": 1, "deal_items": 1},
+        )
+        if not doc:
+            return {"deal_alert_mode": "off", "digest_dm_enabled": False, "deal_items": []}
+        return {
+            "deal_alert_mode": doc.get("deal_alert_mode", "off"),
+            "digest_dm_enabled": bool(doc.get("digest_dm_enabled", False)),
+            "deal_items": [str(x).lower().strip() for x in doc.get("deal_items", []) if x],
+        }
+
+    async def _dispatch_anomaly_dms(self, embed: discord.Embed, triggered_item_keys: list[str]):
+        """Send DM alerts to users subscribed to 'all' or matching 'watchlist' keywords."""
+        if not triggered_item_keys:
+            return
+
+        watchlist_user_ids: set[int] = set()
+        sub_cursor = shop_subscriptions_col.find(
+            {"_id": {"$in": triggered_item_keys}},
+            {"subscribers.user_id": 1},
+        )
+        async for sub_doc in sub_cursor:
+            for sub in sub_doc.get("subscribers", []):
+                if sub.get("user_id"):
+                    watchlist_user_ids.add(int(sub["user_id"]))
+
+        cursor = user_slots_col.find(
+            {"deal_alert_mode": {"$in": ["all", "watchlist"]}},
+            {"_id": 1, "deal_alert_mode": 1, "deal_items": 1},
+        )
+
+        target_users: list[int] = []
+        async for doc in cursor:
+            uid = int(doc["_id"])
+            mode = doc.get("deal_alert_mode", "off")
+            if mode == "all":
+                target_users.append(uid)
+            elif mode == "watchlist":
+                keywords = [
+                    str(k).lower().strip()
+                    for k in doc.get("deal_items", [])
+                    if len(str(k).strip()) >= 3
+                ]
+                matched_kw = any(kw in item_key for kw in keywords for item_key in triggered_item_keys)
+                if matched_kw or uid in watchlist_user_ids:
+                    target_users.append(uid)
+
+        for uid in target_users:
+            user = self.bot.get_user(uid)
+            if user is None:
+                try:
+                    user = await self.bot.fetch_user(uid)
+                except discord.HTTPException:
+                    continue
+            try:
+                await user.send(
+                    content="🔔 **Personal Market Alert** (Manage via `/menu` → **Market Hub**)",
+                    embed=embed,
+                )
+                await asyncio.sleep(0.25)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    async def _dispatch_digest_dms(self, embed: discord.Embed):
+        """Send the 24h Nightly Market Digest via DM to opted-in subscribers."""
+        cursor = user_slots_col.find({"digest_dm_enabled": True}, {"_id": 1})
+        async for doc in cursor:
+            uid = int(doc["_id"])
+            user = self.bot.get_user(uid)
+            if user is None:
+                try:
+                    user = await self.bot.fetch_user(uid)
+                except discord.HTTPException:
+                    continue
+            try:
+                await user.send(
+                    content="📊 **Your Subscribed Nightly Market Report**",
+                    embed=embed,
+                )
+                await asyncio.sleep(0.25)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    async def open_deal_alert_preferences(self, interaction: discord.Interaction):
+        """Open the interactive personal Market Deal & Digest subscription panel."""
+        prefs = await self.get_user_deal_prefs(interaction.user.id)
+        embed = _build_deal_prefs_embed(prefs)
+        view = DealAlertPrefsView(self, interaction.user.id, prefs)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+# =============================================================================
+# UI VIEWS & MODALS
+# =============================================================================
 
 class _MarketDigestControlView(discord.ui.View):
     """Ephemeral Owner buttons to preview or force-broadcast the 24h Market Digest."""
@@ -710,7 +742,236 @@ class _MarketDigestControlView(discord.ui.View):
             "Open `/menu` -> **Market Hub** for 30-day price charts."
         )
         await self.cog._broadcast_market_embed(embed, cross_summary)
+        await self.cog._dispatch_digest_dms(embed)
         await interaction.followup.send(
-            "✅ Market Digest broadcasted to all announcement channels and Cross-Chat.",
+            "✅ Market Digest broadcasted to all announcement channels, Cross-Chat, and DM subscribers.",
             ephemeral=True,
         )
+
+
+def _build_deal_prefs_embed(prefs: dict[str, Any]) -> discord.Embed:
+    mode = prefs.get("deal_alert_mode", "off")
+    digest_on = prefs.get("digest_dm_enabled", False)
+    items: list[str] = prefs.get("deal_items", [])
+
+    mode_labels = {
+        "all": "🌐 **All Major Deals & Spikes** (100M+ items)",
+        "watchlist": "🎯 **My Selected Items Only** (+ My Watchlist)",
+        "off": "🔕 **OFF** (No Deal Alert DMs)",
+    }
+
+    embed = discord.Embed(
+        title="🔔 Market Deal & Digest Alert Settings",
+        description=(
+            "Customize how **MyKBot** notifies you via Direct Message (DM) "
+            "when big discounts or market spikes happen:\n\n"
+            f"**⚡ Live Deal Alerts:** {mode_labels.get(mode, mode_labels['off'])}\n"
+            f"**📊 Nightly Digest (21:00 VN):** `{'🟢 ON' if digest_on else '🔴 OFF'}`"
+        ),
+        color=discord.Color.gold(),
+    )
+
+    if items:
+        formatted = ", ".join(f"`{i.title()}`" for i in items[:15])
+        embed.add_field(
+            name=f"🎯 Custom Alert Keywords ({len(items)}/15)",
+            value=f"{formatted}\n*(Partial keywords match any variant, e.g., `fanglongmon`)*",
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="🎯 Custom Alert Keywords (0/15)",
+            value="No custom keywords set. Click **➕ Add Items** below to track specific items.",
+            inline=False,
+        )
+
+    embed.set_footer(text="Make sure your Server Privacy Settings allow DMs from server members.")
+    return embed
+
+
+class MarketAlertSubscribeView(discord.ui.View):
+    """Persistent 1-click button attached to public Market Alerts & Nightly Digests."""
+
+    def __init__(self, cog: MarketLiveEngineMixin):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Alert Settings / Subscribe DM",
+        style=discord.ButtonStyle.secondary,
+        emoji="🔔",
+        custom_id="myk_market_deal_prefs_v1",
+    )
+    async def open_prefs_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.open_deal_alert_preferences(interaction)
+
+
+class _AddDealKeywordsModal(discord.ui.Modal, title="🎯 Add Market Deal Keywords"):
+    """Modal allowing users to add up to 15 item keywords (comma-separated)."""
+
+    keywords_input = discord.ui.TextInput(
+        label="Item Name(s) — separate by comma",
+        placeholder="e.g., fanglongmon, evoluter, backup disk",
+        required=True,
+        max_length=200,
+    )
+
+    def __init__(self, parent_view: "DealAlertPrefsView"):
+        super().__init__()
+        self.parent_view = parent_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw_parts = [p.strip().lower() for p in self.keywords_input.value.split(",")]
+        valid_new = [p for p in raw_parts if len(p) >= 3]
+
+        if not valid_new:
+            return await interaction.response.send_message(
+                "❌ Each keyword must be at least 3 characters long.", ephemeral=True
+            )
+
+        current_items = list(self.parent_view.prefs.get("deal_items", []))
+        for kw in valid_new:
+            if kw not in current_items and len(current_items) < 15:
+                current_items.append(kw)
+
+        new_mode = self.parent_view.prefs.get("deal_alert_mode", "off")
+        if new_mode == "off":
+            new_mode = "watchlist"
+
+        await user_slots_col.update_one(
+            {"_id": self.parent_view.user_id},
+            {"$set": {"deal_items": current_items, "deal_alert_mode": new_mode}},
+            upsert=True,
+        )
+        self.parent_view.prefs["deal_items"] = current_items
+        self.parent_view.prefs["deal_alert_mode"] = new_mode
+        self.parent_view._refresh_components()
+
+        await interaction.response.edit_message(
+            embed=_build_deal_prefs_embed(self.parent_view.prefs),
+            view=self.parent_view,
+        )
+
+
+class _RemoveDealKeywordSelect(discord.ui.Select):
+    """Dropdown to remove a tracked deal keyword."""
+
+    def __init__(self, parent_view: "DealAlertPrefsView", items: list[str]):
+        self.parent_view = parent_view
+        options = [
+            discord.SelectOption(label=kw.title()[:100], value=kw, emoji="🗑️")
+            for kw in items[:15]
+        ]
+        super().__init__(placeholder="🗑️ Select a keyword to remove...", options=options, row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        to_remove = self.values[0]
+        updated = [kw for kw in self.parent_view.prefs.get("deal_items", []) if kw != to_remove]
+
+        await user_slots_col.update_one(
+            {"_id": self.parent_view.user_id},
+            {"$set": {"deal_items": updated}},
+            upsert=True,
+        )
+        self.parent_view.prefs["deal_items"] = updated
+        self.parent_view._refresh_components()
+
+        await interaction.response.edit_message(
+            embed=_build_deal_prefs_embed(self.parent_view.prefs),
+            view=self.parent_view,
+        )
+
+
+class DealAlertPrefsView(discord.ui.View):
+    """Interactive ephemeral panel for managing Market Deal & Nightly Digest DM subscriptions."""
+
+    def __init__(self, cog: MarketLiveEngineMixin, user_id: int, prefs: dict[str, Any]):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.user_id = user_id
+        self.prefs = prefs
+        self._refresh_components()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("⛔ This panel belongs to another user.", ephemeral=True)
+            return False
+        return True
+
+    def _refresh_components(self):
+        self.clear_items()
+        mode = self.prefs.get("deal_alert_mode", "off")
+        digest_on = self.prefs.get("digest_dm_enabled", False)
+        items = self.prefs.get("deal_items", [])
+
+        btn_all = discord.ui.Button(
+            label="All Deals",
+            emoji="🌐",
+            style=discord.ButtonStyle.success if mode == "all" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        btn_all.callback = lambda i: self._set_mode(i, "all")
+
+        btn_watch = discord.ui.Button(
+            label="My Items Only",
+            emoji="🎯",
+            style=discord.ButtonStyle.success if mode == "watchlist" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        btn_watch.callback = lambda i: self._set_mode(i, "watchlist")
+
+        btn_off = discord.ui.Button(
+            label="Turn Off",
+            emoji="🔕",
+            style=discord.ButtonStyle.danger if mode == "off" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        btn_off.callback = lambda i: self._set_mode(i, "off")
+
+        self.add_item(btn_all)
+        self.add_item(btn_watch)
+        self.add_item(btn_off)
+
+        btn_digest = discord.ui.Button(
+            label=f"Digest DM: {'ON' if digest_on else 'OFF'}",
+            emoji="📊",
+            style=discord.ButtonStyle.primary if digest_on else discord.ButtonStyle.secondary,
+            row=1,
+        )
+        btn_digest.callback = self._toggle_digest
+
+        btn_add = discord.ui.Button(
+            label="Add Items",
+            emoji="➕",
+            style=discord.ButtonStyle.success,
+            disabled=(len(items) >= 15),
+            row=1,
+        )
+        btn_add.callback = lambda i: i.response.send_modal(_AddDealKeywordsModal(self))
+
+        self.add_item(btn_digest)
+        self.add_item(btn_add)
+
+        if items:
+            self.add_item(_RemoveDealKeywordSelect(self, items))
+
+    async def _set_mode(self, interaction: discord.Interaction, new_mode: str):
+        await user_slots_col.update_one(
+            {"_id": self.user_id},
+            {"$set": {"deal_alert_mode": new_mode}},
+            upsert=True,
+        )
+        self.prefs["deal_alert_mode"] = new_mode
+        self._refresh_components()
+        await interaction.response.edit_message(embed=_build_deal_prefs_embed(self.prefs), view=self)
+
+    async def _toggle_digest(self, interaction: discord.Interaction):
+        new_val = not self.prefs.get("digest_dm_enabled", False)
+        await user_slots_col.update_one(
+            {"_id": self.user_id},
+            {"$set": {"digest_dm_enabled": new_val}},
+            upsert=True,
+        )
+        self.prefs["digest_dm_enabled"] = new_val
+        self._refresh_components()
+        await interaction.response.edit_message(embed=_build_deal_prefs_embed(self.prefs), view=self)
