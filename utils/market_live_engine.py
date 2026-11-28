@@ -23,7 +23,6 @@ logger = logging.getLogger("MyKBot.MarketLive")
 market_history_col = db["market_history"]
 shop_subscriptions_col = db["shop_subscriptions"]
 user_slots_col = db["user_slots"]
-server_configs_col = db["server_configs"]
 
 # Discord Gateway & source channels (configured via environment variables)
 DISCORD_GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -95,8 +94,8 @@ class MarketLiveEngineMixin:
     """
     Mixin for ShopTracker providing:
     1. 24/7 Discord Gateway listener via pure aiohttp (no local PC or webhook needed).
-    2. Real-time Cheap Deal & Price Spike alerts with native DMW currency formatting.
-    3. Automated Nightly Market Digest (24h summary).
+    2. Real-time Cheap Deal & Price Spike DM alerts with native DMW currency formatting.
+    3. Automated Nightly Market Digest (24h summary) sent via DM to opted-in subscribers.
     4. User opt-in DM subscriptions & custom item keyword filters.
     """
 
@@ -267,7 +266,7 @@ class MarketLiveEngineMixin:
         await self.check_market_anomalies(shop_data)
 
     # =========================================================================
-    # 2. REAL-TIME CHEAP DEAL & PRICE SPIKE ALERTS
+    # 2. REAL-TIME CHEAP DEAL & PRICE SPIKE DM ALERTS
     # =========================================================================
 
     def _is_anomaly_on_cooldown(self, cooldown_key: str) -> bool:
@@ -301,35 +300,10 @@ class MarketLiveEngineMixin:
             return f"{mega:.1f}M".rstrip("0").rstrip(".")
         return f"{amount:,.0f}B"
 
-    async def _broadcast_market_embed(self, embed: discord.Embed, cross_chat_summary: str):
-        """Send market intelligence to /setup_announcement channels and Cross-Chat network."""
-        cursor = server_configs_col.find(
-            {"channel_id": {"$exists": True, "$ne": None}},
-            {"channel_id": 1},
-        )
-        sent_channels: set[int] = set()
-        alert_view = MarketAlertSubscribeView(self)
-
-        async for cfg in cursor:
-            cid = cfg.get("channel_id")
-            if not cid or int(cid) in sent_channels:
-                continue
-            channel = self.bot.get_channel(int(cid))
-            if isinstance(channel, discord.TextChannel):
-                try:
-                    await channel.send(embed=embed, view=alert_view)
-                    sent_channels.add(int(cid))
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-
-        cross_cog = self.bot.get_cog("CrossChatCog")
-        if cross_cog and hasattr(cross_cog, "broadcast_system_message"):
-            await cross_cog.broadcast_system_message(cross_chat_summary)
-
     async def check_market_anomalies(self, shop_data: dict[str, Any]):
         """
         Detect notable price drops (Cheap Deals) and high-value buyouts (Price Spikes)
-        while filtering out low-value junk items.
+        and send Direct Messages exclusively to opted-in users.
         """
         update_type = shop_data.get("type", "open")
         item_map: dict[str, dict[str, Any]] = {}
@@ -408,12 +382,11 @@ class MarketLiveEngineMixin:
         map_name = shop_data.get("map", "Unknown")
 
         embed = discord.Embed(
-            title="📢 Market Price Alert",
+            title="📢 Personal Market Price Alert",
             description=f"🏪 **{shop_name}** • Seller: `{owner}` • Location: `{map_name}`",
             color=discord.Color.green() if update_type == "open" else discord.Color.orange(),
             timestamp=datetime.now(timezone.utc),
         )
-        headlines = []
 
         for kind, name, cur_p, med_p, pct in top_alerts:
             cur_str = self._format_currency(cur_p)
@@ -423,11 +396,9 @@ class MarketLiveEngineMixin:
                 discount = abs(pct)
                 tag = f"💸 **CHEAP DEAL ({discount:.0f}% OFF)**"
                 value_text = f"• Listed At: **{cur_str}** (Normal price: ~`{med_str}`)"
-                headlines.append(f"💸 **{name}** for **{cur_str}** (**{discount:.0f}% cheaper** than ~{med_str})")
             else:
                 tag = f"🔥 **BOUGHT HIGH (+{pct:.0f}%)**"
                 value_text = f"• Sold For: **{cur_str}** (Normal price: ~`{med_str}`)"
-                headlines.append(f"🔥 **{name}** sold for **{cur_str}** (**+{pct:.0f}%** above ~{med_str})")
 
             embed.add_field(
                 name=f"{tag} — {name}",
@@ -438,13 +409,9 @@ class MarketLiveEngineMixin:
         if update_type == "open":
             embed.add_field(name="⌨️ Quick Copy", value=f"```/shop {shop_name}```", inline=False)
 
-        embed.set_footer(text="MyKBot Market Tracker • Click 🔔 below to subscribe/filter DM alerts")
-        cross_msg = (
-            "📢 **[Market Alert]** "
-            + " | ".join(headlines)
-            + f" — Shop: `{shop_name}` ({map_name})"
+        embed.set_footer(
+            text="To turn off or edit alerts: /menu -> Market & Community -> Market Hub -> Deal & Digest Alerts"
         )
-        await self._broadcast_market_embed(embed, cross_msg)
         await self._dispatch_anomaly_dms(embed, [a[1].lower() for a in top_alerts])
 
     # =========================================================================
@@ -543,20 +510,17 @@ class MarketLiveEngineMixin:
         embed.add_field(name="📈 Top Price Gainers", value=gainers_text, inline=False)
         embed.add_field(name="📉 Best Bargains / Drops", value=losers_text, inline=False)
         embed.add_field(name="🔥 Most Active Volume", value=volume_text, inline=False)
-        embed.set_footer(text="MyKBot Nightly Market Report • Click 🔔 below to get this report in DM")
+        embed.set_footer(
+            text="To turn off Nightly Digest DMs: /menu -> Market & Community -> Market Hub -> Deal & Digest Alerts"
+        )
         return embed
 
     @tasks.loop(time=DIGEST_TIME_UTC)
     async def daily_market_digest(self):
-        """Publish the scheduled 24h market report."""
+        """Send the scheduled 24h market report via DM to opted-in subscribers."""
         embed = await self.build_daily_digest_embed()
         if embed is None:
             return
-        cross_summary = (
-            "📊 **[Nightly Market Digest]** 24h market report posted! "
-            "Open `/menu` -> **Market Hub** for 30-day price charts."
-        )
-        await self._broadcast_market_embed(embed, cross_summary)
         await self._dispatch_digest_dms(embed)
 
     @daily_market_digest.before_loop
@@ -564,7 +528,7 @@ class MarketLiveEngineMixin:
         await self.bot.wait_until_ready()
 
     async def open_market_live_control(self, interaction: discord.Interaction):
-        """Owner-only control panel to inspect 24/7 Gateway status and test/force Market Digest."""
+        """Owner-only control panel to inspect 24/7 Gateway status and test/send Market Digest DMs."""
         if not await check_is_owner(self.bot, interaction.user):
             await interaction.response.send_message(
                 "⛔ Bot Owner permission required.", ephemeral=True
@@ -662,7 +626,10 @@ class MarketLiveEngineMixin:
                     continue
             try:
                 await user.send(
-                    content="🔔 **Personal Market Alert** (Manage via `/menu` → **Market Hub**)",
+                    content=(
+                        "🔔 **Personal Market Alert**\n"
+                        "*(To turn off or edit alerts, type `/menu` → **Market & Community** → **Market Hub** → **Deal & Digest Alerts**)*"
+                    ),
                     embed=embed,
                 )
                 await asyncio.sleep(0.25)
@@ -682,7 +649,10 @@ class MarketLiveEngineMixin:
                     continue
             try:
                 await user.send(
-                    content="📊 **Your Subscribed Nightly Market Report**",
+                    content=(
+                        "📊 **Your Subscribed Nightly Market Report**\n"
+                        "*(To turn off this daily DM, type `/menu` → **Market & Community** → **Market Hub** → **Deal & Digest Alerts**)*"
+                    ),
                     embed=embed,
                 )
                 await asyncio.sleep(0.25)
@@ -705,7 +675,7 @@ class MarketLiveEngineMixin:
 # =============================================================================
 
 class _MarketDigestControlView(discord.ui.View):
-    """Ephemeral Owner buttons to preview or force-broadcast the 24h Market Digest."""
+    """Ephemeral Owner buttons to preview or send the 24h Market Digest to DM subscribers."""
 
     def __init__(self, cog: MarketLiveEngineMixin):
         super().__init__(timeout=180)
@@ -722,29 +692,24 @@ class _MarketDigestControlView(discord.ui.View):
             )
             return
         await interaction.followup.send(
-            content="**Preview only (not broadcast to servers):**",
+            content="**Preview only (not sent to subscribers):**",
             embed=embed,
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Force Broadcast Digest", style=discord.ButtonStyle.danger, emoji="📢")
+    @discord.ui.button(label="Send Digest to DM Subscribers", style=discord.ButtonStyle.primary, emoji="📨")
     async def broadcast_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         embed = await self.cog.build_daily_digest_embed()
         if embed is None:
             await interaction.followup.send(
-                "Cannot broadcast: insufficient `market_history` data in the last 48 hours.",
+                "Cannot send: insufficient `market_history` data in the last 48 hours.",
                 ephemeral=True,
             )
             return
-        cross_summary = (
-            "📊 **[Nightly Market Digest]** 24h market report posted! "
-            "Open `/menu` -> **Market Hub** for 30-day price charts."
-        )
-        await self.cog._broadcast_market_embed(embed, cross_summary)
         await self.cog._dispatch_digest_dms(embed)
         await interaction.followup.send(
-            "✅ Market Digest broadcasted to all announcement channels, Cross-Chat, and DM subscribers.",
+            "✅ Nightly Market Digest sent via DM to all subscribed users.",
             ephemeral=True,
         )
 
@@ -790,7 +755,7 @@ def _build_deal_prefs_embed(prefs: dict[str, Any]) -> discord.Embed:
 
 
 class MarketAlertSubscribeView(discord.ui.View):
-    """Persistent 1-click button attached to public Market Alerts & Nightly Digests."""
+    """Persistent 1-click button kept for backwards compatibility on older messages."""
 
     def __init__(self, cog: MarketLiveEngineMixin):
         super().__init__(timeout=None)
